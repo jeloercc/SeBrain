@@ -304,6 +304,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         const val KEY_BATCH = "batch"
         const val KEY_FG = "fg"
         fun input(n: Int, fg: Boolean = true) = workDataOf(KEY_BATCH to n, KEY_FG to fg)
+        fun sample(i: Int): String = SAMPLES[i % SAMPLES.size].format(i)
 
         private const val MAX_OUTPUT_TOKENS = 512
         private const val INBOX_ALIAS = "diag_k_inbox_bench"

@@ -26,6 +26,26 @@
   - Por eso nunca se usa `REPLACE` y se comprueba `isStopped` (sección 2).
 - **Motor:** se carga una vez por ejecución (3–5,7 s medidos) y se libera en `finally`. Si la carga cuesta 5 s y el lote dura 5–8 min, la carga supone alrededor del 1–2 % del lote.
 
+## 1b. Cadena de backends explícita NPU → GPU → CPU (aprobado)
+
+`Backend.NPU` no cae solo a otro backend. Si la NPU falla, `Engine.initialize()` lanza una excepción, como ocurrió con 0.19.1 y `undefined symbol: LiteRtDispatchQueryInterface`. La app final implementa la cadena por su cuenta:
+
+```text
+para backend en [NPU(nativeLibraryDir), GPU(), CPU()]:
+    intentar Engine(EngineConfig(modelo_del_backend, backend, cacheDir)).initialize()
+    éxito → usar; registrar backend y tiempo de carga
+    fallo → registrar clase y mensaje del error; probar el siguiente
+ninguno → Result.retry() y registrar "sin backend"
+```
+
+**Requisitos:**
+
+- **Modelo por backend.** El `.litertlm` para la TPU (`*_Google_Tensor_G5.litertlm`) solo sirve para la NPU. GPU y CPU necesitan el modelo genérico (`gemma-4-E2B-it.litertlm`). Cada uno se importa por SAF o `adb push` con su propio SHA-256 fijado.
+  - Si solo está importado el modelo de NPU, la cadena se reduce a NPU, y el fallo se registra en lugar de enmascararse.
+- **Registro por lote, sin contenido:** backend usado, motivo del descarte de cada backend anterior (clase de excepción y mensaje), tiempo de carga, y media y p95 por segmento.
+- **Caché del backend.** Un fallo de NPU no se reintenta en cada lote: se guarda «NPU falló con la versión X de la app y de LiteRT-LM» y se vuelve a probar cuando cambia la versión o tras 24 h.
+- **Error a mitad de lote:** `LiteRtLmJniException` durante la generación sigue el §4. Se reinicia una vez el mismo backend y, si vuelve a fallar, se baja al siguiente de la cadena en la siguiente ejecución, nunca a mitad de lote.
+
 ## 2. Checkpoint por segmento e `isStopped`
 
 **Unidad de trabajo:** un segmento. Su resultado se confirma en su propia transacción:
@@ -141,7 +161,7 @@ Sirven para ajustar el presupuesto de 8 min y el límite de 25.
 3. Presupuesto de 8 min por ejecución y p95 móvil inicial de 35 s.
 4. §4: penalización de repetición, corte por más de 32 caracteres de espacio en blanco seguidos y reintento con mensaje correctivo.
 
-## 6. Título vacío: decodificación restringida por esquema (propuesta, pendiente de aprobación)
+## 6. Título vacío: decodificación restringida por esquema (aprobado, condicionado a la verificación de restricciones)
 
 ### Qué usa hoy el spike
 

@@ -368,3 +368,71 @@ Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del sp
    - Doblar los tokens solo duplica el tiempo perdido: 32 s por segmento fallido, frente a una mediana de 10 s.
 5. **El título vacío es sistemático.** 19 de los 95 válidos tienen `titulo` igual a `": "`. Los 5 inválidos empiezan igual. El modelo emite `": "` como valor del primer campo, lo que apunta al prompt o al esquema y no al azar. No investigado.
 6. **Implicación para el diseño:** un reintento con la misma entrada y más tokens no arregla nada. El §4 de `docs/design-cognition-worker.md` se ajustó en consecuencia.
+
+## `CognitionWorker` en segundo plano real (sin FGS), 2026-11-07
+
+**Montaje:**
+- `--es mode cognition-bg`: Worker de 10 segmentos **sin `setForeground`**, con `requiresCharging` y un retraso de 120 s.
+- Tras programarlo, la actividad se cierra con BACK y el proceso se mata con `kill -9`. No se usa `force-stop`, porque cancela el trabajo programado, ni `am kill`, que no lo mata mientras WorkManager lo mantiene con `oom adj` 0.
+- La pantalla se apaga con `KEYCODE_SLEEP`.
+- USB conectado y cargando. Mismo motor y modelo que en la corrida 2, `maxOutputToken` 512 y mismo prompt.
+
+### Corrida A: pantalla apagada, sin idle forzado (22:48–22:59) — válida
+
+| Métrica | Valor |
+| --- | --- |
+| Arranque del Worker | 22:54:22. Programado para las 22:50:06; JobScheduler lo aplazó unos 4 min |
+| Estado del proceso | `importance=230`, `interactive=false`, `deviceIdle=false` al inicio, en los segmentos 0 y 9 y al final |
+| Backend | **NPU.** `libLiteRtDispatch_GoogleTensor.so` cargado sin errores de dispatch |
+| Carga del motor | 5073 ms |
+| SHA-256 del modelo (3,9 GB) | 22 343 ms, frente a 4–10 s en primer plano |
+| ECDH media (p95) | 101,0 ms (105,7) |
+| LLM media (p50 / p95) | **29 183 ms** (29 414 / 32 350) |
+| Total/seg media | 29 287 ms |
+| ECDH % del total | 0,345 % |
+| JSON válido / título vacío | 10/10 / 2 |
+| `thermalStatus` | 0 en los 10 segmentos |
+| Duración del lote | 298 s, dentro de la ventana de unos 10 min |
+
+**Comparación con la misma prueba con la pantalla encendida.** Es una corrida descartada como prueba de segundo plano: alguien tocó la pantalla a las 22:45:21 (`WAKE_REASON_TAP`) y la actividad se restauró. Sirve de referencia con pantalla encendida y app en primer plano (`importance=100`). Las salidas son idénticas, carácter a carácter, porque la generación es determinista.
+
+| Segmento | Caracteres | Pantalla encendida | Pantalla apagada | Factor |
+| --- | --- | --- | --- | --- |
+| 0 | 331 | 9 805 ms | 28 644 ms | ×2,92 |
+| 1 | 119 | 5 909 ms | 24 709 ms | ×4,18 |
+| 2 | 276 | 9 756 ms | 29 414 ms | ×3,01 |
+| 3 | 158 | 6 550 ms | 25 595 ms | ×3,91 |
+| 4 | 360 | 10 507 ms | 30 223 ms | ×2,88 |
+| 5 | 466 | 12 840 ms | 33 277 ms | ×2,59 |
+| 6 | 320 | 11 203 ms | 31 016 ms | ×2,77 |
+| 7 | 174 | 7 326 ms | 26 849 ms | ×3,66 |
+| 8 | 290 | 9 328 ms | 29 753 ms | ×3,19 |
+| 9 | 391 | 11 244 ms | 32 350 ms | ×2,88 |
+
+**Observaciones:**
+
+1. **La NPU funciona desde un Worker en segundo plano real.** Funciona con la app cerrada, el proceso arrancado por JobScheduler, sin FGS y con la pantalla apagada. No hizo falta caer a GPU ni a CPU, y no hubo errores.
+2. **El LLM es unas 3 veces más lento con la pantalla apagada.** Un ajuste lineal sobre los segmentos más corto (119 caracteres) y más largo (466) da lo siguiente:
+
+   | Estado | Coste por carácter | Coste fijo por segmento |
+   | --- | --- | --- |
+   | Pantalla encendida | ≈ 20 ms | ≈ 3,5 s |
+   | Pantalla apagada | ≈ 25 ms | ≈ 21,8 s |
+
+   - Casi toda la penalización está en la **parte fija**: crear la conversación, el prefill o la compilación de la gramática de LLGuidance. La decodificación se encarece solo un 23 % por carácter.
+   - El SHA-256 también fue unas 3 veces más lento, lo que apunta a que el proceso en segundo plano recibe menos CPU (cpuset o frecuencia).
+   - **La causa no se midió.** No se registraron afinidad, frecuencia ni uso de la NPU.
+3. **Implicación para el diseño (§1):**
+   - Con unos 29 s por segmento, 25 segmentos son unos 12 min y no caben en 8 min. El presupuesto de tiempo limitará cada ejecución a unos 15 segmentos.
+   - El p95 móvil inicial de 35 s sigue siendo razonable (p95 medido: 32,4 s).
+   - No cambié el diseño. Si el coste fijo resulta ser la compilación de la gramática o el prefill del prompt de sistema, reutilizar una conversación precargada (`Conversation.clone()`) podría reducirlo. Está sin probar.
+4. **JobScheduler aplazó el arranque unos 4 min** con la pantalla apagada (programado a las 22:50:06, arrancó a las 22:54:22).
+
+### Corrida B: idle forzado (`dumpsys deviceidle force-idle`) — incompleta
+
+- **23:00:19:** `force-idle` activado: `mForceIdle=true`, `mState=IDLE`, Worker pendiente del retraso.
+- **23:00:41:** el teléfono se levantó (`WAKE_REASON_LIFT`).
+- **23:00:50:** la app se abrió en primer plano.
+- **Poco después:** el teléfono se desconectó del USB. Desde las 23:01:02 no hay logs, y a las 23:16 `adb devices` no lo veía.
+- **Sin resultado:** no hay ningún segmento procesado y no se sabe si el Worker llegó a ejecutarse con el modo idle forzado.
+- **El modo idle forzado puede seguir activo en el teléfono:** `dumpsys deviceidle unforce` no se pudo ejecutar. Hay que ejecutarlo al reconectar y repetir la corrida B.
