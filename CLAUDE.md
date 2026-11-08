@@ -85,6 +85,7 @@ Each spike delivered minimal code + numbers measured on the Pixel 10. Details in
 - **Phase 1, first task:** build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
 - **Phase 2, first task:** LiteRT-LM benchmark of EmbeddingGemma 2 (270M) on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
 - **Phase 4, extraction-model benchmark:** compare Gemma 3 1B with Gemma 4 E2B on NPU, GPU and CPU, with the same measurements.
+  - Measure the `createConversation` cost with and without constrained decoding in the background. So far it was only measured in the foreground (2660 ms versus 3 ms); the background saving is an extrapolation.
 
 ## Open decisions (do not assume; ask)
 
