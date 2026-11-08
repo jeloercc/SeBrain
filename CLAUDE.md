@@ -63,16 +63,28 @@ Disabled and out of scope until Phase 7. Android 17 revokes it with Advanced Pro
 
 `minSdk` and `targetSdk`: Android 16/17 (the only device is the Pixel 10). Do not add compatibility with older versions.
 
-## Current phase: 0 — Risk spikes
+## Phase 0 — "LLM + Keystore": closed (2026-11-08)
 
-Each spike delivers minimal code + numbers measured on the Pixel 10. No UI yet.
+Each spike delivered minimal code + numbers measured on the Pixel 10. Details in `docs/benchmarks.md`.
 
-- [ ] Build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
-- [ ] LiteRT-LM benchmark: EmbeddingGemma 2 (270M) and Gemma 3 1B on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
 - [x] ML Kit: `getBaseModelName()` returns a `nano-*` model and generates text with a locked bootloader and without `INTERNET`. Observed on 2026-11-07: `nano-v4-full`.
 - [x] Keystore: does StrongBox accept `PURPOSE_AGREE_KEY` on EC P-256? Yes (`KeyInfo.securityLevel=STRONGBOX`, ECDH ≈ 44 ms).
 
-Phase exit: benchmark table in `docs/benchmarks.md` and backend decision per model.
+**Decisions from Phase 0:**
+
+- One ECDH per segment: under 1-2% of the time per segment; the per-window key proposal is rejected.
+- The NPU works from a background Worker, but about 3x slower (`cpuset=/background`, CPUs 0-2).
+- About 15 segments per background run under the 8-minute budget.
+- One conversation per segment: `Conversation.clone()` is unavailable in 0.18.1 and a shared conversation contaminates later segments.
+- LiteRT-LM pinned to 0.18.1. Constrained decoding uses `whitespace_flexible=false`, which removes the `\n\t` loop.
+- `nano-v4-full` observed; ML Kit stays optional pending the telemetry analysis.
+- The Worker does not run under forced Doze (blocked for 15 min, started 6 s after `unforce`); the design requires charging.
+
+## Next phases
+
+- **Phase 1, first task:** build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
+- **Phase 2, first task:** LiteRT-LM benchmark of EmbeddingGemma 2 (270M) on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
+- **Phase 4, extraction-model benchmark:** compare Gemma 3 1B with Gemma 4 E2B on NPU, GPU and CPU, with the same measurements.
 
 ## Open decisions (do not assume; ask)
 

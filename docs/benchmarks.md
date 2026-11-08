@@ -570,3 +570,31 @@ Schema keys: `title`, `people`, `dates`, `topics`, `tasks`. `whitespace_pattern`
 4. **Cost of English:** +7 prompt tokens per segment, with no measurable time difference (within ±4%).
 5. **Values keep the source language.** On review of the English + `whitespace_pattern` outputs, `people`, `topics` and `tasks` stayed in Spanish in all 15 (for example `"Cita con la dentista"`, `"encargar la tarta"`). This was a manual review, not an automatic check.
 6. **Dates are still invented** when the text gives no year (`2024-05-10`, `2023-11-28`). The approved design adds `captured_at` to the prompt to address this; that is not tested here.
+
+## Title position and unconstrained decoding, 2026-11-08
+
+`WhitespaceProbe.kt --es set title`, foreground with the screen on (17:07–17:11), NPU, `maxOutputToken` 512, the same 15 segments as the previous section. Two earlier attempts were discarded because the app left the foreground (Google Assistant at 16:54:21, Instagram at 16:57:05) and the process was frozen.
+
+- **Title last:** English prompt listing `title` last, schema with `title` as the last property, `whitespace_flexible=false`.
+- **Unconstrained:** the original English prompt, no `ResponseFormat`, `enableResponseFormat=false`. Output is parsed afterwards; a Markdown fence is tolerated by taking the text between the first `{` and the last `}`.
+
+| Metric (15 segments) | English, title first (previous section) | English, title last | English, unconstrained |
+| --- | --- | --- | --- |
+| Loops | 0 | 0 | 0 |
+| Valid JSON, as emitted | 15/15 | 15/15 | **0/15** (always in a ```` ```json ```` fence) |
+| Valid JSON, after removing the fence | 15/15 | 15/15 | 15/15 |
+| Matches the schema keys | 15/15 | 15/15 | **0/15** (`pending_tasks` instead of `tasks`, among others) |
+| Empty title | 15 | **1** (segment 29: `""`) | 0 |
+| Useful title | 0 | **14** | **15** |
+| Prompt tokens per segment, mean | 141.3 | 141.3 | 141.3 |
+| Output tokens per segment, mean | 64.6 | 70.5 | 131.6 |
+| `createConversation`, mean | 2667 ms | 2660 ms | **3 ms** |
+| Total per segment, mean / max | 6458 / 9869 ms | 6923 / 10,375 ms | 6916 / 10,590 ms |
+
+**Conclusions:**
+
+1. **Moving `title` to the last position fixes the title:** from 0 to 14 useful titles of 15, with 0 loops and every output matching the schema. The remaining empty title (`""`) is covered by the approved retry in §4 of the design.
+2. **Unconstrained decoding gives good titles but breaks the contract.** No output is directly parseable and no output uses the schema keys, so it would need fence removal and key mapping.
+3. **`createConversation` cost comes from enabling constrained decoding:** 2660 ms versus 3 ms in the foreground. This identifies the cost that was only a candidate before. The background figure (14.9 s per segment) was not re-measured without constraints, so the saving there is an extrapolation.
+4. **Time per segment is the same in the foreground,** because the unconstrained output is about twice as long (fence and pretty-printing), which offsets the saved setup. One run per variant; generation is deterministic.
+5. **Dates are still invented when the text gives no year,** as in the previous section.

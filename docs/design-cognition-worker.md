@@ -164,13 +164,15 @@ They are used to tune the 8-min budget and the limit of 25.
 3. Budget of 8 min per run and initial moving p95 of 35 s.
 4. §4: repetition penalty, cutoff at more than 32 consecutive whitespace characters and retry with a corrective message.
 
-## 6. Empty title: schema-constrained decoding (verified on 2026-11-08; decision pending)
+## 6. Empty title: schema-constrained decoding (decided on 2026-11-08)
 
 **Verification result** (`docs/benchmarks.md`): LiteRT-LM 0.18.1 respects `x-guidance.whitespace_flexible=false`, `minLength`, `maxLength`, `pattern`, `maxItems` and `additionalProperties:false`, and `ResponseFormat.regex` works.
 
 - `whitespace_flexible=false` eliminates the `\n\t` loop (5/5, from 32 s to about 6 s).
 - **The full hardened schema does not fix the title and worsens the content** (titles like `", personas:[{"`, empty fields). It is not adopted as is until a decision is made.
-- `x-guidance.whitespace_pattern=\x20` also eliminates the loop (15/15 valid JSON, 0 loops), but **does not fix the title**: it is broken in 15 of 15, with the English prompt as well (`docs/benchmarks.md`). The empty title remains open.
+- `x-guidance.whitespace_pattern=\x20` also eliminates the loop (15/15 valid JSON, 0 loops), but **does not fix the title**: it is broken in 15 of 15, with the English prompt as well (`docs/benchmarks.md`). The title was fixed by moving it (see below).
+- **Moving `title` to the last property fixes the title:** 14 of 15 useful, 0 loops, every output matching the schema. The remaining empty title is handled by the §4 retry.
+- Without constrained decoding, `createConversation` drops from 2660 ms to 3 ms in the foreground, but no output is directly parseable and none uses the schema keys. The background saving was not measured.
 
 ### What the spike used until 2026-11-08
 
@@ -210,34 +212,22 @@ The user message is just the segment text.
   - `x-guidance.whitespace_pattern` (for example `[\x20\x0A]{0,2}`).
 - **It is not verified that LiteRT-LM passes `x-guidance` to LLGuidance.**
 
-### Proposal
+### Minimal schema (decided)
 
-Keep constrained decoding and harden the schema:
+The five original fields in English, with `whitespace_flexible=false` and `title` last. The prompt's field list uses the same order.
 
 ```json
 {"type":"object",
  "x-guidance":{"whitespace_flexible":false},
- "additionalProperties":false,
  "properties":{
-  "titulo":{"type":"string","minLength":3,"maxLength":80,"pattern":"^[^\\s:\"]"},
-  "personas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10},
-  "fechas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10},
-  "temas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":8},
-  "tareas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10}},
- "required":["titulo","personas","fechas","temas","tareas"]}
+  "people":{"type":"array","items":{"type":"string"}},
+  "dates":{"type":"array","items":{"type":"string"}},
+  "topics":{"type":"array","items":{"type":"string"}},
+  "tasks":{"type":"array","items":{"type":"string"}},
+  "title":{"type":"string"}},
+ "required":["people","dates","topics","tasks","title"]}
 ```
 
-**What each change is expected to do:**
+### Discarded: fully hardened schema
 
-- `whitespace_flexible: false` prevents the whitespace loop. It attacks the cause of the 5 invalid ones and leaves the §4 cutoff at more than 32 spaces as a safety net.
-- `minLength` and `pattern` on `titulo` prevent `": "` and the empty title.
-- `maxItems` limits long outputs.
-
-**How to validate it, in spikes/diag and without touching the current benchmark prompt:**
-
-- Repeat the batch of 100 with the new schema.
-- Measure valid JSON, empty titles and time per segment.
-- Check in the outputs that there is no whitespace between tokens. If there is, LiteRT-LM ignores `x-guidance` and an equivalent expression with `ResponseFormat.regex` would have to be used.
-- Also test that `minLength` and `pattern` are respected, because llguidance supports them but it is not proven through LiteRT-LM.
-
-**Few-shot** with an example of a filled-in title: a complement, only if the hardened schema is not enough, because it lengthens the prefill on every segment.
+The schema with `minLength`, `maxLength`, `pattern`, `maxItems` and `additionalProperties:false` is discarded. LiteRT-LM respects those constraints, but with the title first the model satisfied them with garbage: titles such as `", personas:[{"` and lost fields in 3 of 5 segments. The constraints did not address the cause, which was the position of the title. Full results are in `docs/benchmarks.md`.
