@@ -50,8 +50,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
 
     override suspend fun doWork(): Result {
         val n = inputData.getInt(KEY_BATCH, 10)
-        val label = "Cognition lote $n"
-        setForeground(foregroundInfo(label))
+        val fg = inputData.getBoolean(KEY_FG, true)
+        val label = if (fg) "Cognition lote $n" else "Cognition bg lote $n"
+        if (fg) setForeground(foregroundInfo(label))
         logEnvironment("$label inicio")
 
         return try {
@@ -84,7 +85,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         Diag.info("$label ingesta simulada de $n segmentos en %.0f ms (fuera del cronómetro)".format(ingestMs))
 
         val batchStart = System.nanoTime()
-        val (engine, initMs) = timedMs {
+        val (engine, initMs) = try { timedMs {
             Engine(
                 EngineConfig(
                     modelPath = model.path,
@@ -92,6 +93,10 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                     cacheDir = applicationContext.cacheDir.path,
                 ),
             ).also { it.initialize() }
+        } } catch (t: Throwable) {
+            Diag.error("$label carga del motor NPU", t)
+            Diag.result("$label carga del motor", "FAIL", "-", "Backend.NPU; ${Diag.describe(t)}")
+            throw t
         }
         Diag.result("$label carga del motor", "PASS", "%.0f ms".format(initMs), "Backend.NPU; $MODEL_FILE")
 
@@ -110,6 +115,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                     Diag.result("$label detenido", "INFO", "seg $i", "isStopped=true; stopReason=$stopReason")
                     return
                 }
+                if (!inputData.getBoolean(KEY_FG, true) && (i == 0 || i == n - 1)) logEnvironment("$label seg $i")
                 val thermalStatus = power.currentThermalStatus
                 val headroom = power.getThermalHeadroom(10)
                 thermal[thermalStatus.coerceIn(0, 7)]++
@@ -260,7 +266,8 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         Diag.info(
             "$label: importance=${state.importance} thermalStatus=${power.currentThermalStatus} " +
                 "headroom10s=${power.getThermalHeadroom(10)} bateria=${battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}% " +
-                "cargando=${battery.isCharging}",
+                "cargando=${battery.isCharging} interactive=${power.isInteractive} deviceIdle=${power.isDeviceIdleMode} " +
+                "lightIdle=${power.isDeviceLightIdleMode}",
         )
     }
 
@@ -295,7 +302,8 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
 
     companion object {
         const val KEY_BATCH = "batch"
-        fun input(n: Int) = workDataOf(KEY_BATCH to n)
+        const val KEY_FG = "fg"
+        fun input(n: Int, fg: Boolean = true) = workDataOf(KEY_BATCH to n, KEY_FG to fg)
 
         private const val MAX_OUTPUT_TOKENS = 512
         private const val INBOX_ALIAS = "diag_k_inbox_bench"

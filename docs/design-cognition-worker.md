@@ -1,6 +1,6 @@
 # Diseño: `CognitionWorker` por lotes troceados
 
-**Estado: Propuesta — no implementada.** Nada de esto está en la app. El esquema de la BD que aparece aquí también es una propuesta (regla de CLAUDE.md). La jerarquía de claves no cambia: un ECDH con `K_inbox` por segmento.
+**Estado: Aprobado (no implementado), 2026-11-07.** Nada de esto está en la app todavía. Están aprobados el esquema (`capture.segment_id UNIQUE`, `extraction_status`, `extraction_attempts`), `captured_at` dentro del texto cifrado, el presupuesto de 8 min y el ajuste del §4. La jerarquía de claves no cambia: un ECDH con `K_inbox` por segmento.
 
 **Base empírica:** `docs/benchmarks.md`, sección «`CognitionWorker`: ECDH frente al tiempo total por segmento». Pixel 10, Gemma-4-E2B en NPU, LLM entre 6 y 40 s por segmento.
 
@@ -134,8 +134,81 @@ Por ejecución, en memoria y sin escribir datos de contenido:
 
 Sirven para ajustar el presupuesto de 8 min y el límite de 25.
 
-## Pendiente de aprobación
+## Aprobado el 2026-11-07
 
-1. Columnas `capture.segment_id` (`UNIQUE`), `capture.extraction_status` y `capture.extraction_attempts` (cambio de esquema).
-2. Que `captured_at` vaya dentro del texto en claro cifrado del segmento (formato de segmento v1).
+1. Columnas `capture.segment_id` (`UNIQUE`), `capture.extraction_status` y `capture.extraction_attempts`.
+2. `captured_at` dentro del texto en claro cifrado del segmento (formato de segmento v1).
 3. Presupuesto de 8 min por ejecución y p95 móvil inicial de 35 s.
+4. §4: penalización de repetición, corte por más de 32 caracteres de espacio en blanco seguidos y reintento con mensaje correctivo.
+
+## 6. Título vacío: decodificación restringida por esquema (propuesta, pendiente de aprobación)
+
+### Qué usa hoy el spike
+
+`CognitionBenchWorker.kt`, sin ejemplo de JSON ni few-shot.
+
+Prompt de sistema:
+
+```text
+Extrae información estructurada del texto del usuario. Responde solo con JSON válido que siga el esquema: titulo (frase corta), personas, fechas (ISO 8601 si es posible), temas y tareas pendientes. Listas vacías si no hay datos.
+```
+
+Esquema, pasado como `ResponseFormat.json(SCHEMA)` con `enableResponseFormat = true`:
+
+```json
+{"type":"object","properties":{
+  "titulo":{"type":"string"},
+  "personas":{"type":"array","items":{"type":"string"}},
+  "fechas":{"type":"array","items":{"type":"string"}},
+  "temas":{"type":"array","items":{"type":"string"}},
+  "tareas":{"type":"array","items":{"type":"string"}}},
+ "required":["titulo","personas","fechas","temas","tareas"]}
+```
+
+El mensaje de usuario es el texto del segmento, sin más.
+
+### Qué ofrece LiteRT-LM 0.18.1 (verificado el 2026-11-07)
+
+- La documentación C++ de v0.18.1 (`docs/api/cpp/constrained-decoding.md`) indica decodificación restringida con LLGuidance mediante regex, JSON Schema y gramáticas Lark.
+- En Kotlin, `classes.jar` de `litertlm-android:0.18.1` expone `ResponseFormat.json(schema)` y `ResponseFormat.regex(pattern)`, con `ResponseFormat.Type = {REGEX, JSON_OBJECT}`. Lark no está expuesto.
+- La guía Kotlin de v0.18.1 no documenta `ResponseFormat`. La API existe en el binario y la añadió el PR #2859.
+- **El spike ya la usa.** Por eso las salidas inválidas son prefijos de JSON válido: `{ "titulo":": "` más espacios en blanco.
+  - El bucle de tabuladores es whitespace que la gramática JSON permite entre tokens.
+  - `": "` cumple `{"type":"string"}`.
+  - El esquema actual es demasiado laxo.
+- LLGuidance documenta en su `json_schema.md` las opciones:
+  - `x-guidance.whitespace_flexible` (`true` por defecto; `false` obliga a JSON compacto);
+  - `x-guidance.whitespace_pattern` (por ejemplo `[\x20\x0A]{0,2}`).
+- **No está verificado que LiteRT-LM pase `x-guidance` a LLGuidance.**
+
+### Propuesta
+
+Mantener la decodificación restringida y endurecer el esquema:
+
+```json
+{"type":"object",
+ "x-guidance":{"whitespace_flexible":false},
+ "additionalProperties":false,
+ "properties":{
+  "titulo":{"type":"string","minLength":3,"maxLength":80,"pattern":"^[^\\s:\"]"},
+  "personas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10},
+  "fechas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10},
+  "temas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":8},
+  "tareas":{"type":"array","items":{"type":"string","minLength":1},"maxItems":10}},
+ "required":["titulo","personas","fechas","temas","tareas"]}
+```
+
+**Qué se espera de cada cambio:**
+
+- `whitespace_flexible: false` impide el bucle de espacios. Ataca la causa de los 5 inválidos y deja el corte por más de 32 espacios del §4 como red de seguridad.
+- `minLength` y `pattern` en `titulo` impiden `": "` y el título vacío.
+- `maxItems` limita salidas largas.
+
+**Cómo validarlo, en spikes/diag y sin tocar el prompt del benchmark actual:**
+
+- Repetir el lote de 100 con el esquema nuevo.
+- Medir JSON válido, títulos vacíos y tiempo por segmento.
+- Comprobar en las salidas que no hay whitespace entre tokens. Si lo hay, LiteRT-LM ignora `x-guidance` y habría que usar `ResponseFormat.regex` con una expresión equivalente.
+- Probar también que `minLength` y `pattern` se respetan, porque llguidance los admite pero no está probado a través de LiteRT-LM.
+
+**Few-shot** con un ejemplo de título relleno: complemento, solo si el esquema endurecido no basta, porque alarga el prefill en cada segmento.

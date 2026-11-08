@@ -39,6 +39,7 @@ class MainActivity : Activity() {
         when (intent.getStringExtra("mode") ?: "all") {
             "bg" -> scheduleBackgroundTest()
             "cognition" -> scheduleCognitionBench()
+            "cognition-bg" -> scheduleBackgroundCognition()
             "idle" -> Diag.info("modo idle: sin llamadas a Keystore ni a ML Kit")
             else -> scope.launch {
                 Diag.info("=== INICIO ===")
@@ -81,6 +82,23 @@ class MainActivity : Activity() {
         requests.drop(1).forEach { chain = chain.then(it) }
         chain.enqueue()
         Diag.info("CognitionBenchWorker programado: lotes $sizes")
+    }
+
+    /**
+     * Worker real en segundo plano: sin FGS, con retraso y requiresCharging.
+     * Tras programarlo se cierra la app y se apaga la pantalla desde adb.
+     */
+    private fun scheduleBackgroundCognition() {
+        val n = intent.getIntExtra("n", 10)
+        val delay = intent.getIntExtra("delay", 90).toLong()
+        val request = OneTimeWorkRequestBuilder<CognitionBenchWorker>()
+            .setInputData(CognitionBenchWorker.input(n, fg = false))
+            .setInitialDelay(delay, TimeUnit.SECONDS)
+            .setConstraints(androidx.work.Constraints.Builder().setRequiresCharging(true).build())
+            .build()
+        WorkManager.getInstance(this)
+            .enqueueUniqueWork("cognition_bg", ExistingWorkPolicy.KEEP, request)
+        Diag.info("Cognition bg programado: lote $n, retraso $delay s, requiresCharging, sin FGS")
     }
 
     override fun onDestroy() {
