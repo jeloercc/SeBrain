@@ -266,3 +266,62 @@ Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del sp
 | Frase corta | CPU (2,6 GB) | 1 | 1914 ms | 18,5 tok/s | 14,3 tok/s | 2,29 GB | — |
 
 **Condiciones:** max tokens 4096 (no 1024); sin control de temperatura en la UI; teléfono sin calentamiento notable.
+
+## `CognitionWorker`: ECDH frente al tiempo total por segmento, 2026-11-07
+
+**Objetivo:** decidir sobre `docs/proposal-ecdh-window.md`. Criterio fijado por el usuario: si ECDH es < 5 % del tiempo total por segmento, se mantiene un ECDH por segmento.
+
+**Código:** `spikes/diag/.../CognitionBenchWorker.kt`. Es un `CoroutineWorker` con `setForeground` (`dataSync`) y se lanza con `am start ... --es mode cognition --es batches <n>`.
+
+**Montaje:**
+- **Ingesta simulada** (fuera del cronómetro): N textos sintéticos de 150–450 caracteres, cifrados con ECIES contra `K_inbox`, con la jerarquía actual (efímera en software por segmento, HKDF-SHA256, AES-256-GCM). Cada segmento se escribe en `noBackupFilesDir`.
+- **`K_inbox`:** EC P-256 `AGREE_KEY` en StrongBox (alias `diag_k_inbox_bench`).
+- **Por segmento, cronometrado:**
+  - lectura del fichero;
+  - ECDH en StrongBox (`KeyAgreement("ECDH", "AndroidKeyStore")`);
+  - HKDF;
+  - AES-GCM al descifrar;
+  - extracción con el LLM: conversación nueva, `ResponseFormat.json(schema)`, `maxOutputToken = 256`, thinking desactivado.
+- **Total por segmento:** todo lo anterior. La carga del motor (una por lote) se mide aparte.
+
+**Motor:**
+- `litertlm-android:0.18.1` + `litert-npu-runtime-google-tensor:2.3.2`, `Backend.NPU(nativeLibraryDir)`.
+- Modelo: `gemma-4-E2B-it_Google_Tensor_G5.litertlm`, copiado de Edge Gallery. El SHA-256 `62faebcfd101acb841c33249530430397e031eb17d4dd3d2a71193d135705f27` se verifica antes de cada lote.
+- Los `.so` tienen `LOAD p_align = 16384`.
+
+**Condiciones:**
+- USB conectado, batería al 80 %.
+- `thermalStatus = 1` (LIGHT) al inicio y al final de cada lote.
+- Pantalla apagada o la app en segundo plano durante casi todo el lote; el proceso se mantuvo con `importance = 125` gracias al FGS.
+- Edge Gallery tenía un FGS de descarga activo durante el lote de 100.
+
+| Lote | Carga del motor | ECDH media (p50 / p95) | HKDF media | AES-GCM media | LLM media (p50 / p95) | Total/seg media (p50 / p95) | **ECDH % del total** | JSON válido |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 (21:24) | 3457 ms | 91,8 ms (88,9 / 93,3) | 0,40 ms | 0,81 ms | 11 720 ms (10 463 / 16 827) | 11 817 ms (10 559 / 16 913) | **0,777 %** (0,754 % con la carga) | 10/10 |
+| 100 (21:38–22:12) | 3146 ms | 100,2 ms (99,0 / 128,7) | 0,78 ms | 1,06 ms | 20 204 ms (18 654 / 32 439) | 20 311 ms (18 774 / 32 548) | **0,493 %** (0,492 % con la carga) | 95/100 |
+
+**Segmento individual:** el ECDH va del 0,23 % al 1,45 % del total de su segmento (máximo con el segmento más corto, de 6,3 s).
+
+**Resultado:** ECDH supone menos del 1 % del total en ambos lotes, lejos del umbral del 5 %. **Se mantiene un ECDH por segmento** y la propuesta queda rechazada. El coste por segmento lo domina el LLM: más del 99 % del tiempo.
+
+### Observaciones
+
+1. **ECDH es más lento con el LLM activo.**
+   - Midió 86–119 ms por operación en el lote de 10 (pico de 128 ms en el primer segmento) y una media de 100 ms (49,7–161,6 ms) en el de 100.
+   - En el spike aislado eran 44 ms (40–53 ms).
+   - **No se midió la causa.** Las hipótesis candidatas, sin verificar, son contención en StrongBox o en el bus, frecuencia de CPU y presión térmica.
+   - Aun con 160 ms el ECDH sería < 1 % de un segmento de 20 s.
+2. **El LLM se ralentiza dentro del lote de 100.** Media por bloques de 10 segmentos: 12,8 s → 22,7 → 27,1 → 29,0 → 23,9 → 16,8 → 17,8 → 18,1 → 18,2 → 16,7 s. `thermalStatus` siguió en 1 al principio y al final, pero no se muestreó durante el lote. La causa (térmica, competencia con el FGS de Edge Gallery u otra) no se midió.
+3. **JSON inválido en 5 de 100.** Son los segmentos 29, 33, 43, 68 y 83. Todos dieron 264–265 caracteres y tardaron de 31 a 40 s, lo que apunta a que se agotaron los 256 tokens de salida sin cerrar el JSON. Tres de los cinco corresponden a la misma plantilla (cita médica). Las salidas no se registraron, así que la causa está sin confirmar.
+4. **Calidad de la extracción**, vista en el segmento 0:
+   - `titulo` salió como `": "`.
+   - La fecha se inventó como `2024-05-15` porque el texto no da año.
+   - Es una muestra; la calidad no se evaluó y queda para el benchmark del modelo de extracción.
+5. **Limitación del SO: no se puede iniciar un FGS desde segundo plano.**
+   - El segundo Worker de una cadena `10 → 100` empezó con la app en segundo plano.
+   - `setForeground` falló con `ForegroundServiceStartNotAllowedException: startForegroundService() not allowed`.
+   - Un lote de 100 dura unos 34 min, más que la ventana de unos 10 min de un Worker normal.
+   - Implicación para `CognitionWorker`: o los lotes caben en esa ventana (unos 25–50 segmentos con estos tiempos), o se trocean en varios Workers, o el FGS se inicia con la app en primer plano. Pendiente de diseño.
+6. **`ExistingWorkPolicy.REPLACE` no detiene un bucle bloqueante.** Una corrida de 100 quedó contaminada cuando se lanzó una segunda en el mismo proceso: las dos se ejecutaron a la vez y esos datos se descartaron. El Worker real debe comprobar `isStopped` entre segmentos.
+7. **Versión de LiteRT-LM.** Con `0.19.1`, `Backend.NPU` falla al cargar `libLiteRtDispatch_GoogleTensor.so` de `litert-npu-runtime-google-tensor:2.3.2`: `Could not load symbol LiteRtDispatchQueryInterface: undefined symbol`. 0.19.x espera la nueva ABI de dispatch y el runtime publicado exporta `LiteRtDispatchGetApi`. La versión `0.18.1` funciona.
+8. **Muestra limitada.** Es un lote de cada tamaño, con textos sintéticos, en un solo dispositivo y sin control térmico.

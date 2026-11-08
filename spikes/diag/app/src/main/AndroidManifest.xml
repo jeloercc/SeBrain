@@ -5,6 +5,10 @@
     <!-- Regla dura de CLAUDE.md: si ML Kit fusiona INTERNET, se elimina. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
+    <!-- Benchmark de CognitionWorker: lotes de más de 10 min necesitan un Worker en primer plano. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -21,5 +25,11 @@
             android:name=".LockProbeReceiver"
             android:exported="true"
             tools:ignore="ExportedReceiver" />
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
     </application>
 </manifest>

@@ -38,6 +38,7 @@ class MainActivity : Activity() {
 
         when (intent.getStringExtra("mode") ?: "all") {
             "bg" -> scheduleBackgroundTest()
+            "cognition" -> scheduleCognitionBench()
             "idle" -> Diag.info("modo idle: sin llamadas a Keystore ni a ML Kit")
             else -> scope.launch {
                 Diag.info("=== INICIO ===")
@@ -65,6 +66,21 @@ class MainActivity : Activity() {
         WorkManager.getInstance(this)
             .enqueueUniqueWork("bg_nano", ExistingWorkPolicy.REPLACE, request)
         Diag.info("Worker programado en $BG_DELAY_SECONDS s")
+    }
+
+    /** Lote de 10 y luego lote de 100, en serie; cada Worker carga y libera el motor. */
+    private fun scheduleCognitionBench() {
+        val sizes = (intent.getStringExtra("batches") ?: "10,100").split(",").map { it.trim().toInt() }
+        val requests = sizes.map {
+            OneTimeWorkRequestBuilder<CognitionBenchWorker>()
+                .setInputData(CognitionBenchWorker.input(it))
+                .build()
+        }
+        var chain = WorkManager.getInstance(this)
+            .beginUniqueWork("cognition_bench", ExistingWorkPolicy.REPLACE, requests.first())
+        requests.drop(1).forEach { chain = chain.then(it) }
+        chain.enqueue()
+        Diag.info("CognitionBenchWorker programado: lotes $sizes")
     }
 
     override fun onDestroy() {

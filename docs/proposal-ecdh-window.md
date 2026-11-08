@@ -1,8 +1,19 @@
 # Propuesta: clave efímera por ventana de tiempo + HKDF por segmento
 
-**Estado: Borrador — no aprobado.** No hay nada implementado y CLAUDE.md no cambia hasta que se apruebe.
+**Estado: Rechazada (2026-11-07).** Se mantiene un ECDH por segmento. No hay nada implementado y CLAUDE.md no cambia.
 
-**Recomendación:** no adoptarla todavía. Medir primero `CognitionWorker` completo y adoptarla solo si el ECDH supera el 5 % del tiempo de un lote. Si eso ocurre, usar la variante con ratchet.
+**Motivo:** el criterio era adoptarla solo si ECDH supera el 5 % del tiempo total por segmento. En `CognitionWorker` medido en el Pixel 10 (detalle en `docs/benchmarks.md`), ECDH quedó muy por debajo:
+
+| Lote | ECDH media | Total/seg media | ECDH % del total |
+| --- | --- | --- | --- |
+| 10 | 91,8 ms | 11 817 ms | 0,777 % |
+| 100 | 100,2 ms | 20 311 ms | 0,493 % |
+
+El máximo en un segmento individual fue 1,45 %. El LLM ocupa más del 99 % del tiempo. La propuesta ahorraría como mucho ese < 1 %, y a cambio empeoraría el secreto hacia adelante dentro de la ventana (riesgo 1).
+
+**Reabrir solo si** cambia el reparto de costes, por ejemplo si muchos segmentos dejan de pasar por el LLM o el LLM baja a menos de 2 s por segmento.
+
+El resto del documento se conserva como registro del análisis.
 
 ## Problema
 
@@ -81,7 +92,7 @@ La propuesta solo compensa si hay muchos segmentos que no pasan por el LLM (por 
 | **C. Esta propuesta con ratchet** | 44 ms por ventana | Riesgos 1 a 6 | Si la medición lo justifica |
 | **D. Esta propuesta sin ratchet** | 44 ms por ventana | Sin secreto hacia adelante dentro de la ventana | No recomendada |
 
-## Decisión pedida
+## Decisión
 
-1. ¿Se aprueba medir `CognitionWorker` antes de decidir, con el umbral de 5 % como criterio para adoptar C?
-2. Si se adopta C más adelante: ¿tiempo máximo de 15 min y cierre al bloquear son aceptables?
+1. Se midió `CognitionWorker` con el umbral del 5 % como criterio: ECDH quedó en 0,49–0,78 %. **Rechazada.**
+2. Las preguntas sobre la ventana de 15 min y el cierre al bloquear ya no aplican.

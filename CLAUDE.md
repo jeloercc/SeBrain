@@ -18,7 +18,7 @@ Documento de investigación completo (el porqué de cada decisión): https://cla
 
 | Capa | Usar | NO usar (descartado) |
 | --- | --- | --- |
-| LLM background | LiteRT-LM (Kotlin), backend NPU → GPU → CPU | MLC LLM / TVM (no usa la TPU del Tensor G5) |
+| LLM background | LiteRT-LM (Kotlin) **fijado a `litertlm-android:0.18.1`** + `litert-npu-runtime-google-tensor:2.3.2`, backend NPU → GPU → CPU. 0.19.1 falla con ese runtime (`undefined symbol: LiteRtDispatchQueryInterface`). No subir de versión sin volver a probar la NPU en el Pixel 10 | MLC LLM / TVM (no usa la TPU del Tensor G5) |
 | Aceleración NPU | LiteRT CompiledModel + Google Tensor ML SDK (Beta) | Delegado NNAPI (deprecado en Android 15) |
 | LLM interactivo | LiteRT-LM por defecto. Opcional tras un ajuste, fuera del núcleo: ML Kit GenAI Prompt API (Gemini Nano), solo con Activity en primer plano; la app no depende de la versión `nano-*` | Gemini Nano desde Worker o foreground service (`BACKGROUND_USE_BLOCKED`) |
 | Embeddings | EmbeddingGemma 2 Text 270M, Matryoshka a 256 dims, L2 normalizado | — |
@@ -54,6 +54,7 @@ Desactivado y fuera del alcance hasta la Fase 7. Android 17 lo revoca con Advanc
 - Google Tensor SDK Beta (Pixel 10 y 11): acceso concedido. Aún sin usar; no se usa en el spike de diagnóstico.
 - ML Kit Prompt API: `com.google.mlkit:genai-prompt:1.0.0-beta5`. `getBaseModelName()` observado el 2026-11-07: `nano-v4-full`.
 - Tensor ML SDK: la compilación de modelos para la TPU exige estación Linux x86_64. En la Mac, usar modelos TPU ya compilados (`.litertlm` de LiteRT Community / model garden) o un contenedor/VM Linux. No intentar compilar para TPU en macOS.
+- Modelo de los spikes: `gemma-4-E2B-it_Google_Tensor_G5.litertlm` copiado de la app Edge Gallery (SHA-256 `62faebcf…705f27`). **Solo para spikes.** En la app final el modelo debe obtenerse de una fuente oficial (`litert-community` en Hugging Face), con los términos de Gemma aceptados, y con el SHA-256 fijado en código. Se sigue importando por SAF / `adb push`: la app no descarga nada.
 
 ## Módulos Gradle
 
