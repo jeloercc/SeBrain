@@ -101,8 +101,18 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         val llm = ArrayList<Double>(n)
         val total = ArrayList<Double>(n)
         var jsonOk = 0
+        var emptyTitle = 0
+        val power = applicationContext.getSystemService(PowerManager::class.java)
+        val thermal = IntArray(8)
         engine.use {
             for (i in 0 until n) {
+                if (isStopped) {
+                    Diag.result("$label detenido", "INFO", "seg $i", "isStopped=true; stopReason=$stopReason")
+                    return
+                }
+                val thermalStatus = power.currentThermalStatus
+                val headroom = power.getThermalHeadroom(10)
+                thermal[thermalStatus.coerceIn(0, 7)]++
                 val t0 = System.nanoTime()
                 val blob = File(dir, "seg_$i.bin").readBytes()
                 val seg = Segment.parse(blob)
@@ -118,15 +128,25 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 val (out, llmMs) = timedMs { extract(engine, text) }
                 val totalMs = (System.nanoTime() - t0) / 1_000_000.0
 
-                val valid = runCatching { org.json.JSONObject(out) }.isSuccess
+                val parsed = runCatching { org.json.JSONObject(out) }.getOrNull()
+                val valid = parsed != null
                 if (valid) jsonOk++
+                val titleEmpty = parsed != null &&
+                    parsed.optString("titulo").trim().trim(':', ' ', '"').isEmpty()
+                if (titleEmpty) emptyTitle++
                 ecdh += ecdhMs; hkdf += hkdfMs; aes += aesMs; llm += llmMs; total += totalMs
                 Diag.result(
                     "$label seg $i", if (valid) "PASS" else "JSON_INVALIDO",
                     "total=%.0f ms".format(totalMs),
-                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; salida=%d chars; ecdh%%=%.3f"
-                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs),
+                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; salida=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; tituloVacio=%b"
+                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty),
                 )
+                if (!valid) {
+                    // Texto sintético: se registra completo para diagnosticar el fallo.
+                    out.replace('\n', ' ').chunked(800).forEachIndexed { k, part ->
+                        Diag.info("$label salida invalida seg $i parte $k: $part")
+                    }
+                }
                 if (i == 0) Diag.info("$label salida seg 0: ${out.replace('\n', ' ').take(400)}")
                 File(dir, "seg_$i.bin").delete()
             }
@@ -141,15 +161,16 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         Diag.result(
             "$label ECDH % del total", if (100 * ecdh.sum() / total.sum() < 1) "< 1 %" else ">= 1 %",
             "%.3f %%".format(100 * ecdh.sum() / total.sum()),
-            "suma ecdh=%.0f ms / suma total=%.0f ms; con carga del motor: %.3f %% de %.0f ms; JSON válido %d/%d"
-                .format(ecdh.sum(), total.sum(), 100 * ecdh.sum() / wallMs, wallMs, jsonOk, n),
+            "suma ecdh=%.0f ms / suma total=%.0f ms; con carga del motor: %.3f %% de %.0f ms; JSON válido %d/%d; título vacío %d; thermalStatus por segmento %s; maxOutputToken=%d"
+                .format(ecdh.sum(), total.sum(), 100 * ecdh.sum() / wallMs, wallMs, jsonOk, n, emptyTitle,
+                    thermal.withIndex().filter { it.value > 0 }.joinToString { "${it.index}:${it.value}" }, MAX_OUTPUT_TOKENS),
         )
     }
 
     private fun extract(engine: Engine, text: String): String {
         val config = ConversationConfig(
             systemInstruction = Contents.of(SYSTEM),
-            maxOutputToken = 256,
+            maxOutputToken = MAX_OUTPUT_TOKENS,
             thinkingConfig = ThinkingConfig(false),
             enableResponseFormat = true,
         )
@@ -276,6 +297,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         const val KEY_BATCH = "batch"
         fun input(n: Int) = workDataOf(KEY_BATCH to n)
 
+        private const val MAX_OUTPUT_TOKENS = 512
         private const val INBOX_ALIAS = "diag_k_inbox_bench"
         private const val CHANNEL = "bench"
         private const val NOTIFICATION_ID = 42
