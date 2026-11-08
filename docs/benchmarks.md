@@ -22,7 +22,7 @@
 | `KeyInfo.securityLevel` AES | PASS | `STRONGBOX` (2), 256 bits | |
 | AES-GCM wrap de 32 bytes | PASS | 33,07 / 33,92 ms | Media de 20; `Cipher.ENCRYPT_MODE` con `PURPOSE_ENCRYPT`, no `PURPOSE_WRAP_KEY`; incluye `init` y `doFinal` |
 | AES-GCM unwrap de 32 bytes | PASS | 32,74 / 32,44 ms | Media de 20; `Cipher.DECRYPT_MODE`; coincide con el original en todas las iteraciones |
-| `setUnlockedDeviceRequired` con el dispositivo bloqueado | No probado | — | Solo se midió desbloqueado; no se comprobó el rechazo estando bloqueado |
+| `setUnlockedDeviceRequired` con el dispositivo bloqueado | PASS (rechazada) | `KeyStoreException: Device locked` | Ver la sección «`K_wrap` con el Pixel bloqueado» |
 | Gemini Nano `checkStatus()` | INFO | `DOWNLOADABLE` / `AVAILABLE` | Tras `download()` pasó a disponible |
 | Gemini Nano `download()` | PASS | 2 s | Duración sospechosa para un modelo; ver observación 2 |
 | `getBaseModelName()` | PASS | `nano-v4-full` | Reproducido 3 veces; cumple el criterio actualizado (`nano-*`, genera texto, bootloader bloqueado, sin `INTERNET`). La documentación lista el Pixel 10 en `nano-v3` |
@@ -52,6 +52,36 @@ Caused by: AICore failed with error type 2-INFERENCE_ERROR and error code 30-BAC
 4. **Telemetría transitiva.** `genai-prompt` arrastra `com.google.android.datatransport:transport-backend-cct`, `transport-runtime`, `firebase-encoders`, `firebase-encoders-json` y `firebase-components`. De ahí viene `INTERNET`. Ver el análisis más abajo.
 5. **Versión de Kotlin.** `genai-prompt:1.0.0-beta5` está compilado con Kotlin 2.4.0, y el Kotlin integrado en AGP 9.5.1 (2.2.0) no puede leerlo. Hay que fijar KGP 2.4.0 en el classpath de `buildscript`.
 6. **Muestra limitada.** Son dos ejecuciones, en un dispositivo conectado por USB y sin control térmico. Las cifras sirven como orden de magnitud.
+
+## `K_wrap` con el Pixel bloqueado, 2026-11-07
+
+**Método:** clave AES-256-GCM en StrongBox con `setUnlockedDeviceRequired(true)`. Con el teléfono desbloqueado se cifra una DEK aleatoria de 32 bytes; el IV, el texto cifrado y el SHA-256 de la DEK se guardan en `noBackupFilesDir`. Después se lanza `LockProbeReceiver` por `am broadcast` en cada estado; `isDeviceLocked` se lee dentro de la app y se confirma con `dumpsys trust`.
+
+| Prueba | Estado | Resultado | Excepción | Nota |
+| --- | --- | --- | --- | --- |
+| Descifrar, control antes (14:08) | Desbloqueado | PASS | — | El SHA-256 coincide |
+| Cifrar, control antes (14:08) | Desbloqueado | PASS | — | |
+| Descifrar, sonda 1 | Bloqueado | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
+| Cifrar, sonda 1 | Bloqueado | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
+| Descifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
+| Cifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
+| Usar una clave recién creada | Bloqueado | Rechazada | `InvalidKeyException` ← `KeyStoreException` | Se observó por accidente al intentar preparar la prueba |
+| Descifrar tras volver a desbloquear | Desbloqueado | **No probado** | — | El teléfono no se desbloqueó durante la espera |
+
+```text
+java.security.InvalidKeyException: Keystore operation failed
+  at android.security.keystore2.AndroidKeyStoreCipherSpiBase.engineInit
+  at javax.crypto.Cipher.init
+Caused by: android.security.KeyStoreException: Device locked (internal Keystore code: -72)
+    0: system/security/keystore2/src/enforcements.rs:590: device is locked.
+    1: Error::Km(r#DEVICE_LOCKED)) (public error code: 2 internal Keystore code: -72)
+```
+
+**Notas:**
+
+- El rechazo llega en `Cipher.init`, no en `doFinal`.
+- La excepción externa es `InvalidKeyException`, con `android.security.KeyStoreException` como causa (`getNumericErrorCode()=2`). No aparece `UserNotAuthenticatedException`. El código de la app debe recorrer la cadena de causas para reconocer el bloqueo.
+- Falta comprobar que la clave vuelve a funcionar tras el desbloqueo, es decir, que el bloqueo no la invalida.
 
 ## Telemetría de ML Kit sin `INTERNET`, 2026-11-07
 
