@@ -66,7 +66,8 @@ Caused by: AICore failed with error type 2-INFERENCE_ERROR and error code 30-BAC
 | Descifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
 | Cifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
 | Usar una clave recién creada | Bloqueado | Rechazada | `InvalidKeyException` ← `KeyStoreException` | Se observó por accidente al intentar preparar la prueba |
-| Descifrar tras volver a desbloquear | Desbloqueado | **No probado** | — | El teléfono no se desbloqueó durante la espera |
+| Descifrar tras volver a desbloquear (18:50) | Desbloqueado | PASS | — | El SHA-256 coincide; la clave sobrevive al bloqueo |
+| Cifrar tras volver a desbloquear (18:50) | Desbloqueado | PASS | — | |
 
 ```text
 java.security.InvalidKeyException: Keystore operation failed
@@ -81,7 +82,7 @@ Caused by: android.security.KeyStoreException: Device locked (internal Keystore 
 
 - El rechazo llega en `Cipher.init`, no en `doFinal`.
 - La excepción externa es `InvalidKeyException`, con `android.security.KeyStoreException` como causa (`getNumericErrorCode()=2`). No aparece `UserNotAuthenticatedException`. El código de la app debe recorrer la cadena de causas para reconocer el bloqueo.
-- Falta comprobar que la clave vuelve a funcionar tras el desbloqueo, es decir, que el bloqueo no la invalida.
+- Tras desbloquear, la misma clave vuelve a descifrar el blob guardado: el bloqueo no la invalida.
 
 ## Telemetría de ML Kit sin `INTERNET`, 2026-11-07
 
