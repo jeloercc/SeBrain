@@ -162,7 +162,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 val valid = parsed != null
                 if (valid) jsonOk++
                 val titleEmpty = parsed != null &&
-                    parsed.optString("titulo").trim().trim(':', ' ', '"').isEmpty()
+                    parsed.optString("title").trim().trim(':', ' ', '"').isEmpty()
                 if (titleEmpty) emptyTitle++
                 ecdh += ecdhMs; hkdf += hkdfMs; aes += aesMs; llm += llmMs; total += totalMs
                 Diag.result(
@@ -350,19 +350,20 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         const val MODEL_FILE = "gemma-4-E2B-it_Google_Tensor_G5.litertlm"
         const val MODEL_SHA256 = "62faebcfd101acb841c33249530430397e031eb17d4dd3d2a71193d135705f27"
 
-        private const val SYSTEM =
-            "Extrae información estructurada del texto del usuario. Responde solo con JSON válido " +
-                "que siga el esquema: titulo (frase corta), personas, fechas (ISO 8601 si es posible), " +
-                "temas y tareas pendientes. Listas vacías si no hay datos."
+        const val SYSTEM =
+            "Extract structured information from the user's text. Respond only with valid JSON " +
+                "that follows the schema: title (short phrase), people, dates (ISO 8601 if possible), " +
+                "topics and pending tasks. Use empty lists if there is no data. " +
+                "Keep values in the original language of the text."
 
         private val SCHEMA = """
             {"type":"object","properties":{
-              "titulo":{"type":"string"},
-              "personas":{"type":"array","items":{"type":"string"}},
-              "fechas":{"type":"array","items":{"type":"string"}},
-              "temas":{"type":"array","items":{"type":"string"}},
-              "tareas":{"type":"array","items":{"type":"string"}}},
-             "required":["titulo","personas","fechas","temas","tareas"]}
+              "title":{"type":"string"},
+              "people":{"type":"array","items":{"type":"string"}},
+              "dates":{"type":"array","items":{"type":"string"}},
+              "topics":{"type":"array","items":{"type":"string"}},
+              "tasks":{"type":"array","items":{"type":"string"}}},
+             "required":["title","people","dates","topics","tasks"]}
         """.trimIndent()
 
         /** Textos sintéticos tipo notificación o contenido compartido. `%d` varía cada segmento. */

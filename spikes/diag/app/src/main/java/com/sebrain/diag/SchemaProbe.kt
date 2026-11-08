@@ -89,31 +89,31 @@ class SchemaProbe(private val context: Context) {
                 basicValid(out, j) ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
             },
             Probe("esquema endurecido completo", failing, { ResponseFormat.json(schema(xg = true, hard = true)) }) { out, j ->
-                basicValid(out, j) ?: titleRule(j!!.optString("titulo"), 3, 80, Regex("^[^\\s:\"]"))
+                basicValid(out, j) ?: titleRule(j!!.optString("title"), 3, 80, Regex("^[^\\s:\"]"))
                     ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
             },
-            Probe("minLength=40 en titulo", listOf(0, 3, 7), { ResponseFormat.json(schema(titulo = """{"type":"string","minLength":40}""")) }) { out, j ->
-                basicValid(out, j) ?: j!!.optString("titulo").let { if (it.length < 40) "len=${it.length}" else null }
+            Probe("minLength=40 en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","minLength":40}""")) }) { out, j ->
+                basicValid(out, j) ?: j!!.optString("title").let { if (it.length < 40) "len=${it.length}" else null }
             },
-            Probe("maxLength=10 en titulo", listOf(0, 3, 7), { ResponseFormat.json(schema(titulo = """{"type":"string","maxLength":10}""")) }) { out, j ->
-                basicValid(out, j) ?: j!!.optString("titulo").let { if (it.length > 10) "len=${it.length}" else null }
+            Probe("maxLength=10 en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","maxLength":10}""")) }) { out, j ->
+                basicValid(out, j) ?: j!!.optString("title").let { if (it.length > 10) "len=${it.length}" else null }
             },
-            Probe("pattern ^ZZ en titulo", listOf(0, 3, 7), { ResponseFormat.json(schema(titulo = """{"type":"string","pattern":"^ZZ"}""")) }) { out, j ->
-                basicValid(out, j) ?: j!!.optString("titulo").let { if (!it.startsWith("ZZ")) "titulo=\"${it.take(40)}\"" else null }
+            Probe("pattern ^ZZ en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","pattern":"^ZZ"}""")) }) { out, j ->
+                basicValid(out, j) ?: j!!.optString("title").let { if (!it.startsWith("ZZ")) "title=\"${it.take(40)}\"" else null }
             },
-            Probe("maxItems=1 en personas", listOf(0, 4, 5), { ResponseFormat.json(schema(personasMax = 1)) }) { out, j ->
-                basicValid(out, j) ?: j!!.optJSONArray("personas")?.length()?.let { if (it > 1) "personas=$it" else null }
+            Probe("maxItems=1 en people", listOf(0, 4, 5), { ResponseFormat.json(schema(peopleMax = 1)) }) { out, j ->
+                basicValid(out, j) ?: j!!.optJSONArray("people")?.length()?.let { if (it > 1) "people=$it" else null }
             },
             Probe(
                 "additionalProperties=false", listOf(0, 3, 4), { ResponseFormat.json(schema(additional = false)) },
-                extraSystem = " Añade siempre además un campo \"lugar\" con el sitio mencionado.",
-            ) { out, j -> basicValid(out, j) ?: if (j!!.has("lugar")) "apareció \"lugar\"" else null },
+                extraSystem = " Always also add a \"place\" field with the location mentioned.",
+            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "apareció \"place\"" else null },
             Probe(
                 "control additionalProperties ausente", listOf(0, 3, 4), { ResponseFormat.json(BASE) },
-                extraSystem = " Añade siempre además un campo \"lugar\" con el sitio mencionado.",
-            ) { out, j -> basicValid(out, j) ?: if (j!!.has("lugar")) "apareció \"lugar\" (esperado sin restricción)" else null },
+                extraSystem = " Always also add a \"place\" field with the location mentioned.",
+            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "apareció \"place\" (esperado sin restricción)" else null },
             Probe("regex JSON compacto", failing, { ResponseFormat.regex(COMPACT_REGEX) }) { out, j ->
-                basicValid(out, j) ?: titleRule(j!!.optString("titulo"), 3, 80, Regex("^[^\\s:\"]"))
+                basicValid(out, j) ?: titleRule(j!!.optString("title"), 3, 80, Regex("^[^\\s:\"]"))
                     ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
             },
         )
@@ -123,9 +123,9 @@ class SchemaProbe(private val context: Context) {
         if (j == null) "JSON inválido (${out.length} chars)" else null
 
     private fun titleRule(t: String, min: Int, max: Int, re: Regex): String? = when {
-        t.length < min -> "titulo corto (${t.length}): \"$t\""
-        t.length > max -> "titulo largo (${t.length})"
-        !re.containsMatchIn(t) -> "titulo no cumple pattern: \"${t.take(40)}\""
+        t.length < min -> "title corto (${t.length}): \"$t\""
+        t.length > max -> "title largo (${t.length})"
+        !re.containsMatchIn(t) -> "title no cumple pattern: \"${t.take(40)}\""
         else -> null
     }
 
@@ -140,10 +140,7 @@ class SchemaProbe(private val context: Context) {
     }
 
     companion object {
-        private const val SYSTEM =
-            "Extrae información estructurada del texto del usuario. Responde solo con JSON válido " +
-                "que siga el esquema: titulo (frase corta), personas, fechas (ISO 8601 si es posible), " +
-                "temas y tareas pendientes. Listas vacías si no hay datos."
+        private const val SYSTEM = CognitionBenchWorker.SYSTEM
 
         private val BASE = schema()
 
@@ -153,11 +150,11 @@ class SchemaProbe(private val context: Context) {
         fun schema(
             xg: Boolean = false,
             hard: Boolean = false,
-            titulo: String? = null,
-            personasMax: Int? = null,
+            title: String? = null,
+            peopleMax: Int? = null,
             additional: Boolean? = null,
         ): String {
-            val t = titulo ?: if (hard) """{"type":"string","minLength":3,"maxLength":80,"pattern":"^[^\\s:\"]"}""" else """{"type":"string"}"""
+            val t = title ?: if (hard) """{"type":"string","minLength":3,"maxLength":80,"pattern":"^[^\\s:\"]"}""" else """{"type":"string"}"""
             val obj = JSONObject()
             obj.put("type", "object")
             if (xg) obj.put("x-guidance", JSONObject().put("whitespace_flexible", false))
@@ -165,20 +162,20 @@ class SchemaProbe(private val context: Context) {
             obj.put(
                 "properties",
                 JSONObject()
-                    .put("titulo", JSONObject(t))
-                    .put("personas", JSONObject(arr(personasMax ?: if (hard) 10 else null)))
-                    .put("fechas", JSONObject(arr(if (hard) 10 else null)))
-                    .put("temas", JSONObject(arr(if (hard) 8 else null)))
-                    .put("tareas", JSONObject(arr(if (hard) 10 else null))),
+                    .put("title", JSONObject(t))
+                    .put("people", JSONObject(arr(peopleMax ?: if (hard) 10 else null)))
+                    .put("dates", JSONObject(arr(if (hard) 10 else null)))
+                    .put("topics", JSONObject(arr(if (hard) 8 else null)))
+                    .put("tasks", JSONObject(arr(if (hard) 10 else null))),
             )
-            obj.put("required", JSONArray(listOf("titulo", "personas", "fechas", "temas", "tareas")))
+            obj.put("required", JSONArray(listOf("title", "people", "dates", "topics", "tasks")))
             return obj.toString()
         }
 
         private const val S = "\"(?:[^\"\\\\\\x00-\\x1f]|\\\\[\"\\\\/bfnrt]){1,120}\""
         private const val LIST = "\\[(?:$S(?:,$S){0,9})?\\]"
         private const val COMPACT_REGEX =
-            "\\{\"titulo\":\"[^\\s:\"\\\\][^\"\\\\\\x00-\\x1f]{2,79}\"," +
-                "\"personas\":$LIST,\"fechas\":$LIST,\"temas\":$LIST,\"tareas\":$LIST\\}"
+            "\\{\"title\":\"[^\\s:\"\\\\][^\"\\\\\\x00-\\x1f]{2,79}\"," +
+                "\"people\":$LIST,\"dates\":$LIST,\"topics\":$LIST,\"tasks\":$LIST\\}"
     }
 }

@@ -46,6 +46,7 @@ class MainActivity : Activity() {
             "cognition" -> scheduleCognitionBench()
             "cognition-bg" -> scheduleBackgroundCognition()
             "schema" -> scope.launch { SchemaProbe(applicationContext).run() }
+            "whitespace" -> scope.launch { WhitespaceProbe(applicationContext).run() }
             "idle" -> Diag.info("modo idle: sin llamadas a Keystore ni a ML Kit")
             else -> scope.launch {
                 Diag.info("=== INICIO ===")

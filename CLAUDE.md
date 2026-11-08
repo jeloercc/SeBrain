@@ -13,6 +13,7 @@ Documento de investigación completo (el porqué de cada decisión): https://cla
 - `allowBackup="false"`, `dataExtractionRules` que excluyan todo, `FLAG_SECURE` en pantallas con contenido de la bóveda.
 - Los modelos se importan localmente (SAF / `adb push`) y se verifican con SHA-256 fijado en código. La app no descarga nada.
 - Toda librería nativa alineada a páginas de 16 KB (`-Wl,-z,max-page-size=16384`, NDK r27+).
+- Language: code, comments, identifiers, repo docs, commit messages, system prompts and JSON keys are in English. Extracted values keep the source language of the captured text (do not translate user data). Conversation with the user stays in Spanish.
 
 ## Stack decidido
 
