@@ -1,73 +1,73 @@
-# Benchmarks — Fase 0
+# Benchmarks — Phase 0
 
-## Spike de diagnóstico (`spikes/diag/`), 2026-11-07
+## Diagnostic spike (`spikes/diag/`), 2026-11-07
 
-**Dispositivo:** Pixel 10 (`frankel`), Android 17, SDK 37 (`sdk_full` 37.1), parche 2026-10-05, build `CP3A.261005.005`, AICore 26.10.15.7. USB conectado, batería 74 %, Wi-Fi activo.
+**Device:** Pixel 10 (`frankel`), Android 17, SDK 37 (`sdk_full` 37.1), patch 2026-10-05, build `CP3A.261005.005`, AICore 26.10.15.7. USB connected, battery 74%, Wi-Fi on.
 
-**Build:** AGP 9.5.1, Gradle 9.6.0, KGP 2.4.0, JDK 21, `genai-prompt:1.0.0-beta5`, `minSdk` 36, `targetSdk` 37, `compileSdk` 37.1. APK debug sin `android.permission.INTERNET`.
+**Build:** AGP 9.5.1, Gradle 9.6.0, KGP 2.4.0, JDK 21, `genai-prompt:1.0.0-beta5`, `minSdk` 36, `targetSdk` 37, `compileSdk` 37.1. Debug APK without `android.permission.INTERNET`.
 
-**Ejecuciones:** dos completas en primer plano (12:21:11 y 12:21:40), con el dispositivo desbloqueado y la app en primer plano durante toda la prueba. Valores en el formato `ejecución 1 / ejecución 2`.
+**Runs:** two complete foreground runs (12:21:11 and 12:21:40), with the device unlocked and the app in the foreground for the whole test. Values in the format `run 1 / run 2`.
 
-| Prueba | Resultado | Valor | Nota |
+| Test | Result | Value | Note |
 | --- | --- | --- | --- |
-| `ro.boot.verifiedbootstate` / `ro.boot.flash.locked` | PASS | `green` / `1` | Bootloader bloqueado |
-| `FEATURE_STRONGBOX_KEYSTORE` | PASS | `true` | Por adb: `strongbox_keystore=300`, `hardware_keystore=500` |
-| Keygen EC P-256 `PURPOSE_AGREE_KEY` en StrongBox | PASS | 121,2 / 123,0 ms | **StrongBox acepta `AGREE_KEY`**; el reintento en TEE no hizo falta y no se ejecutó |
-| `KeyInfo.securityLevel` EC | PASS | `STRONGBOX` (2) | |
-| ECDH lado Keystore (privada StrongBox + pública efímera) | PASS | 44,80 / 44,05 ms | Media de 20; rango 40,02–52,88 ms; secretos iguales en todas las iteraciones |
-| ECDH lado software (privada efímera + pública Keystore) | PASS | 0,58 / 0,57 ms | Media de 20; provider `AndroidOpenSSL` |
-| Keygen efímera en software | PASS | 0,23 / 0,22 ms | Media de 20 |
-| ECDH completo (efímera + ambos lados) | PASS | 45,68 / 44,90 ms | Media de 20 |
-| Keygen AES-256-GCM en StrongBox con `setUnlockedDeviceRequired(true)` | PASS | 63,6 / 25,8 ms | Una muestra por ejecución |
-| `KeyInfo.securityLevel` AES | PASS | `STRONGBOX` (2), 256 bits | |
-| AES-GCM wrap de 32 bytes | PASS | 33,07 / 33,92 ms | Media de 20; `Cipher.ENCRYPT_MODE` con `PURPOSE_ENCRYPT`, no `PURPOSE_WRAP_KEY`; incluye `init` y `doFinal` |
-| AES-GCM unwrap de 32 bytes | PASS | 32,74 / 32,44 ms | Media de 20; `Cipher.DECRYPT_MODE`; coincide con el original en todas las iteraciones |
-| `setUnlockedDeviceRequired` con el dispositivo bloqueado | PASS (rechazada) | `KeyStoreException: Device locked` | Ver la sección «`K_wrap` con el Pixel bloqueado» |
-| Gemini Nano `checkStatus()` | INFO | `DOWNLOADABLE` / `AVAILABLE` | Tras `download()` pasó a disponible |
-| Gemini Nano `download()` | PASS | 2 s | Duración sospechosa para un modelo; ver observación 2 |
-| `getBaseModelName()` | PASS | `nano-v4-full` | Reproducido 3 veces; cumple el criterio actualizado (`nano-*`, genera texto, bootloader bloqueado, sin `INTERNET`). La documentación lista el Pixel 10 en `nano-v3` |
-| Prompt, tiempo al primer token, primera llamada del proceso | PASS | 587 / 422 ms | Streaming, sin `warmup()`; no es un arranque en frío garantizado (observación 3) |
-| Prompt, tiempo total, primera llamada del proceso | PASS | 946 / 740 ms | 3 chunks, 77 caracteres |
-| Prompt, tiempo al primer token, segunda llamada | PASS | 358 / 360 ms | |
-| Prompt, tiempo total, segunda llamada | PASS | 693 / 710 ms | 3 chunks, 77 caracteres |
-| Worker en segundo plano, `generateContent` | PASS (bloqueado) | `BACKGROUND_USE_BLOCKED` (30) | Proceso con `importance=400`, `foreground=false`; ejecutado una vez |
-| Nano con `INTERNET` eliminado del manifest | PASS | Todas las pruebas Nano funcionan | `tools:node="remove"`; verificado con `aapt2 dump permissions` |
+| `ro.boot.verifiedbootstate` / `ro.boot.flash.locked` | PASS | `green` / `1` | Bootloader locked |
+| `FEATURE_STRONGBOX_KEYSTORE` | PASS | `true` | Via adb: `strongbox_keystore=300`, `hardware_keystore=500` |
+| EC P-256 `PURPOSE_AGREE_KEY` keygen in StrongBox | PASS | 121.2 / 123.0 ms | **StrongBox accepts `AGREE_KEY`**; the TEE retry was not needed and did not run |
+| EC `KeyInfo.securityLevel` | PASS | `STRONGBOX` (2) | |
+| ECDH Keystore side (StrongBox private + ephemeral public) | PASS | 44.80 / 44.05 ms | Mean of 20; range 40.02–52.88 ms; equal secrets on every iteration |
+| ECDH software side (ephemeral private + Keystore public) | PASS | 0.58 / 0.57 ms | Mean of 20; provider `AndroidOpenSSL` |
+| Ephemeral keygen in software | PASS | 0.23 / 0.22 ms | Mean of 20 |
+| Full ECDH (ephemeral + both sides) | PASS | 45.68 / 44.90 ms | Mean of 20 |
+| AES-256-GCM keygen in StrongBox with `setUnlockedDeviceRequired(true)` | PASS | 63.6 / 25.8 ms | One sample per run |
+| AES `KeyInfo.securityLevel` | PASS | `STRONGBOX` (2), 256 bits | |
+| AES-GCM wrap of 32 bytes | PASS | 33.07 / 33.92 ms | Mean of 20; `Cipher.ENCRYPT_MODE` with `PURPOSE_ENCRYPT`, not `PURPOSE_WRAP_KEY`; includes `init` and `doFinal` |
+| AES-GCM unwrap of 32 bytes | PASS | 32.74 / 32.44 ms | Mean of 20; `Cipher.DECRYPT_MODE`; matches the original on every iteration |
+| `setUnlockedDeviceRequired` with the device locked | PASS (rejected) | `KeyStoreException: Device locked` | See section "`K_wrap` with the Pixel locked" |
+| Gemini Nano `checkStatus()` | INFO | `DOWNLOADABLE` / `AVAILABLE` | After `download()` it became available |
+| Gemini Nano `download()` | PASS | 2 s | Suspicious duration for a model; see observation 2 |
+| `getBaseModelName()` | PASS | `nano-v4-full` | Reproduced 3 times; meets the updated criterion (`nano-*`, generates text, bootloader locked, no `INTERNET`). The documentation lists Pixel 10 as `nano-v3` |
+| Prompt, time to first token, first call of the process | PASS | 587 / 422 ms | Streaming, no `warmup()`; not a guaranteed cold start (observation 3) |
+| Prompt, total time, first call of the process | PASS | 946 / 740 ms | 3 chunks, 77 characters |
+| Prompt, time to first token, second call | PASS | 358 / 360 ms | |
+| Prompt, total time, second call | PASS | 693 / 710 ms | 3 chunks, 77 characters |
+| Background Worker, `generateContent` | PASS (blocked) | `BACKGROUND_USE_BLOCKED` (30) | Process with `importance=400`, `foreground=false`; run once |
+| Nano with `INTERNET` removed from the manifest | PASS | All Nano tests work | `tools:node="remove"`; verified with `aapt2 dump permissions` |
 
-**Prompt usado:** «Responde en una sola frase: ¿para qué sirve una llave?»
+**Prompt used:** «Responde en una sola frase: ¿para qué sirve una llave?»
 
-**Respuesta (idéntica en las 4 llamadas):** «Una llave sirve para abrir o cerrar cerraduras y acceder a objetos o lugares.»
+**Response (identical in all 4 calls):** «Una llave sirve para abrir o cerrar cerraduras y acceder a objetos o lugares.»
 
-**Error exacto del Worker:**
+**Exact Worker error:**
 
 ```text
 com.google.mlkit.genai.common.GenAiException: [ErrorCode 30] Background usage is blocked. Please use the API when your app is in the foreground instead.
 Caused by: AICore failed with error type 2-INFERENCE_ERROR and error code 30-BACKGROUND_USE_BLOCKED: Inference failed.
 ```
 
-### Observaciones
+### Observations
 
-1. **Modelo distinto del documentado.** El dispositivo reporta `nano-v4-full`. La documentación de ML Kit (consultada el 2026-11-07) lista el Pixel 10 en `nano-v3` y `nano-v4` solo en Pixel 11 y Galaxy Z Flip8/Fold8. No se encontró documentación oficial que explique este valor. El criterio de CLAUDE.md se cambió para que la app no dependa de la versión.
-2. **La descarga no se pudo medir.** `DOWNLOADABLE` pasó a completada en 2 s, sin eventos de progreso registrados. Es probable que los pesos ya estuvieran en el dispositivo, pero no está confirmado: el tamaño del modelo sigue sin medirse. Una ejecución anterior de la app (12:16:59) pudo influir, y sus logs se perdieron.
-3. **«Primera llamada» no significa frío.** El proceso de la app era nuevo, pero AICore pudo mantener el modelo cargado de llamadas previas. Para un arranque en frío real habría que medir tras reiniciar el dispositivo.
-4. **Telemetría transitiva.** `genai-prompt` arrastra `com.google.android.datatransport:transport-backend-cct`, `transport-runtime`, `firebase-encoders`, `firebase-encoders-json` y `firebase-components`. De ahí viene `INTERNET`. Ver el análisis más abajo.
-5. **Versión de Kotlin.** `genai-prompt:1.0.0-beta5` está compilado con Kotlin 2.4.0, y el Kotlin integrado en AGP 9.5.1 (2.2.0) no puede leerlo. Hay que fijar KGP 2.4.0 en el classpath de `buildscript`.
-6. **Muestra limitada.** Son dos ejecuciones, en un dispositivo conectado por USB y sin control térmico. Las cifras sirven como orden de magnitud.
+1. **Model differs from the documentation.** The device reports `nano-v4-full`. The ML Kit documentation (consulted on 2026-11-07) lists Pixel 10 as `nano-v3` and `nano-v4` only on Pixel 11 and Galaxy Z Flip8/Fold8. No official documentation explaining this value was found. The CLAUDE.md criterion was changed so the app does not depend on the version.
+2. **The download could not be measured.** `DOWNLOADABLE` became complete in 2 s, with no progress events recorded. The weights were probably already on the device, but this is not confirmed: the model size remains unmeasured. A previous run of the app (12:16:59) may have influenced this, and its logs were lost.
+3. **"First call" does not mean cold.** The app process was new, but AICore may have kept the model loaded from previous calls. A real cold start would have to be measured after rebooting the device.
+4. **Transitive telemetry.** `genai-prompt` pulls in `com.google.android.datatransport:transport-backend-cct`, `transport-runtime`, `firebase-encoders`, `firebase-encoders-json` and `firebase-components`. That is where `INTERNET` comes from. See the analysis below.
+5. **Kotlin version.** `genai-prompt:1.0.0-beta5` is compiled with Kotlin 2.4.0, and the Kotlin built into AGP 9.5.1 (2.2.0) cannot read it. KGP 2.4.0 must be pinned on the `buildscript` classpath.
+6. **Limited sample.** These are two runs, on a device connected via USB and without thermal control. The figures serve as an order of magnitude.
 
-## `K_wrap` con el Pixel bloqueado, 2026-11-07
+## `K_wrap` with the Pixel locked, 2026-11-07
 
-**Método:** clave AES-256-GCM en StrongBox con `setUnlockedDeviceRequired(true)`. Con el teléfono desbloqueado se cifra una DEK aleatoria de 32 bytes; el IV, el texto cifrado y el SHA-256 de la DEK se guardan en `noBackupFilesDir`. Después se lanza `LockProbeReceiver` por `am broadcast` en cada estado; `isDeviceLocked` se lee dentro de la app y se confirma con `dumpsys trust`.
+**Method:** AES-256-GCM key in StrongBox with `setUnlockedDeviceRequired(true)`. With the phone unlocked, a random 32-byte DEK is encrypted; the IV, the ciphertext and the DEK's SHA-256 are stored in `noBackupFilesDir`. Then `LockProbeReceiver` is triggered via `am broadcast` in each state; `isDeviceLocked` is read inside the app and confirmed with `dumpsys trust`.
 
-| Prueba | Estado | Resultado | Excepción | Nota |
+| Test | State | Result | Exception | Note |
 | --- | --- | --- | --- | --- |
-| Descifrar, control antes (14:08) | Desbloqueado | PASS | — | El SHA-256 coincide |
-| Cifrar, control antes (14:08) | Desbloqueado | PASS | — | |
-| Descifrar, sonda 1 | Bloqueado | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
-| Cifrar, sonda 1 | Bloqueado | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
-| Descifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
-| Cifrar, sonda 2 (18:49) | Bloqueado, pantalla en reposo | PASS (rechazada) | `InvalidKeyException` ← `KeyStoreException` | |
-| Usar una clave recién creada | Bloqueado | Rechazada | `InvalidKeyException` ← `KeyStoreException` | Se observó por accidente al intentar preparar la prueba |
-| Descifrar tras volver a desbloquear (18:50) | Desbloqueado | PASS | — | El SHA-256 coincide; la clave sobrevive al bloqueo |
-| Cifrar tras volver a desbloquear (18:50) | Desbloqueado | PASS | — | |
+| Decrypt, control before (14:08) | Unlocked | PASS | — | SHA-256 matches |
+| Encrypt, control before (14:08) | Unlocked | PASS | — | |
+| Decrypt, probe 1 | Locked | PASS (rejected) | `InvalidKeyException` ← `KeyStoreException` | |
+| Encrypt, probe 1 | Locked | PASS (rejected) | `InvalidKeyException` ← `KeyStoreException` | |
+| Decrypt, probe 2 (18:49) | Locked, screen idle | PASS (rejected) | `InvalidKeyException` ← `KeyStoreException` | |
+| Encrypt, probe 2 (18:49) | Locked, screen idle | PASS (rejected) | `InvalidKeyException` ← `KeyStoreException` | |
+| Use a newly created key | Locked | Rejected | `InvalidKeyException` ← `KeyStoreException` | Observed by accident while trying to prepare the test |
+| Decrypt after unlocking again (18:50) | Unlocked | PASS | — | SHA-256 matches; the key survives the lock |
+| Encrypt after unlocking again (18:50) | Unlocked | PASS | — | |
 
 ```text
 java.security.InvalidKeyException: Keystore operation failed
@@ -78,29 +78,29 @@ Caused by: android.security.KeyStoreException: Device locked (internal Keystore 
     1: Error::Km(r#DEVICE_LOCKED)) (public error code: 2 internal Keystore code: -72)
 ```
 
-**Notas:**
+**Notes:**
 
-- El rechazo llega en `Cipher.init`, no en `doFinal`.
-- La excepción externa es `InvalidKeyException`, con `android.security.KeyStoreException` como causa (`getNumericErrorCode()=2`). No aparece `UserNotAuthenticatedException`. El código de la app debe recorrer la cadena de causas para reconocer el bloqueo.
-- Tras desbloquear, la misma clave vuelve a descifrar el blob guardado: el bloqueo no la invalida.
+- The rejection arrives at `Cipher.init`, not at `doFinal`.
+- The outer exception is `InvalidKeyException`, with `android.security.KeyStoreException` as the cause (`getNumericErrorCode()=2`). `UserNotAuthenticatedException` does not appear. App code must walk the cause chain to recognize the lock.
+- After unlocking, the same key decrypts the stored blob again: the lock does not invalidate it.
 
-## Telemetría de ML Kit sin `INTERNET`, 2026-11-07
+## ML Kit telemetry without `INTERNET`, 2026-11-07
 
-**Conclusión:** sin `INTERNET`, no se observó tráfico de la app y el intento de subida falla en el DNS. Pero el SDK **sí intenta subir** a Firebase Logging y **guarda eventos sin cifrar** en disco. La excepción sigue pendiente de confirmar.
+**Conclusion:** without `INTERNET`, no traffic from the app was observed and the upload attempt fails at DNS. But the SDK **does attempt to upload** to Firebase Logging and **stores events unencrypted** on disk. The exception remains pending confirmation.
 
-**Método:** APK debug sin R8 y sin `INTERNET`, datos de la app borrados con `pm clear`. Con `log.tag.TRuntime.*` activado de forma temporal, se capturó logcat, se inspeccionó la base de datos con `run-as` y se forzó el job con `cmd jobscheduler run -f`.
+**Method:** debug APK without R8 and without `INTERNET`, app data cleared with `pm clear`. With `log.tag.TRuntime.*` temporarily enabled, logcat was captured, the database was inspected with `run-as` and the job was forced with `cmd jobscheduler run -f`.
 
-| Prueba | Resultado | Valor | Nota |
+| Test | Result | Value | Note |
 | --- | --- | --- | --- |
-| App arrancada sin llamar a ML Kit (40 s) | Sin actividad | 0 eventos, sin base de datos, sin job | `MlKitInitProvider` y los servicios siguen en el manifest |
-| Tras usar Nano (2 prompts) | Telemetría en cola | 12 eventos `FIREBASE_ML_SDK` | Se crea `databases/com.google.android.datatransport.events` |
-| Job de subida programado | Sí | `JobInfoSchedulerService` | Requiere espera mínima de 1 día, `IDLE` y conectividad |
-| Subida forzada (1 intento) | Bloqueada | `EPERM` | Ver el log debajo |
-| Eventos tras el intento | Siguen en disco | 12, `num_attempts=0` | No se midió cuánto tiempo se retienen |
-| Tráfico del UID en `dumpsys netstats detail` | Sin tráfico | 0 filas para el UID, de 747 filas | |
-| Grupos del proceso | Sin `inet` | `9997 20230 50230` | Falta el grupo 3003 |
-| Texto del prompt y la respuesta en los payloads | No encontrado | 0 coincidencias | Búsqueda de texto; el protobuf no se decodificó por completo |
-| Texto del prompt y la respuesta en los datos de la app | No encontrado | 0 coincidencias | `grep` recursivo en el directorio privado |
+| App started without calling ML Kit (40 s) | No activity | 0 events, no database, no job | `MlKitInitProvider` and the services remain in the manifest |
+| After using Nano (2 prompts) | Telemetry queued | 12 `FIREBASE_ML_SDK` events | `databases/com.google.android.datatransport.events` is created |
+| Upload job scheduled | Yes | `JobInfoSchedulerService` | Requires a minimum wait of 1 day, `IDLE` and connectivity |
+| Forced upload (1 attempt) | Blocked | `EPERM` | See the log below |
+| Events after the attempt | Still on disk | 12, `num_attempts=0` | How long they are retained was not measured |
+| UID traffic in `dumpsys netstats detail` | No traffic | 0 rows for the UID, out of 747 rows | |
+| Process groups | No `inet` | `9997 20230 50230` | Group 3003 is missing |
+| Prompt and response text in the payloads | Not found | 0 matches | Text search; the protobuf was not fully decoded |
+| Prompt and response text in the app data | Not found | 0 matches | Recursive `grep` of the private directory |
 
 ```text
 TransportRuntime.CctTransportBackend: Making request to: https://firebaselogging.googleapis.com/v0cc/log/batch?format=json_proto3
@@ -108,36 +108,36 @@ TransportRuntime.Executor: java.lang.SecurityException: Permission denied (missi
   Caused by: android.system.ErrnoException: android_getaddrinfo failed: EPERM (Operation not permitted)
 ```
 
-**Endpoints en el dex** (ofuscados en el código y decodificados aquí):
+**Endpoints in the dex** (obfuscated in the code and decoded here):
 
 - `https://firebaselogging.googleapis.com/v0cc/log/batch?format=json_proto3`
 - `https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog`
 
-**Lo que contienen los eventos, sin cifrar en disco:**
+**What the events contain, unencrypted on disk:**
 
-- **Metadatos:** `device`, `model`, `manufacturer`, `hardware`, `product`, `fingerprint`, `os-uild`, `sdk-version`, `country`, `locale`, `mcc_mnc`, `tz-offset`, `net-type`, `mobile-subtype`, `application_build`.
-- **Payload (110–142 bytes):** paquete de la app, versión del SDK, locale y un UUID de instancia.
-- **`shared_prefs/com.google.mlkit.internal.xml`:** `ml_sdk_instance_id`, un UUID persistente.
+- **Metadata:** `device`, `model`, `manufacturer`, `hardware`, `product`, `fingerprint`, `os-uild`, `sdk-version`, `country`, `locale`, `mcc_mnc`, `tz-offset`, `net-type`, `mobile-subtype`, `application_build`.
+- **Payload (110–142 bytes):** app package, SDK version, locale and an instance UUID.
+- **`shared_prefs/com.google.mlkit.internal.xml`:** `ml_sdk_instance_id`, a persistent UUID.
 
-**Conflictos con CLAUDE.md:**
+**Conflicts with CLAUDE.md:**
 
-- «Cero SDKs de analítica, telemetría»: se incumple si ML Kit está en el APK, aunque no llegue a enviar nada.
-- «Nada se escribe en disco sin cifrar»: se incumple solo con metadatos del dispositivo. No se encontró contenido del usuario.
+- "Zero analytics, telemetry SDKs": violated if ML Kit is in the APK, even if it never sends anything.
+- "Nothing is written to disk unencrypted": violated only with device metadata. No user content was found.
 
-**Sobre el ajuste:** un ajuste apagado evitó los eventos en la prueba de 40 s, pero las librerías, el init provider y los servicios siguen dentro del APK. Solo un flavor de build sin ML Kit los eliminaría.
+**About the setting:** a setting turned off avoided the events in the 40-s test, but the libraries, the init provider and the services remain inside the APK. Only a build flavor without ML Kit would remove them.
 
-**Límites:**
+**Limits:**
 
-- Se analizó solo el proceso de la app. AICore y Google Play Services son procesos separados, con sus propios permisos, y no se analizaron.
-- Es una ejecución con un solo intento de subida forzado y sin captura de paquetes.
-- En la fase sin ML Kit no se comprobó si se crea `ml_sdk_instance_id`.
-- No se probó eliminar los servicios de `datatransport` del manifest.
+- Only the app process was analyzed. AICore and Google Play Services are separate processes, with their own permissions, and were not analyzed.
+- It is one run with a single forced upload attempt and no packet capture.
+- In the phase without ML Kit, whether `ml_sdk_instance_id` is created was not checked.
+- Removing the `datatransport` services from the manifest was not tested.
 
-### Dependencias en el APK
+### Dependencies in the APK
 
-APK debug sin R8. Son 83 entradas del `debugRuntimeClasspath`, con las versiones ya resueltas (incluye BOM y artefactos vacíos como `listenablefuture`).
+Debug APK without R8. 83 entries of `debugRuntimeClasspath`, with versions already resolved (includes BOM and empty artifacts such as `listenablefuture`).
 
-**Relacionadas con telemetría, Google y ML Kit:**
+**Related to telemetry, Google and ML Kit:**
 
 ```text
 com.google.android.datatransport:transport-api:2.2.1
@@ -156,14 +156,14 @@ com.google.mlkit:genai-prompt:1.0.0-beta5
 com.google.mlkit:genai-schema:1.0.0-alpha2
 ```
 
-**Métodos en el dex:** `com.google.android.gms` 11164, `com.google.android.datatransport` 1158, `com.google.mlkit` 1161, `com.google.firebase` 362.
+**Methods in the dex:** `com.google.android.gms` 11164, `com.google.android.datatransport` 1158, `com.google.mlkit` 1161, `com.google.firebase` 362.
 
-**Componentes de terceros fusionados en el manifest:** `TransportBackendDiscovery`, `JobInfoSchedulerService`, `AlarmManagerSchedulerBroadcastReceiver`, `MlKitComponentDiscoveryService`, `MlKitInitProvider`, más los de WorkManager y `androidx.startup`.
+**Third-party components merged into the manifest:** `TransportBackendDiscovery`, `JobInfoSchedulerService`, `AlarmManagerSchedulerBroadcastReceiver`, `MlKitComponentDiscoveryService`, `MlKitInitProvider`, plus those of WorkManager and `androidx.startup`.
 
-**Permisos resultantes:** `aicore.service.BIND_SERVICE`, `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE` y el permiso propio `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`. Ninguno es `INTERNET`.
+**Resulting permissions:** `aicore.service.BIND_SERVICE`, `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE` and the app's own `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` permission. None is `INTERNET`.
 
 <details>
-<summary>Lista completa (83)</summary>
+<summary>Full list (83)</summary>
 
 ```text
 androidx.activity:activity:1.6.0
@@ -253,280 +253,280 @@ org.reactivestreams:reactive-streams:1.0.3
 
 </details>
 
-## Gemma-4-E2B-it en Edge Gallery, 2026-11-07
+## Gemma-4-E2B-it in Edge Gallery, 2026-11-07
 
-Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del spike.
+Data measured by the user in Edge Gallery, on the Pixel 10. It does not come from the spike.
 
-| Prueba | Backend | Corrida | TTFT | Prefill | Decode | RAM | Resultado |
+| Test | Backend | Run | TTFT | Prefill | Decode | RAM | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| JSON | TPU | 1 | 1206 ms | 142,6 tok/s | 19,2 tok/s | 1,03 GB | JSON válido; Monterrey omitido en «lugares» |
-| JSON | TPU | 2 | 1396 ms | 114,6 tok/s | 19,4 tok/s | 659 MB | JSON válido; Monterrey omitido en «lugares» |
-| RAG, 730 tokens | TPU | 1 | 2254 ms | 350,1 tok/s | 19,8 tok/s | 1,05 GB | Correcta |
-| Frase corta | TPU | 1 | 492 ms | 66,8 tok/s | 17,6 tok/s | 793 MB | — |
-| Frase corta | CPU (2,6 GB) | 1 | 1914 ms | 18,5 tok/s | 14,3 tok/s | 2,29 GB | — |
+| JSON | TPU | 1 | 1206 ms | 142.6 tok/s | 19.2 tok/s | 1.03 GB | Valid JSON; Monterrey omitted in «lugares» |
+| JSON | TPU | 2 | 1396 ms | 114.6 tok/s | 19.4 tok/s | 659 MB | Valid JSON; Monterrey omitted in «lugares» |
+| RAG, 730 tokens | TPU | 1 | 2254 ms | 350.1 tok/s | 19.8 tok/s | 1.05 GB | Correct |
+| Short sentence | TPU | 1 | 492 ms | 66.8 tok/s | 17.6 tok/s | 793 MB | — |
+| Short sentence | CPU (2.6 GB) | 1 | 1914 ms | 18.5 tok/s | 14.3 tok/s | 2.29 GB | — |
 
-**Condiciones:** max tokens 4096 (no 1024); sin control de temperatura en la UI; teléfono sin calentamiento notable.
+**Conditions:** max tokens 4096 (not 1024); no temperature control in the UI; phone without noticeable heating.
 
-## `CognitionWorker`: ECDH frente al tiempo total por segmento, 2026-11-07
+## `CognitionWorker`: ECDH versus total time per segment, 2026-11-07
 
-**Objetivo:** decidir sobre `docs/proposal-ecdh-window.md`. Criterio fijado por el usuario: si ECDH es < 5 % del tiempo total por segmento, se mantiene un ECDH por segmento.
+**Goal:** decide on `docs/proposal-ecdh-window.md`. Criterion set by the user: if ECDH is < 5% of the total time per segment, one ECDH per segment is kept.
 
-**Código:** `spikes/diag/.../CognitionBenchWorker.kt`. Es un `CoroutineWorker` con `setForeground` (`dataSync`) y se lanza con `am start ... --es mode cognition --es batches <n>`.
+**Code:** `spikes/diag/.../CognitionBenchWorker.kt`. It is a `CoroutineWorker` with `setForeground` (`dataSync`) and is launched with `am start ... --es mode cognition --es batches <n>`.
 
-**Montaje:**
-- **Ingesta simulada** (fuera del cronómetro): N textos sintéticos de 150–450 caracteres, cifrados con ECIES contra `K_inbox`, con la jerarquía actual (efímera en software por segmento, HKDF-SHA256, AES-256-GCM). Cada segmento se escribe en `noBackupFilesDir`.
-- **`K_inbox`:** EC P-256 `AGREE_KEY` en StrongBox (alias `diag_k_inbox_bench`).
-- **Por segmento, cronometrado:**
-  - lectura del fichero;
-  - ECDH en StrongBox (`KeyAgreement("ECDH", "AndroidKeyStore")`);
+**Setup:**
+- **Simulated ingestion** (outside the stopwatch): N synthetic texts of 150–450 characters, encrypted with ECIES against `K_inbox`, with the current hierarchy (software ephemeral per segment, HKDF-SHA256, AES-256-GCM). Each segment is written to `noBackupFilesDir`.
+- **`K_inbox`:** EC P-256 `AGREE_KEY` in StrongBox (alias `diag_k_inbox_bench`).
+- **Per segment, timed:**
+  - file read;
+  - ECDH in StrongBox (`KeyAgreement("ECDH", "AndroidKeyStore")`);
   - HKDF;
-  - AES-GCM al descifrar;
-  - extracción con el LLM: conversación nueva, `ResponseFormat.json(schema)`, `maxOutputToken = 256`, thinking desactivado.
-- **Total por segmento:** todo lo anterior. La carga del motor (una por lote) se mide aparte.
+  - AES-GCM decryption;
+  - LLM extraction: new conversation, `ResponseFormat.json(schema)`, `maxOutputToken = 256`, thinking disabled.
+- **Total per segment:** all of the above. Engine load (one per batch) is measured separately.
 
-**Motor:**
+**Engine:**
 - `litertlm-android:0.18.1` + `litert-npu-runtime-google-tensor:2.3.2`, `Backend.NPU(nativeLibraryDir)`.
-- Modelo: `gemma-4-E2B-it_Google_Tensor_G5.litertlm`, copiado de Edge Gallery. El SHA-256 `62faebcfd101acb841c33249530430397e031eb17d4dd3d2a71193d135705f27` se verifica antes de cada lote.
-- Los `.so` tienen `LOAD p_align = 16384`.
+- Model: `gemma-4-E2B-it_Google_Tensor_G5.litertlm`, copied from Edge Gallery. The SHA-256 `62faebcfd101acb841c33249530430397e031eb17d4dd3d2a71193d135705f27` is verified before each batch.
+- The `.so` files have `LOAD p_align = 16384`.
 
-**Condiciones:**
-- USB conectado, batería al 80 %.
-- `thermalStatus = 1` (LIGHT) al inicio y al final de cada lote.
-- Pantalla apagada o la app en segundo plano durante casi todo el lote; el proceso se mantuvo con `importance = 125` gracias al FGS.
-- Edge Gallery tenía un FGS de descarga activo durante el lote de 100.
+**Conditions:**
+- USB connected, battery at 80%.
+- `thermalStatus = 1` (LIGHT) at the start and end of each batch.
+- Screen off or app in the background for almost the whole batch; the process stayed at `importance = 125` thanks to the FGS.
+- Edge Gallery had an active download FGS during the batch of 100.
 
-| Lote | Carga del motor | ECDH media (p50 / p95) | HKDF media | AES-GCM media | LLM media (p50 / p95) | Total/seg media (p50 / p95) | **ECDH % del total** | JSON válido |
+| Batch | Engine load | ECDH mean (p50 / p95) | HKDF mean | AES-GCM mean | LLM mean (p50 / p95) | Total/seg mean (p50 / p95) | **ECDH % of total** | Valid JSON |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 10 (21:24) | 3457 ms | 91,8 ms (88,9 / 93,3) | 0,40 ms | 0,81 ms | 11 720 ms (10 463 / 16 827) | 11 817 ms (10 559 / 16 913) | **0,777 %** (0,754 % con la carga) | 10/10 |
-| 100 (21:38–22:12) | 3146 ms | 100,2 ms (99,0 / 128,7) | 0,78 ms | 1,06 ms | 20 204 ms (18 654 / 32 439) | 20 311 ms (18 774 / 32 548) | **0,493 %** (0,492 % con la carga) | 95/100 |
+| 10 (21:24) | 3457 ms | 91.8 ms (88.9 / 93.3) | 0.40 ms | 0.81 ms | 11,720 ms (10,463 / 16,827) | 11,817 ms (10,559 / 16,913) | **0.777%** (0.754% with load) | 10/10 |
+| 100 (21:38–22:12) | 3146 ms | 100.2 ms (99.0 / 128.7) | 0.78 ms | 1.06 ms | 20,204 ms (18,654 / 32,439) | 20,311 ms (18,774 / 32,548) | **0.493%** (0.492% with load) | 95/100 |
 
-**Segmento individual:** el ECDH va del 0,23 % al 1,45 % del total de su segmento (máximo con el segmento más corto, de 6,3 s).
+**Individual segment:** ECDH ranges from 0.23% to 1.45% of its segment's total (maximum with the shortest segment, 6.3 s).
 
-**Resultado:** ECDH supone menos del 1 % del total en ambos lotes, lejos del umbral del 5 %. **Se mantiene un ECDH por segmento** y la propuesta queda rechazada. El coste por segmento lo domina el LLM: más del 99 % del tiempo.
+**Result:** ECDH is less than 1% of the total in both batches, far from the 5% threshold. **One ECDH per segment is kept** and the proposal is rejected. The per-segment cost is dominated by the LLM: more than 99% of the time.
 
-### Observaciones
+### Observations
 
-1. **ECDH es más lento con el LLM activo.**
-   - Midió 86–119 ms por operación en el lote de 10 (pico de 128 ms en el primer segmento) y una media de 100 ms (49,7–161,6 ms) en el de 100.
-   - En el spike aislado eran 44 ms (40–53 ms).
-   - **No se midió la causa.** Las hipótesis candidatas, sin verificar, son contención en StrongBox o en el bus, frecuencia de CPU y presión térmica.
-   - Aun con 160 ms el ECDH sería < 1 % de un segmento de 20 s.
-2. **El LLM se ralentiza dentro del lote de 100.** Media por bloques de 10 segmentos: 12,8 s → 22,7 → 27,1 → 29,0 → 23,9 → 16,8 → 17,8 → 18,1 → 18,2 → 16,7 s. `thermalStatus` siguió en 1 al principio y al final, pero no se muestreó durante el lote. La causa (térmica, competencia con el FGS de Edge Gallery u otra) no se midió.
-3. **JSON inválido en 5 de 100.** Son los segmentos 29, 33, 43, 68 y 83. Todos dieron 264–265 caracteres y tardaron de 31 a 40 s, lo que apunta a que se agotaron los 256 tokens de salida sin cerrar el JSON. Tres de los cinco corresponden a la misma plantilla (cita médica). Las salidas no se registraron, así que la causa está sin confirmar.
-4. **Calidad de la extracción**, vista en el segmento 0:
-   - `titulo` salió como `": "`.
-   - La fecha se inventó como `2024-05-15` porque el texto no da año.
-   - Es una muestra; la calidad no se evaluó y queda para el benchmark del modelo de extracción.
-5. **Limitación del SO: no se puede iniciar un FGS desde segundo plano.**
-   - El segundo Worker de una cadena `10 → 100` empezó con la app en segundo plano.
-   - `setForeground` falló con `ForegroundServiceStartNotAllowedException: startForegroundService() not allowed`.
-   - Un lote de 100 dura unos 34 min, más que la ventana de unos 10 min de un Worker normal.
-   - Implicación para `CognitionWorker`: o los lotes caben en esa ventana (unos 25–50 segmentos con estos tiempos), o se trocean en varios Workers, o el FGS se inicia con la app en primer plano. Pendiente de diseño.
-6. **`ExistingWorkPolicy.REPLACE` no detiene un bucle bloqueante.** Una corrida de 100 quedó contaminada cuando se lanzó una segunda en el mismo proceso: las dos se ejecutaron a la vez y esos datos se descartaron. El Worker real debe comprobar `isStopped` entre segmentos.
-7. **Versión de LiteRT-LM.** Con `0.19.1`, `Backend.NPU` falla al cargar `libLiteRtDispatch_GoogleTensor.so` de `litert-npu-runtime-google-tensor:2.3.2`: `Could not load symbol LiteRtDispatchQueryInterface: undefined symbol`. 0.19.x espera la nueva ABI de dispatch y el runtime publicado exporta `LiteRtDispatchGetApi`. La versión `0.18.1` funciona.
-8. **Muestra limitada.** Es un lote de cada tamaño, con textos sintéticos, en un solo dispositivo y sin control térmico.
+1. **ECDH is slower with the LLM active.**
+   - It measured 86–119 ms per operation in the batch of 10 (peak of 128 ms on the first segment) and a mean of 100 ms (49.7–161.6 ms) in the batch of 100.
+   - In the isolated spike it was 44 ms (40–53 ms).
+   - **The cause was not measured.** Candidate hypotheses, unverified, are contention in StrongBox or on the bus, CPU frequency and thermal pressure.
+   - Even at 160 ms, ECDH would be < 1% of a 20-s segment.
+2. **The LLM slows down within the batch of 100.** Mean per block of 10 segments: 12.8 s → 22.7 → 27.1 → 29.0 → 23.9 → 16.8 → 17.8 → 18.1 → 18.2 → 16.7 s. `thermalStatus` stayed at 1 at the start and end, but was not sampled during the batch. The cause (thermal, competition with the Edge Gallery FGS or other) was not measured.
+3. **Invalid JSON in 5 of 100.** These are segments 29, 33, 43, 68 and 83. All gave 264–265 characters and took 31 to 40 s, which suggests the 256 output tokens ran out without closing the JSON. Three of the five correspond to the same template (medical appointment). The outputs were not recorded, so the cause is unconfirmed.
+4. **Extraction quality**, seen in segment 0:
+   - `titulo` came out as `": "`.
+   - The date was invented as `2024-05-15` because the text gives no year.
+   - It is one sample; quality was not evaluated and is left for the extraction model benchmark.
+5. **OS limitation: an FGS cannot be started from the background.**
+   - The second Worker of a `10 → 100` chain started with the app in the background.
+   - `setForeground` failed with `ForegroundServiceStartNotAllowedException: startForegroundService() not allowed`.
+   - A batch of 100 lasts about 34 min, more than the roughly 10-min window of a regular Worker.
+   - Implication for `CognitionWorker`: either batches fit within that window (about 25–50 segments at these times), or they are split across several Workers, or the FGS is started with the app in the foreground. Design pending.
+6. **`ExistingWorkPolicy.REPLACE` does not stop a blocking loop.** A run of 100 was contaminated when a second one was launched in the same process: both ran at once and that data was discarded. The real Worker must check `isStopped` between segments.
+7. **LiteRT-LM version.** With `0.19.1`, `Backend.NPU` fails to load `libLiteRtDispatch_GoogleTensor.so` from `litert-npu-runtime-google-tensor:2.3.2`: `Could not load symbol LiteRtDispatchQueryInterface: undefined symbol`. 0.19.x expects the new dispatch ABI and the published runtime exports `LiteRtDispatchGetApi`. Version `0.18.1` works.
+8. **Limited sample.** One batch of each size, with synthetic texts, on a single device and without thermal control.
 
-### Repetición del lote de 100 (corrida 2), 2026-11-07 22:17–22:37
+### Repeat of the batch of 100 (run 2), 2026-11-07 22:17–22:37
 
-**Cambios respecto a la corrida 1:**
-- `maxOutputToken` pasa de 256 a 512.
-- `thermalStatus` y `getThermalHeadroom(10)` se muestrean en cada segmento.
-- Las salidas inválidas se registran completas.
-- Se comprueba `isStopped` entre segmentos.
-- Edge Gallery cerrado con `force-stop` y sin descargas (ningún servicio activo).
-- Mismo prompt, mismos textos y mismo modelo. Inicio con batería a 35,1 °C, 80 %, USB.
+**Changes from run 1:**
+- `maxOutputToken` goes from 256 to 512.
+- `thermalStatus` and `getThermalHeadroom(10)` are sampled on each segment.
+- Invalid outputs are recorded in full.
+- `isStopped` is checked between segments.
+- Edge Gallery closed with `force-stop` and no downloads (no active service).
+- Same prompt, same texts and same model. Start with battery at 35.1 °C, 80%, USB.
 
-| Métrica | Corrida 1 (21:38) | Corrida 2 (22:17) |
+| Metric | Run 1 (21:38) | Run 2 (22:17) |
 | --- | --- | --- |
-| Duración del lote | 33,9 min | 19,5 min |
-| Carga del motor | 3146 ms | 4786 ms |
-| ECDH media (p95) | 100,2 ms (128,7) | 91,0 ms (101,2) |
-| LLM media (p50 / p95) | 20 204 ms (18 654 / 32 439) | 11 563 ms (10 262 / 16 048) |
-| Total/seg media (p95) | 20 311 ms (32 548) | 11 658 ms (16 156) |
-| **ECDH % del total** | 0,493 % | **0,781 %** |
-| JSON válido | 95/100 | **95/100** |
-| Título vacío entre los válidos | no medido | **19/95** |
-| `thermalStatus` | 1 al inicio y al final | 0 en 48 segmentos, 1 en 52; nunca ≥ 2 |
+| Batch duration | 33.9 min | 19.5 min |
+| Engine load | 3146 ms | 4786 ms |
+| ECDH mean (p95) | 100.2 ms (128.7) | 91.0 ms (101.2) |
+| LLM mean (p50 / p95) | 20,204 ms (18,654 / 32,439) | 11,563 ms (10,262 / 16,048) |
+| Total/seg mean (p95) | 20,311 ms (32,548) | 11,658 ms (16,156) |
+| **ECDH % of total** | 0.493% | **0.781%** |
+| Valid JSON | 95/100 | **95/100** |
+| Empty title among the valid ones | not measured | **19/95** |
+| `thermalStatus` | 1 at start and end | 0 on 48 segments, 1 on 52; never ≥ 2 |
 
-**Total/seg medio por bloques de 10 segmentos (ms):**
+**Mean total/seg per block of 10 segments (ms):**
 
-| Bloque | 0–9 | 10–19 | 20–29 | 30–39 | 40–49 | 50–59 | 60–69 | 70–79 | 80–89 | 90–99 |
+| Block | 0–9 | 10–19 | 20–29 | 30–39 | 40–49 | 50–59 | 60–69 | 70–79 | 80–89 | 90–99 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Corrida 1 | 12 789 | 22 705 | 27 134 | 28 968 | 23 925 | 16 844 | 17 761 | 18 062 | 18 241 | 16 681 |
-| Corrida 2 | 12 130 | 10 704 | 11 803 | 12 628 | 12 151 | 9 407 | 12 241 | 11 658 | 12 272 | 11 586 |
-| `headroom10s` medio, corrida 2 | 0,686 | 0,726 | 0,769 | 0,780 | 0,796 | 0,802 | 0,807 | 0,808 | 0,810 | 0,816 |
+| Run 1 | 12,789 | 22,705 | 27,134 | 28,968 | 23,925 | 16,844 | 17,761 | 18,062 | 18,241 | 16,681 |
+| Run 2 | 12,130 | 10,704 | 11,803 | 12,628 | 12,151 | 9,407 | 12,241 | 11,658 | 12,272 | 11,586 |
+| Mean `headroom10s`, run 2 | 0.686 | 0.726 | 0.769 | 0.780 | 0.796 | 0.802 | 0.807 | 0.808 | 0.810 | 0.816 |
 
-**Conclusiones:**
+**Conclusions:**
 
-1. **La ralentización de la corrida 1 no se reproduce.** Con Edge Gallery cerrado, el tiempo por segmento se mantiene estable en 9,4–12,6 s durante todo el lote. `thermalStatus` no pasó de 1, aunque el headroom subió de 0,69 a 0,82. La correlación apunta a la carga de Edge Gallery (FGS de descarga activo en la corrida 1) y no a la temperatura, pero **la causa no está demostrada**: no se midió la carga de CPU, de E/S ni de la NPU.
-2. **ECDH sigue < 1 %.** Es el 0,781 % con un LLM más rápido; el máximo por segmento fue 1,45 %. La decisión de mantener un ECDH por segmento no cambia.
-3. **ECDH con el LLM activo:** 83–127 ms (media 91 ms), frente a 44 ms en el spike aislado. Se reproduce sin Edge Gallery, así que no lo causaba Edge Gallery. La causa sigue sin medirse.
-4. **El JSON inválido no se debe al límite de tokens.**
-   - Fallan **los mismos 5 segmentos** que en la corrida 1 (29, 33, 43, 68, 83), con texto idéntico. La generación es determinista.
-   - Las 5 salidas completas son `{ "titulo":": "` seguido de `\n\t` repetidos (corregido el 2026-11-08; el log mostraba los saltos de línea como espacios) hasta agotar el límite: 520–521 caracteres con 512 tokens, 264 con 256.
-   - Es un bucle degenerado de espacios en blanco bajo decodificación restringida, no un JSON largo truncado.
-   - Doblar los tokens solo duplica el tiempo perdido: 32 s por segmento fallido, frente a una mediana de 10 s.
-5. **El título vacío es sistemático.** 19 de los 95 válidos tienen `titulo` igual a `": "`. Los 5 inválidos empiezan igual. El modelo emite `": "` como valor del primer campo, lo que apunta al prompt o al esquema y no al azar. No investigado.
-6. **Implicación para el diseño:** un reintento con la misma entrada y más tokens no arregla nada. El §4 de `docs/design-cognition-worker.md` se ajustó en consecuencia.
+1. **The slowdown of run 1 does not reproduce.** With Edge Gallery closed, the time per segment stays stable at 9.4–12.6 s throughout the batch. `thermalStatus` did not exceed 1, although headroom rose from 0.69 to 0.82. The correlation points to the Edge Gallery load (download FGS active in run 1) and not to temperature, but **the cause is not proven**: CPU, I/O and NPU load were not measured.
+2. **ECDH stays < 1%.** It is 0.781% with a faster LLM; the maximum per segment was 1.45%. The decision to keep one ECDH per segment does not change.
+3. **ECDH with the LLM active:** 83–127 ms (mean 91 ms), versus 44 ms in the isolated spike. It reproduces without Edge Gallery, so Edge Gallery was not the cause. The cause remains unmeasured.
+4. **The invalid JSON is not due to the token limit.**
+   - **The same 5 segments** fail as in run 1 (29, 33, 43, 68, 83), with identical text. Generation is deterministic.
+   - The 5 complete outputs are `{ "titulo":": "` followed by repeated `\n\t` (corrected on 2026-11-08; the log showed newlines as spaces) until the limit runs out: 520–521 characters with 512 tokens, 264 with 256.
+   - It is a degenerate whitespace loop under constrained decoding, not a long truncated JSON.
+   - Doubling the tokens only doubles the time wasted: 32 s per failed segment, versus a median of 10 s.
+5. **The empty title is systematic.** 19 of the 95 valid ones have `titulo` equal to `": "`. The 5 invalid ones start the same way. The model emits `": "` as the value of the first field, which points to the prompt or the schema and not to chance. Not investigated.
+6. **Implication for the design:** a retry with the same input and more tokens fixes nothing. §4 of `docs/design-cognition-worker.md` was adjusted accordingly.
 
-## `CognitionWorker` en segundo plano real (sin FGS), 2026-11-07
+## `CognitionWorker` in real background (no FGS), 2026-11-07
 
-**Montaje:**
-- `--es mode cognition-bg`: Worker de 10 segmentos **sin `setForeground`**, con `requiresCharging` y un retraso de 120 s.
-- Tras programarlo, la actividad se cierra con BACK y el proceso se mata con `kill -9`. No se usa `force-stop`, porque cancela el trabajo programado, ni `am kill`, que no lo mata mientras WorkManager lo mantiene con `oom adj` 0.
-- La pantalla se apaga con `KEYCODE_SLEEP`.
-- USB conectado y cargando. Mismo motor y modelo que en la corrida 2, `maxOutputToken` 512 y mismo prompt.
+**Setup:**
+- `--es mode cognition-bg`: Worker of 10 segments **without `setForeground`**, with `requiresCharging` and a delay of 120 s.
+- After scheduling it, the activity is closed with BACK and the process is killed with `kill -9`. `force-stop` is not used, because it cancels the scheduled work, nor `am kill`, which does not kill it while WorkManager keeps it at `oom adj` 0.
+- The screen is turned off with `KEYCODE_SLEEP`.
+- USB connected and charging. Same engine and model as run 2, `maxOutputToken` 512 and same prompt.
 
-### Corrida A: pantalla apagada, sin idle forzado (22:48–22:59) — válida
+### Run A: screen off, no forced idle (22:48–22:59) — valid
 
-| Métrica | Valor |
+| Metric | Value |
 | --- | --- |
-| Arranque del Worker | 22:54:22. Programado para las 22:50:06; JobScheduler lo aplazó unos 4 min |
-| Estado del proceso | `importance=230`, `interactive=false`, `deviceIdle=false` al inicio, en los segmentos 0 y 9 y al final |
-| Backend | **NPU.** `libLiteRtDispatch_GoogleTensor.so` cargado sin errores de dispatch |
-| Carga del motor | 5073 ms |
-| SHA-256 del modelo (3,9 GB) | 22 343 ms, frente a 4–10 s en primer plano |
-| ECDH media (p95) | 101,0 ms (105,7) |
-| LLM media (p50 / p95) | **29 183 ms** (29 414 / 32 350) |
-| Total/seg media | 29 287 ms |
-| ECDH % del total | 0,345 % |
-| JSON válido / título vacío | 10/10 / 2 |
-| `thermalStatus` | 0 en los 10 segmentos |
-| Duración del lote | 298 s, dentro de la ventana de unos 10 min |
+| Worker start | 22:54:22. Scheduled for 22:50:06; JobScheduler deferred it about 4 min |
+| Process state | `importance=230`, `interactive=false`, `deviceIdle=false` at the start, on segments 0 and 9 and at the end |
+| Backend | **NPU.** `libLiteRtDispatch_GoogleTensor.so` loaded with no dispatch errors |
+| Engine load | 5073 ms |
+| Model SHA-256 (3.9 GB) | 22,343 ms, versus 4–10 s in the foreground |
+| ECDH mean (p95) | 101.0 ms (105.7) |
+| LLM mean (p50 / p95) | **29,183 ms** (29,414 / 32,350) |
+| Total/seg mean | 29,287 ms |
+| ECDH % of total | 0.345% |
+| Valid JSON / empty title | 10/10 / 2 |
+| `thermalStatus` | 0 on all 10 segments |
+| Batch duration | 298 s, within the window of about 10 min |
 
-**Comparación con la misma prueba con la pantalla encendida.** Es una corrida descartada como prueba de segundo plano: alguien tocó la pantalla a las 22:45:21 (`WAKE_REASON_TAP`) y la actividad se restauró. Sirve de referencia con pantalla encendida y app en primer plano (`importance=100`). Las salidas son idénticas, carácter a carácter, porque la generación es determinista.
+**Comparison with the same test with the screen on.** It is a run discarded as a background test: someone touched the screen at 22:45:21 (`WAKE_REASON_TAP`) and the activity was restored. It serves as a reference with the screen on and the app in the foreground (`importance=100`). The outputs are identical, character for character, because generation is deterministic.
 
-| Segmento | Caracteres | Pantalla encendida | Pantalla apagada | Factor |
+| Segment | Characters | Screen on | Screen off | Factor |
 | --- | --- | --- | --- | --- |
-| 0 | 331 | 9 805 ms | 28 644 ms | ×2,92 |
-| 1 | 119 | 5 909 ms | 24 709 ms | ×4,18 |
-| 2 | 276 | 9 756 ms | 29 414 ms | ×3,01 |
-| 3 | 158 | 6 550 ms | 25 595 ms | ×3,91 |
-| 4 | 360 | 10 507 ms | 30 223 ms | ×2,88 |
-| 5 | 466 | 12 840 ms | 33 277 ms | ×2,59 |
-| 6 | 320 | 11 203 ms | 31 016 ms | ×2,77 |
-| 7 | 174 | 7 326 ms | 26 849 ms | ×3,66 |
-| 8 | 290 | 9 328 ms | 29 753 ms | ×3,19 |
-| 9 | 391 | 11 244 ms | 32 350 ms | ×2,88 |
+| 0 | 331 | 9,805 ms | 28,644 ms | ×2.92 |
+| 1 | 119 | 5,909 ms | 24,709 ms | ×4.18 |
+| 2 | 276 | 9,756 ms | 29,414 ms | ×3.01 |
+| 3 | 158 | 6,550 ms | 25,595 ms | ×3.91 |
+| 4 | 360 | 10,507 ms | 30,223 ms | ×2.88 |
+| 5 | 466 | 12,840 ms | 33,277 ms | ×2.59 |
+| 6 | 320 | 11,203 ms | 31,016 ms | ×2.77 |
+| 7 | 174 | 7,326 ms | 26,849 ms | ×3.66 |
+| 8 | 290 | 9,328 ms | 29,753 ms | ×3.19 |
+| 9 | 391 | 11,244 ms | 32,350 ms | ×2.88 |
 
-**Observaciones:**
+**Observations:**
 
-1. **La NPU funciona desde un Worker en segundo plano real.** Funciona con la app cerrada, el proceso arrancado por JobScheduler, sin FGS y con la pantalla apagada. No hizo falta caer a GPU ni a CPU, y no hubo errores.
-2. **El LLM es unas 3 veces más lento con la pantalla apagada.** Un ajuste lineal sobre los segmentos más corto (119 caracteres) y más largo (466) da lo siguiente:
+1. **The NPU works from a real background Worker.** It works with the app closed, the process started by JobScheduler, no FGS and the screen off. No fallback to GPU or CPU was needed, and there were no errors.
+2. **The LLM is about 3 times slower with the screen off.** A linear fit over the shortest (119 characters) and longest (466) segments gives the following:
 
-   | Estado | Coste por carácter | Coste fijo por segmento |
+   | State | Cost per character | Fixed cost per segment |
    | --- | --- | --- |
-   | Pantalla encendida | ≈ 20 ms | ≈ 3,5 s |
-   | Pantalla apagada | ≈ 25 ms | ≈ 21,8 s |
+   | Screen on | ≈ 20 ms | ≈ 3.5 s |
+   | Screen off | ≈ 25 ms | ≈ 21.8 s |
 
-   - Casi toda la penalización está en la **parte fija**: crear la conversación, el prefill o la compilación de la gramática de LLGuidance. La decodificación se encarece solo un 23 % por carácter.
-   - El SHA-256 también fue unas 3 veces más lento, lo que apunta a que el proceso en segundo plano recibe menos CPU (cpuset o frecuencia).
-   - **La causa no se midió.** No se registraron afinidad, frecuencia ni uso de la NPU.
-3. **Implicación para el diseño (§1):**
-   - Con unos 29 s por segmento, 25 segmentos son unos 12 min y no caben en 8 min. El presupuesto de tiempo limitará cada ejecución a unos 15 segmentos.
-   - El p95 móvil inicial de 35 s sigue siendo razonable (p95 medido: 32,4 s).
-   - No cambié el diseño. Si el coste fijo resulta ser la compilación de la gramática o el prefill del prompt de sistema, reutilizar una conversación precargada (`Conversation.clone()`) podría reducirlo. Está sin probar.
-4. **JobScheduler aplazó el arranque unos 4 min** con la pantalla apagada (programado a las 22:50:06, arrancó a las 22:54:22).
+   - Almost all of the penalty is in the **fixed part**: creating the conversation, the prefill or compiling the LLGuidance grammar. Decoding only gets 23% more expensive per character.
+   - The SHA-256 was also about 3 times slower, which suggests the background process gets less CPU (cpuset or frequency).
+   - **The cause was not measured.** Affinity, frequency and NPU usage were not recorded.
+3. **Implication for the design (§1):**
+   - At about 29 s per segment, 25 segments take about 12 min and do not fit in 8 min. The time budget will limit each run to about 15 segments.
+   - The initial moving p95 of 35 s remains reasonable (measured p95: 32.4 s).
+   - The design was not changed. If the fixed cost turns out to be the grammar compilation or the system prompt prefill, reusing a preloaded conversation (`Conversation.clone()`) could reduce it. Untested.
+4. **JobScheduler deferred the start by about 4 min** with the screen off (scheduled at 22:50:06, started at 22:54:22).
 
-### Corrida B: idle forzado (`dumpsys deviceidle force-idle`) — incompleta
+### Run B: forced idle (`dumpsys deviceidle force-idle`) — incomplete
 
-- **23:00:19:** `force-idle` activado: `mForceIdle=true`, `mState=IDLE`, Worker pendiente del retraso.
-- **23:00:41:** el teléfono se levantó (`WAKE_REASON_LIFT`).
-- **23:00:50:** la app se abrió en primer plano.
-- **Poco después:** el teléfono se desconectó del USB. Desde las 23:01:02 no hay logs, y a las 23:16 `adb devices` no lo veía.
-- **Sin resultado:** no hay ningún segmento procesado y no se sabe si el Worker llegó a ejecutarse con el modo idle forzado.
-- **El modo idle forzado puede seguir activo en el teléfono:** `dumpsys deviceidle unforce` no se pudo ejecutar. Hay que ejecutarlo al reconectar y repetir la corrida B.
+- **23:00:19:** `force-idle` activated: `mForceIdle=true`, `mState=IDLE`, Worker pending the delay.
+- **23:00:41:** the phone was lifted (`WAKE_REASON_LIFT`).
+- **23:00:50:** the app opened in the foreground.
+- **Shortly after:** the phone disconnected from USB. From 23:01:02 there are no logs, and at 23:16 `adb devices` did not see it.
+- **No result:** no segment was processed and it is unknown whether the Worker ran with forced idle.
+- **Forced idle may still be active on the phone:** `dumpsys deviceidle unforce` could not be run. It must be run on reconnecting and run B repeated.
 
-## Segundo plano: idle forzado, `cpuset`, conversación única y restricciones del esquema, 2026-11-08
+## Background: forced idle, `cpuset`, single conversation and schema constraints, 2026-11-08
 
-Sesión de 15:30 a 16:18. Pixel conectado a corriente (`AC powered`), batería del 34 % al 56 %. Mismo modelo y motor (`litertlm-android:0.18.1`, NPU), `maxOutputToken` 512, prompt sin cambios. Desglose con `ExperimentalFlags.enableBenchmark` (hay que activarlo **antes** de crear el `Engine`; si no, `getBenchmarkInfo` lanza `Benchmark is not enabled`).
+Session from 15:30 to 16:18. Pixel plugged into power (`AC powered`), battery from 34% to 56%. Same model and engine (`litertlm-android:0.18.1`, NPU), `maxOutputToken` 512, prompt unchanged. Breakdown with `ExperimentalFlags.enableBenchmark` (it must be enabled **before** creating the `Engine`; otherwise `getBenchmarkInfo` throws `Benchmark is not enabled`).
 
-**Inicio de sesión:** `dumpsys deviceidle unforce` confirmado (`mForceIdle=false`, `mState=ACTIVE`). Volvió a confirmarse tras la corrida B y al final de la sesión.
+**Session start:** `dumpsys deviceidle unforce` confirmed (`mForceIdle=false`, `mState=ACTIVE`). It was confirmed again after run B and at the end of the session.
 
-### Corrida B: idle forzado
+### Run B: forced idle
 
-| Intento | Qué pasó | ¿Válido? |
+| Attempt | What happened | Valid? |
 | --- | --- | --- |
-| 15:30:43 | 8,4 min en `IDLE` sin arrancar (`DEVICE_NOT_DOZING` sin cumplir). A las 15:39:06 se levantó el teléfono (`WAKE_REASON_LIFT`) y a las 15:39:13 se pulsó el botón de encendido; la actividad se restauró y reprogramó el Worker. Con `deviceIdle=true` y `importance=325`, el Worker arrancó, la NPU cargó en 6346 ms y generó el segmento 0. Luego cayó por un error mío (orden de `enableBenchmark`) | No |
-| **15:43:11** | **15 min en `IDLE` sin arrancar.** La única restricción sin cumplir al final era `DEVICE_NOT_DOZING`; 84 de 84 muestras con el proceso muerto | **Sí** |
+| 15:30:43 | 8.4 min in `IDLE` without starting (`DEVICE_NOT_DOZING` unmet). At 15:39:06 the phone was lifted (`WAKE_REASON_LIFT`) and at 15:39:13 the power button was pressed; the activity was restored and rescheduled the Worker. With `deviceIdle=true` and `importance=325`, the Worker started, the NPU loaded in 6346 ms and generated segment 0. It then crashed from an error of mine (order of `enableBenchmark`) | No |
+| **15:43:11** | **15 min in `IDLE` without starting.** The only unmet constraint at the end was `DEVICE_NOT_DOZING`; 84 of 84 samples with the process dead | **Yes** |
 
-- **Con idle forzado, el Worker no se ejecuta.** Tras `unforce` (15:58:36) arrancó en 6 s (15:58:42).
-- No se midió una ventana de mantenimiento real: con `force-idle` no hubo ninguna en esos 15 min.
-- En el primer intento, un Worker ya programado arrancó en idle tras abrirse la app. Ese único segmento indica que la NPU no queda bloqueada por `deviceIdle=true`, pero no es una corrida limpia.
+- **With forced idle, the Worker does not run.** After `unforce` (15:58:36) it started in 6 s (15:58:42).
+- A real maintenance window was not measured: with `force-idle` there was none in those 15 min.
+- In the first attempt, an already scheduled Worker started in idle after the app opened. That single segment indicates the NPU is not blocked by `deviceIdle=true`, but it is not a clean run.
 
-### Mismo lote en tres estados
+### Same batch in three states
 
-10 segmentos, `importance` y `cpuset` medidos durante la corrida.
+10 segments, `importance` and `cpuset` measured during the run.
 
-| Métrica | Pantalla encendida, top-app | Segundo plano, control | Segundo plano, conversación única |
+| Metric | Screen on, top-app | Background, control | Background, single conversation |
 | --- | --- | --- | --- |
-| Hora | 16:03 | 15:58–16:03 | 16:07–16:09 |
+| Time | 16:03 | 15:58–16:03 | 16:07–16:09 |
 | `importance` | 100 | 230 | 230 |
-| `cpuset` (muestras) | `/top-app` (9 de 10) | `/background` (26 de 26) | `/background` (10 de 11) |
-| CPU permitidas | 0–7 | **0–2** | **0–2** |
-| Carga del motor | 3657 ms | 14 007 ms | 6106 ms |
-| `createConversation` | **2,68 s** (2,63–2,77) | **14,9 s** (12,2–16,9) | 19,85 s, una sola vez |
+| `cpuset` (samples) | `/top-app` (9 of 10) | `/background` (26 of 26) | `/background` (10 of 11) |
+| Allowed CPUs | 0–7 | **0–2** | **0–2** |
+| Engine load | 3657 ms | 14,007 ms | 6106 ms |
+| `createConversation` | **2.68 s** (2.63–2.77) | **14.9 s** (12.2–16.9) | 19.85 s, once |
 | Prefill | 124–171 tokens; 141–789 tok/s | 124–171 tokens; 41–603 tok/s | 63–138 tokens; 115–442 tok/s |
-| Decode | 17,0–18,1 tok/s | 14,9–16,6 tok/s | 14,2–15,6 tok/s |
-| LLM media | 9,59 s | 23,35 s | 6,11 s |
-| Total por segmento (p95) | 9,68 s (11,5) | **23,46 s** (26,0) | **6,21 s** (9,1) |
-| Lote completo con carga | 100,7 s | 249,1 s | 88,5 s |
-| ECDH media / % del total | 92,3 ms / 0,95 % | 101,6 ms / 0,43 % | 98,4 ms / 1,58 % |
-| JSON válido | 10/10 | 10/10 | 10/10 |
-| Título vacío | 2/10 | 2/10 | **10/10** |
+| Decode | 17.0–18.1 tok/s | 14.9–16.6 tok/s | 14.2–15.6 tok/s |
+| LLM mean | 9.59 s | 23.35 s | 6.11 s |
+| Total per segment (p95) | 9.68 s (11.5) | **23.46 s** (26.0) | **6.21 s** (9.1) |
+| Full batch with load | 100.7 s | 249.1 s | 88.5 s |
+| ECDH mean / % of total | 92.3 ms / 0.95% | 101.6 ms / 0.43% | 98.4 ms / 1.58% |
+| Valid JSON | 10/10 | 10/10 | 10/10 |
+| Empty title | 2/10 | 2/10 | **10/10** |
 
-**Máscara de CPU de cada grupo** (`/dev/cpuset/*/cpus`): `top-app` 0–7, `foreground` 0–6, `system-background` 0–4, `background` 0–2.
+**CPU mask of each group** (`/dev/cpuset/*/cpus`): `top-app` 0–7, `foreground` 0–6, `system-background` 0–4, `background` 0–2.
 
-**Frecuencias por grupo de CPU**, muestreadas cada 10 s, MHz:
+**Frequencies per CPU group**, sampled every 10 s, MHz:
 
-| Corrida | policy0 (CPU 0–1) | policy2 (2–4) | policy5 (5–6) | policy7 (7) |
+| Run | policy0 (CPU 0–1) | policy2 (2–4) | policy5 (5–6) | policy7 (7) |
 | --- | --- | --- | --- | --- |
-| Pantalla encendida: media / máx | 1051 / 1881 | 801 / 1785 | 736 / 1785 | **1732 / 3782** |
-| Control en segundo plano, con proceso vivo: media / máx | 1124 / 2246 | 916 / 3052 | 848 / 3052 | 813 / 3782 |
-| Conversación única: media / máx | 1156 / 2246 | 856 / 3052 | 510 / 3052 | 745 / 3168 |
+| Screen on: mean / max | 1051 / 1881 | 801 / 1785 | 736 / 1785 | **1732 / 3782** |
+| Background control, with process alive: mean / max | 1124 / 2246 | 916 / 3052 | 848 / 3052 | 813 / 3782 |
+| Single conversation: mean / max | 1156 / 2246 | 856 / 3052 | 510 / 3052 | 745 / 3168 |
 
-El muestreo es grueso y las frecuencias son de todo el sistema, no del proceso, así que no se pueden atribuir al Worker.
+The sampling is coarse and the frequencies are system-wide, not per process, so they cannot be attributed to the Worker.
 
-**Conclusiones:**
+**Conclusions:**
 
-1. **El coste fijo de la corrida A es `createConversation`.** En segundo plano tarda 14,9 s de media, frente a 2,68 s con la pantalla encendida (×5,6). El decode apenas cambia (unos 15 frente a 17,6 tok/s).
-2. **La causa medida más directa es el `cpuset`.** En `/background` el proceso solo dispone de las CPU 0–2, frente a 0–7 en `/top-app`. Encaja con que una operación de CPU como `createConversation` sea la más afectada, y con que el SHA-256 pase de 5 a 23–24 s. **No se probó la relación causal** cambiando solo el `cpuset`, y no se sabe qué hace `createConversation` en esos segundos. La compilación de la gramática de LLGuidance es una candidata no verificada.
-3. **La conversación precargada no se puede medir como se propuso.** `Conversation.clone()` no existe en `litertlm-android:0.18.1` (sí en 0.19.1, que rompe la NPU), y tampoco hay API para fijar el prefijo del prompt. Lo único posible en 0.18.1 es **una sola `Conversation` para todo el lote**, y eso es lo medido:
-   - Baja el total a 6,21 s por segmento (−74 %) y el lote de 249 s a 88,5 s.
-   - **No es utilizable tal cual:** el historial se acumula entre segmentos. Las salidas cambian desde el segmento 1 (125 caracteres frente a 119) y el título sale vacío en 10 de 10, frente a 2 de 10.
-   - Sirve como cota de lo que se ganaría evitando `createConversation`.
-4. **Comparación con la corrida A:** el coste fijo estimado allí era de 21,8 s (ajuste lineal); hoy, medido directamente, `createConversation` son 14,9 s. El control total es 23,46 s por segmento frente a 29,29 s, sin desglose en la corrida A y en una sesión distinta.
-5. **Tope en segundo plano medido.** Con 8 min por ejecución, la corrida A (29,3 s por segmento, 5,1 s de carga y 22,3 s de SHA-256) da unos 15 segmentos. El control de hoy (23,5 s, 14,0 s y 23,7 s) da unos 18.
+1. **The fixed cost of run A is `createConversation`.** In the background it takes 14.9 s on average, versus 2.68 s with the screen on (×5.6). Decoding barely changes (about 15 versus 17.6 tok/s).
+2. **The most direct measured cause is the `cpuset`.** In `/background` the process only has CPUs 0–2, versus 0–7 in `/top-app`. That fits with a CPU operation like `createConversation` being the most affected, and with the SHA-256 going from 5 to 23–24 s. **The causal relationship was not tested** by changing only the `cpuset`, and it is unknown what `createConversation` does during those seconds. LLGuidance grammar compilation is an unverified candidate.
+3. **The preloaded conversation cannot be measured as proposed.** `Conversation.clone()` does not exist in `litertlm-android:0.18.1` (it does in 0.19.1, which breaks the NPU), and there is no API to pin the prompt prefix either. The only option in 0.18.1 is **a single `Conversation` for the whole batch**, and that is what was measured:
+   - It lowers the total to 6.21 s per segment (−74%) and the batch from 249 s to 88.5 s.
+   - **It is not usable as is:** history accumulates between segments. Outputs change from segment 1 on (125 characters versus 119) and the title comes out empty on 10 of 10, versus 2 of 10.
+   - It serves as a bound on what would be gained by avoiding `createConversation`.
+4. **Comparison with run A:** the estimated fixed cost there was 21.8 s (linear fit); today, measured directly, `createConversation` is 14.9 s. The control total is 23.46 s per segment versus 29.29 s, with no breakdown in run A and in a different session.
+5. **Measured background cap.** With 8 min per run, run A (29.3 s per segment, 5.1 s of load and 22.3 s of SHA-256) gives about 15 segments. Today's control (23.5 s, 14.0 s and 23.7 s) gives about 18.
 
-**Contaminación física:** el teléfono se movió o se tocó durante la sesión pese a estar reservado.
+**Physical contamination:** the phone was moved or touched during the session despite being reserved.
 
-| Hora | Evento | Efecto |
+| Time | Event | Effect |
 | --- | --- | --- |
-| 15:39:06 y 15:39:13 | `WAKE_REASON_LIFT` y `power_button` | Invalidó el primer intento de B |
-| 16:01:54 | `WAKE_REASON_LIFT` | Control: segmentos 6–9 con `interactive=true` al final; `createConversation` baja de unos 16,5 s a 12–14 s. Sin esos segmentos, los 6 primeros dan 15,9 s |
-| 16:09:47 | `WAKE_REASON_TAP` | Conversación única: durante el segmento 9 |
+| 15:39:06 and 15:39:13 | `WAKE_REASON_LIFT` and `power_button` | Invalidated the first attempt of B |
+| 16:01:54 | `WAKE_REASON_LIFT` | Control: segments 6–9 with `interactive=true` at the end; `createConversation` drops from about 16.5 s to 12–14 s. Without those segments, the first 6 give 15.9 s |
+| 16:09:47 | `WAKE_REASON_TAP` | Single conversation: during segment 9 |
 
-**No explicado:** a las 15:43:00, justo tras reinstalar el APK y antes de la corrida, la app arrancó en modo `all` (Keystore y Nano) sin que yo la lanzara. `am start -S` la mató 3 s después. No afecta a los datos y no se encontró el origen en el buffer.
+**Unexplained:** at 15:43:00, right after reinstalling the APK and before the run, the app started in `all` mode (Keystore and Nano) without me launching it. `am start -S` killed it 3 s later. It does not affect the data and the origin was not found in the buffer.
 
-### Restricciones del esquema con LiteRT-LM 0.18.1 (sonda del §6)
+### Schema constraints with LiteRT-LM 0.18.1 (§6 probe)
 
-`SchemaProbe.kt`, en primer plano con la pantalla encendida (16:10–16:18). Textos: los 5 segmentos que fallaban (29, 33, 43, 68, 83) y otros 3 de control por sonda. El veredicto automático de la sonda marca «NO RESPETA» cuando hay JSON inválido, aunque la restricción probada sí se cumpla, así que la columna «Veredicto» se revisó a mano sobre las salidas.
+`SchemaProbe.kt`, in the foreground with the screen on (16:10–16:18). Texts: the 5 segments that failed (29, 33, 43, 68, 83) and 3 other controls per probe. The probe's automatic verdict marks "NO RESPETA" when there is invalid JSON, even if the tested constraint is met, so the "Verdict" column was reviewed by hand against the outputs.
 
-| Restricción | Sonda automática | Veredicto real | Evidencia |
+| Constraint | Automatic probe | Actual verdict | Evidence |
 | --- | --- | --- | --- |
-| Control: esquema actual | 0/5 | Reproduce el fallo | Los 5 segmentos caen en el bucle de espacio en blanco |
-| `x-guidance.whitespace_flexible=false` | 5/5 | **Se respeta** | JSON compacto sin whitespace fuera de strings, 5,7–6,9 s frente a 32 s; LiteRT-LM pasa `x-guidance` a LLGuidance |
-| `minLength=40` en `titulo` | 2/3 | **Se respeta** | Los 3 títulos tienen ≥ 40 caracteres. El fallo del segmento 3 es el bucle de whitespace, ajeno a `minLength`. El modelo rellena con basura para llegar |
-| `maxLength=10` | 3/3 | **Se respeta** | Títulos cortados: `": Cita con"`, `"Estado del"` |
-| `pattern ^ZZ` | 3/3 | **Se respeta** | `"ZZoom reunión de diseño"`, `"ZZA pedido enviado"` |
-| `maxItems=1` en `personas` | 3/3 | **Se respeta** | Una sola persona. En el segmento 0 mete dos nombres en un item: `"Laura Méndez, Diego"` |
-| `additionalProperties=false` | 2/3 | **Se respeta** | Con la instrucción de añadir `lugar`, no aparece (segmentos 0 y 4); el control sin la restricción sí lo emite. El fallo del segmento 3 es el bucle |
-| `ResponseFormat.regex` (JSON compacto) | 5/5 | **Funciona** | Alternativa disponible; no hace falta, porque `x-guidance` pasa |
-| Esquema endurecido completo | 5/5 | Se respetan las reglas, **calidad peor** | Sin bucle, pero con títulos basura y campos perdidos (abajo) |
+| Control: current schema | 0/5 | Reproduces the failure | All 5 segments fall into the whitespace loop |
+| `x-guidance.whitespace_flexible=false` | 5/5 | **Respected** | Compact JSON with no whitespace outside strings, 5.7–6.9 s versus 32 s; LiteRT-LM passes `x-guidance` to LLGuidance |
+| `minLength=40` on `titulo` | 2/3 | **Respected** | All 3 titles have ≥ 40 characters. The failure of segment 3 is the whitespace loop, unrelated to `minLength`. The model pads with garbage to reach it |
+| `maxLength=10` | 3/3 | **Respected** | Truncated titles: `": Cita con"`, `"Estado del"` |
+| `pattern ^ZZ` | 3/3 | **Respected** | `"ZZoom reunión de diseño"`, `"ZZA pedido enviado"` |
+| `maxItems=1` on `personas` | 3/3 | **Respected** | A single person. In segment 0 it puts two names in one item: `"Laura Méndez, Diego"` |
+| `additionalProperties=false` | 2/3 | **Respected** | With the instruction to add `lugar`, it does not appear (segments 0 and 4); the control without the constraint does emit it. The failure of segment 3 is the loop |
+| `ResponseFormat.regex` (compact JSON) | 5/5 | **Works** | Available alternative; not needed, because `x-guidance` passes through |
+| Full hardened schema | 5/5 | Rules respected, **worse quality** | No loop, but garbage titles and lost fields (below) |
 
-**Corrección:** el bucle es de `\n\t` repetidos. Antes lo describí como «tabuladores y espacios», porque el log sustituía los saltos de línea por espacios.
+**Correction:** the loop is repeated `\n\t`. Earlier I described it as "tabs and spaces", because the log replaced newlines with spaces.
 
-**Las restricciones se respetan, pero no resuelven el título.** Salidas del esquema endurecido:
+**The constraints are respected, but they do not solve the title.** Outputs of the hardened schema:
 
 ```text
 {"titulo":", personas:[{","personas":["Mamá","abuela Carmen","tía Rosa"],"fechas":[],"temas":[],"tareas":[]}
@@ -534,6 +534,6 @@ El muestreo es grueso y las frecuencias son de todo el sistema, no del proceso, 
 {"titulo":">Resumen de llamada con cliente", ...
 ```
 
-Con `whitespace_flexible=false` solo, el título tampoco se arregla: `": "`, `": Cita dentista"`, `": Resumen de llamada con cliente"`.
+With `whitespace_flexible=false` alone, the title is not fixed either: `": "`, `": Cita dentista"`, `": Resumen de llamada con cliente"`.
 
-**Patrón observado, sin demostrar:** los títulos correctos aparecen cuando el modelo pone un salto de línea entre `:` y la comilla (`"titulo":⏎"Plan de escalada"`). Los títulos con `": "` aparecen cuando `"titulo":"` queda pegado. Es compatible con que la gramática fuerce `"titulo":"` y el modelo siga como si aún tuviera que escribir `": "`. Encaja con que el JSON compacto lo empeore. Sin probar: `x-guidance.whitespace_pattern` con un espacio opcional.
+**Observed pattern, not proven:** correct titles appear when the model puts a newline between `:` and the quote (`"titulo":⏎"Plan de escalada"`). Titles with `": "` appear when `"titulo":"` is stuck together. This is compatible with the grammar forcing `"titulo":"` and the model carrying on as if it still had to write `": "`. It fits with compact JSON making it worse. Untested: `x-guidance.whitespace_pattern` with an optional space.

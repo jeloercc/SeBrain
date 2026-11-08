@@ -1,188 +1,188 @@
-# Diseño: `CognitionWorker` por lotes troceados
+# Design: `CognitionWorker` in chunked batches
 
-**Estado: Aprobado (no implementado), 2026-11-07.** Nada de esto está en la app todavía. Están aprobados el esquema (`capture.segment_id UNIQUE`, `extraction_status`, `extraction_attempts`), `captured_at` dentro del texto cifrado, el presupuesto de 8 min y el ajuste del §4. La jerarquía de claves no cambia: un ECDH con `K_inbox` por segmento.
+**Status: Approved (not implemented), 2026-11-07.** None of this is in the app yet. Approved: the schema (`capture.segment_id UNIQUE`, `extraction_status`, `extraction_attempts`), `captured_at` inside the encrypted text, the 8-min budget and the §4 adjustment. The key hierarchy does not change: one ECDH with `K_inbox` per segment.
 
-**Base empírica:** `docs/benchmarks.md`, sección «`CognitionWorker`: ECDH frente al tiempo total por segmento». Pixel 10, Gemma-4-E2B en NPU, LLM entre 6 y 40 s por segmento.
+**Empirical basis:** `docs/benchmarks.md`, section "`CognitionWorker`: ECDH versus total time per segment". Pixel 10, Gemma-4-E2B on NPU, LLM between 6 and 40 s per segment.
 
-## 1. Lotes de 25 segmentos sin FGS
+## 1. Batches of 25 segments without FGS
 
-**Por qué sin FGS:** Android no permite iniciar un FGS desde segundo plano. El segundo Worker de una cadena falló con `ForegroundServiceStartNotAllowedException`. `CognitionWorker` se ejecuta con el teléfono en reposo, así que no puede contar con un FGS.
+**Why no FGS:** Android does not allow starting an FGS from the background. The second Worker of a chain failed with `ForegroundServiceStartNotAllowedException`. `CognitionWorker` runs with the phone idle, so it cannot count on an FGS.
 
-**Restricción:** un Worker normal tiene una ventana de ejecución de unos 10 min. Al agotarse, el sistema lo detiene con `STOP_REASON_TIMEOUT`.
+**Constraint:** a regular Worker has an execution window of about 10 min. When it runs out, the system stops it with `STOP_REASON_TIMEOUT`.
 
-**Diseño:**
+**Design:**
 
-- Cada ejecución procesa como mucho **25 segmentos** y además tiene un **presupuesto de tiempo de 8 min**. Termina con lo primero que se agote.
-  - Con la media del lote de 10 (11,8 s por segmento), 25 segmentos son unos 5 min.
-  - Con la media del lote de 100 (20,3 s), 25 segmentos son unos 8,5 min.
-  - Con el p95 (32,5 s), 25 segmentos son unos 13,5 min y no caben.
-  - **Tope medido en segundo plano real: unos 15 segmentos por ejecución.** Con el presupuesto de 8 min, la corrida A dio 29,3 s por segmento, más 5,1 s de carga y 22,3 s de SHA-256, es decir, unos 15. El control del 2026-11-08 dio unos 18 (23,5 s por segmento, 14,0 s y 23,7 s). El límite de 25 solo se alcanza con la pantalla encendida.
-  - **Causa:** en segundo plano el proceso queda en `cpuset=/background` (CPU 0–2) y `createConversation` tarda 14,9 s frente a 2,68 s con la pantalla encendida.
-  - Por eso el presupuesto de tiempo es obligatorio y no basta con contar segmentos.
-- Antes de empezar un segmento se comprueba:
-  - `elapsed + p95_estimado < 8 min`, donde `p95_estimado` es el p95 móvil de los últimos segmentos (valor inicial 35 s).
-  - Si no cabe, se guarda el checkpoint y se devuelve `Result.success()`.
-- **Doze:** con idle forzado el Worker no arrancó en 15 min (`DEVICE_NOT_DOZING`) y arrancó 6 s después de `unforce`. El inbox debe tolerar esperas largas.
-- **Restricciones de WorkManager:** cargando, batería no baja y `requiresDeviceIdle` para lotes grandes, como dice CLAUDE.md.
-- **Encadenado:** si al terminar quedan segmentos en el inbox, el Worker encola el siguiente con `enqueueUniqueWork("cognition", KEEP, …)`. `KEEP` evita que dos Workers se ejecuten a la vez.
-  - Un Worker único no impide que un bucle bloqueante siga corriendo tras un `REPLACE`; eso ya ocurrió en el spike.
-  - Por eso nunca se usa `REPLACE` y se comprueba `isStopped` (sección 2).
-- **Motor:** se carga una vez por ejecución (3–5,7 s medidos) y se libera en `finally`. Si la carga cuesta 5 s y el lote dura 5–8 min, la carga supone alrededor del 1–2 % del lote.
+- Each run processes at most **25 segments** and also has a **time budget of 8 min**. It ends with whichever runs out first.
+  - With the mean of the batch of 10 (11.8 s per segment), 25 segments take about 5 min.
+  - With the mean of the batch of 100 (20.3 s), 25 segments take about 8.5 min.
+  - With the p95 (32.5 s), 25 segments take about 13.5 min and do not fit.
+  - **Measured cap in real background: about 15 segments per run.** With the 8-min budget, run A gave 29.3 s per segment, plus 5.1 s of load and 22.3 s of SHA-256, that is, about 15. The 2026-11-08 control gave about 18 (23.5 s per segment, 14.0 s and 23.7 s). The limit of 25 is only reached with the screen on.
+  - **Cause:** in the background the process stays in `cpuset=/background` (CPUs 0–2) and `createConversation` takes 14.9 s versus 2.68 s with the screen on.
+  - That is why the time budget is mandatory and counting segments is not enough.
+- Before starting a segment, check:
+  - `elapsed + estimated_p95 < 8 min`, where `estimated_p95` is the moving p95 of the latest segments (initial value 35 s).
+  - If it does not fit, save the checkpoint and return `Result.success()`.
+- **Doze:** with forced idle the Worker did not start in 15 min (`DEVICE_NOT_DOZING`) and started 6 s after `unforce`. The inbox must tolerate long waits.
+- **WorkManager constraints:** charging, battery not low and `requiresDeviceIdle` for large batches, as CLAUDE.md says.
+- **Chaining:** if segments remain in the inbox at the end, the Worker enqueues the next one with `enqueueUniqueWork("cognition", KEEP, …)`. `KEEP` prevents two Workers from running at once.
+  - A unique Worker does not prevent a blocking loop from continuing after a `REPLACE`; that already happened in the spike.
+  - That is why `REPLACE` is never used and `isStopped` is checked (section 2).
+- **Engine:** loaded once per run (3–5.7 s measured) and released in `finally`. If loading costs 5 s and the batch lasts 5–8 min, loading is around 1–2% of the batch.
 
-## 1b. Cadena de backends explícita NPU → GPU → CPU (aprobado)
+## 1b. Explicit NPU → GPU → CPU backend chain (approved)
 
-`Backend.NPU` no cae solo a otro backend. Si la NPU falla, `Engine.initialize()` lanza una excepción, como ocurrió con 0.19.1 y `undefined symbol: LiteRtDispatchQueryInterface`. La app final implementa la cadena por su cuenta:
+`Backend.NPU` does not fall back to another backend on its own. If the NPU fails, `Engine.initialize()` throws an exception, as happened with 0.19.1 and `undefined symbol: LiteRtDispatchQueryInterface`. The final app implements the chain itself:
 
 ```text
-para backend en [NPU(nativeLibraryDir), GPU(), CPU()]:
-    intentar Engine(EngineConfig(modelo_del_backend, backend, cacheDir)).initialize()
-    éxito → usar; registrar backend y tiempo de carga
-    fallo → registrar clase y mensaje del error; probar el siguiente
-ninguno → Result.retry() y registrar "sin backend"
+for backend in [NPU(nativeLibraryDir), GPU(), CPU()]:
+    try Engine(EngineConfig(model_for_backend, backend, cacheDir)).initialize()
+    success → use; record backend and load time
+    failure → record error class and message; try the next one
+none → Result.retry() and record "no backend"
 ```
 
-**Requisitos:**
+**Requirements:**
 
-- **Modelo por backend.** El `.litertlm` para la TPU (`*_Google_Tensor_G5.litertlm`) solo sirve para la NPU. GPU y CPU necesitan el modelo genérico (`gemma-4-E2B-it.litertlm`). Cada uno se importa por SAF o `adb push` con su propio SHA-256 fijado.
-  - Si solo está importado el modelo de NPU, la cadena se reduce a NPU, y el fallo se registra en lugar de enmascararse.
-- **Registro por lote, sin contenido:** backend usado, motivo del descarte de cada backend anterior (clase de excepción y mensaje), tiempo de carga, y media y p95 por segmento.
-- **Caché del backend.** Un fallo de NPU no se reintenta en cada lote: se guarda «NPU falló con la versión X de la app y de LiteRT-LM» y se vuelve a probar cuando cambia la versión o tras 24 h.
-- **Error a mitad de lote:** `LiteRtLmJniException` durante la generación sigue el §4. Se reinicia una vez el mismo backend y, si vuelve a fallar, se baja al siguiente de la cadena en la siguiente ejecución, nunca a mitad de lote.
+- **Model per backend.** The `.litertlm` for the TPU (`*_Google_Tensor_G5.litertlm`) only works for the NPU. GPU and CPU need the generic model (`gemma-4-E2B-it.litertlm`). Each is imported via SAF or `adb push` with its own pinned SHA-256.
+  - If only the NPU model is imported, the chain reduces to NPU, and the failure is recorded instead of being masked.
+- **Per-batch record, no content:** backend used, reason for discarding each previous backend (exception class and message), load time, and mean and p95 per segment.
+- **Backend cache.** An NPU failure is not retried on every batch: "NPU failed with version X of the app and LiteRT-LM" is stored and retried when the version changes or after 24 h.
+- **Mid-batch error:** `LiteRtLmJniException` during generation follows §4. The same backend is restarted once and, if it fails again, it moves down to the next one in the chain on the next run, never mid-batch.
 
-## 2. Checkpoint por segmento e `isStopped`
+## 2. Per-segment checkpoint and `isStopped`
 
-**Unidad de trabajo:** un segmento. Su resultado se confirma en su propia transacción:
+**Unit of work:** one segment. Its result is committed in its own transaction:
 
 ```text
-por segmento:
-  1. ECDH(K_inbox, E_seg) → HKDF → K_seg → descifrar        (≈ 0,1 s)
-  2. chunking + extracción LLM (con 1 reintento, §4)         (≈ 6–40 s)
-  3. embeddings de los chunks
+per segment:
+  1. ECDH(K_inbox, E_seg) → HKDF → K_seg → decrypt           (≈ 0.1 s)
+  2. chunking + LLM extraction (with 1 retry, §4)            (≈ 6–40 s)
+  3. chunk embeddings
   4. BEGIN; INSERT capture, chunk, chunk_fts, chunk_vec; COMMIT
-  5. borrar el fichero del segmento (solo tras COMMIT)
-  6. poner a cero K_seg, Z y el texto en claro
+  5. delete the segment file (only after COMMIT)
+  6. zero K_seg, Z and the plaintext
 ```
 
-**El checkpoint es el propio inbox.** Un segmento cuyo `COMMIT` se completó ya no existe en el inbox, y uno que no llegó al `COMMIT` sigue ahí. Al retomar, el Worker toma los segmentos que quedan, en orden de captura. No hace falta un fichero de estado aparte, y cualquier corte deja la bóveda en un estado consistente.
+**The checkpoint is the inbox itself.** A segment whose `COMMIT` completed no longer exists in the inbox, and one that did not reach `COMMIT` is still there. On resuming, the Worker takes the remaining segments in capture order. No separate state file is needed, and any interruption leaves the vault in a consistent state.
 
-**Idempotencia** si el proceso muere entre el paso 4 y el 5:
+**Idempotency** if the process dies between steps 4 and 5:
 
-- Se propone añadir a `capture` una columna `segment_id` (UUID del segmento, guardado en su cabecera autenticada) con restricción `UNIQUE`. Requiere aprobación porque cambia el esquema.
-- Al retomar, si `segment_id` ya existe se salta la extracción y se borra el fichero.
+- Proposed: add a `segment_id` column to `capture` (segment UUID, stored in its authenticated header) with a `UNIQUE` constraint. Requires approval because it changes the schema.
+- On resuming, if `segment_id` already exists, extraction is skipped and the file is deleted.
 
 **`isStopped`:**
 
-- Se comprueba antes de cada segmento y entre los pasos 2 y 3. El paso 2 es el más largo.
-- Si `isStopped` es verdadero:
-  - Se cancela la generación en curso, si la hay, con `Conversation.cancelProcess()`.
-  - No se hace `COMMIT` del segmento a medias. Se pierde como mucho el trabajo del LLM de un segmento.
-  - Se registra `stopReason` (por ejemplo `STOP_REASON_TIMEOUT`, `CONSTRAINT_CHARGING` o `DEVICE_STATE`).
-  - Se libera el motor y se sale.
-- No hay checkpoint parcial dentro de un segmento. Guardar la salida del LLM a medias supondría escribir datos derivados en disco fuera de la bóveda.
+- Checked before each segment and between steps 2 and 3. Step 2 is the longest.
+- If `isStopped` is true:
+  - The generation in progress, if any, is cancelled with `Conversation.cancelProcess()`.
+  - The half-done segment is not `COMMIT`ted. At most the LLM work of one segment is lost.
+  - `stopReason` is recorded (for example `STOP_REASON_TIMEOUT`, `CONSTRAINT_CHARGING` or `DEVICE_STATE`).
+  - The engine is released and the Worker exits.
+- There is no partial checkpoint within a segment. Saving half-done LLM output would mean writing derived data to disk outside the vault.
 
-## 3. Prompt con la fecha de captura
+## 3. Prompt with the capture date
 
-- La ingesta guarda `captured_at` (instante UTC más zona horaria del dispositivo) **dentro del texto en claro cifrado** del segmento, no en la cabecera, para no exponer metadatos en disco.
-- El prompt de extracción la recibe como referencia:
-
-```text
-Fecha y hora de captura: 2026-11-07T21:24:00-06:00 (sábado).
-Resuelve las fechas relativas ("mañana", "el jueves", "el 14") respecto a esa fecha.
-Si el texto no da el año, usa el de la fecha de captura o el siguiente si la fecha ya pasó.
-Si no se puede resolver, deja la fecha como texto literal en lugar de inventarla.
-```
-
-- **Motivo:** en el spike, el segmento 0 («el jueves 14») salió como `2024-05-15T10:30:00`, una fecha inventada.
-
-## 4. Validación de esquema y reintento
-
-**Un resultado es válido si se cumple todo esto:**
-
-- JSON parseable.
-- Están todas las claves `required`.
-- Cada lista es una lista de strings.
-- `titulo` no queda vacío después de quitar espacios, comillas y `:`. En el spike salió `": "`.
-
-**Flujo:**
+- Ingestion stores `captured_at` (UTC instant plus device time zone) **inside the encrypted plaintext** of the segment, not in the header, so as not to expose metadata on disk.
+- The extraction prompt receives it as a reference:
 
 ```text
-intento 1 → válido → seguir
-          → inválido → intento 2 (reintento único)
-                      → válido → seguir
-                      → inválido → marcar "extracción fallida"
+Capture date and time: 2026-11-07T21:24:00-06:00 (Saturday).
+Resolve relative dates ("tomorrow", "on Thursday", "the 14th") against that date.
+If the text does not give the year, use the capture date's year or the next one if the date has already passed.
+If it cannot be resolved, leave the date as literal text instead of inventing it.
 ```
 
-**El reintento no puede repetir la misma configuración.** La corrida 2 de `docs/benchmarks.md` lo confirma:
+- **Reason:** in the spike, segment 0 («el jueves 14») came out as `2024-05-15T10:30:00`, an invented date.
 
-- La generación es determinista: fallaron los mismos 5 segmentos con 256 y con 512 tokens.
-- El fallo es un bucle de `\n\t` tras `{ "titulo":": "`, no un truncado.
-- Doblar `maxOutputToken` no sirve.
+## 4. Schema validation and retry
 
-El reintento usa:
+**A result is valid if all of this holds:**
 
-- `RepetitionPenaltyConfig` y/o `NoRepeatNgramConfig`. Las dos clases existen en `litertlm-android:0.18.1`; los valores hay que medirlos.
-- El mensaje adicional: «La respuesta anterior no era JSON válido o tenía el título vacío. Devuelve solo el objeto JSON, con un título de 3 a 8 palabras».
-- El mismo `maxOutputToken` (512) y `ThinkingConfig(false)`.
+- Parseable JSON.
+- All `required` keys are present.
+- Each list is a list of strings.
+- `titulo` is not empty after stripping spaces, quotes and `:`. In the spike it came out as `": "`.
 
-**Corte temprano.** Durante el streaming (`sendMessageAsync`), si aparecen más de 32 caracteres seguidos de espacio en blanco fuera de un string, se cancela con `cancelProcess()` y se pasa directamente al reintento. Cada bucle cuesta unos 32 s, frente a una mediana de 10 s por segmento.
+**Flow:**
 
-**Título vacío.** Afectó a 19 de los 95 válidos y siempre con el valor `": "`, lo que apunta al prompt o al esquema. Antes de fiarlo al reintento hay que probar:
+```text
+attempt 1 → valid → continue
+          → invalid → attempt 2 (single retry)
+                      → valid → continue
+                      → invalid → mark "extraction failed"
+```
 
-- poner `titulo` en otra posición del esquema;
-- añadir `minLength: 3` al esquema, si `ResponseFormat.json` lo respeta (sin verificar);
-- incluir un ejemplo en el prompt de sistema.
+**The retry cannot repeat the same configuration.** Run 2 in `docs/benchmarks.md` confirms it:
 
-Queda para el benchmark del modelo de extracción.
+- Generation is deterministic: the same 5 segments failed with 256 and with 512 tokens.
+- The failure is a `\n\t` loop after `{ "titulo":": "`, not a truncation.
+- Doubling `maxOutputToken` does not help.
 
-**«Extracción fallida» no bloquea el lote:**
+The retry uses:
 
-- El segmento se descifra, se trocea y sus chunks se insertan igualmente con embeddings y FTS5, pero sin campos extraídos. Así se puede encontrar por búsqueda aunque la extracción haya fallado.
-- `capture.extraction_status` toma uno de estos valores: `ok`, `ok_retry` o `failed`. Es una propuesta de esquema.
-- Se guardan `extraction_attempts` y el código de fallo (`json_invalid`, `title_empty`, `truncated`, `engine_error`), nunca la salida en claro fuera de la bóveda.
-- El segmento se borra del inbox tras el `COMMIT`, como cualquier otro.
-- Un ajuste futuro permitiría reintentar los `failed` con otro modelo. Fuera de alcance.
-- Un error del motor (`LiteRtLmJniException`) no cuenta como fallo de extracción:
-  - Se descarta el segmento en curso sin `COMMIT`.
-  - Se reinicia el motor una vez.
-  - Si vuelve a fallar, el Worker termina con `Result.retry()`.
+- `RepetitionPenaltyConfig` and/or `NoRepeatNgramConfig`. Both classes exist in `litertlm-android:0.18.1`; the values have to be measured.
+- The additional message: "The previous response was not valid JSON or had an empty title. Return only the JSON object, with a title of 3 to 8 words".
+- The same `maxOutputToken` (512) and `ThinkingConfig(false)`.
 
-## 5. Métricas que debe registrar el Worker real
+**Early cutoff.** During streaming (`sendMessageAsync`), if more than 32 consecutive whitespace characters appear outside a string, it is cancelled with `cancelProcess()` and goes straight to the retry. Each loop costs about 32 s, versus a median of 10 s per segment.
 
-Por ejecución, en memoria y sin escribir datos de contenido:
+**Empty title.** It affected 19 of the 95 valid ones, always with the value `": "`, which points to the prompt or the schema. Before relying on the retry, test:
 
-- Número de segmentos y la causa del fin: presupuesto, límite de 25, `isStopped` o inbox vacío.
-- Media y p95 del LLM.
-- Número de `ok`, `ok_retry` y `failed`.
-- `thermalStatus` máximo.
+- putting `titulo` in another position of the schema;
+- adding `minLength: 3` to the schema, if `ResponseFormat.json` respects it (unverified);
+- including an example in the system prompt.
 
-Sirven para ajustar el presupuesto de 8 min y el límite de 25.
+Left for the extraction model benchmark.
 
-## Aprobado el 2026-11-07
+**"Extraction failed" does not block the batch:**
 
-1. Columnas `capture.segment_id` (`UNIQUE`), `capture.extraction_status` y `capture.extraction_attempts`.
-2. `captured_at` dentro del texto en claro cifrado del segmento (formato de segmento v1).
-3. Presupuesto de 8 min por ejecución y p95 móvil inicial de 35 s.
-4. §4: penalización de repetición, corte por más de 32 caracteres de espacio en blanco seguidos y reintento con mensaje correctivo.
+- The segment is decrypted, chunked and its chunks are still inserted with embeddings and FTS5, but without extracted fields. That way it can be found by search even if extraction failed.
+- `capture.extraction_status` takes one of these values: `ok`, `ok_retry` or `failed`. It is a schema proposal.
+- `extraction_attempts` and the failure code (`json_invalid`, `title_empty`, `truncated`, `engine_error`) are stored, never the plaintext output outside the vault.
+- The segment is deleted from the inbox after `COMMIT`, like any other.
+- A future setting would allow retrying the `failed` ones with another model. Out of scope.
+- An engine error (`LiteRtLmJniException`) does not count as an extraction failure:
+  - The segment in progress is discarded without `COMMIT`.
+  - The engine is restarted once.
+  - If it fails again, the Worker ends with `Result.retry()`.
 
-## 6. Título vacío: decodificación restringida por esquema (verificado el 2026-11-08; pendiente de decisión)
+## 5. Metrics the real Worker must record
 
-**Resultado de la verificación** (`docs/benchmarks.md`): LiteRT-LM 0.18.1 respeta `x-guidance.whitespace_flexible=false`, `minLength`, `maxLength`, `pattern`, `maxItems` y `additionalProperties:false`, y `ResponseFormat.regex` funciona.
+Per run, in memory and without writing content data:
 
-- `whitespace_flexible=false` elimina el bucle de `\n\t` (5/5, de 32 s a unos 6 s).
-- **El esquema endurecido completo no arregla el título y empeora el contenido** (títulos como `", personas:[{"`, campos vacíos). No se adopta tal cual hasta decidir.
-- Siguiente prueba propuesta, sin ejecutar: `x-guidance.whitespace_pattern` con un espacio opcional, para permitir `"titulo": "..."` sin permitir el bucle.
+- Number of segments and the reason for ending: budget, limit of 25, `isStopped` or empty inbox.
+- LLM mean and p95.
+- Number of `ok`, `ok_retry` and `failed`.
+- Maximum `thermalStatus`.
 
-### Qué usa hoy el spike
+They are used to tune the 8-min budget and the limit of 25.
 
-`CognitionBenchWorker.kt`, sin ejemplo de JSON ni few-shot.
+## Approved on 2026-11-07
 
-Prompt de sistema:
+1. Columns `capture.segment_id` (`UNIQUE`), `capture.extraction_status` and `capture.extraction_attempts`.
+2. `captured_at` inside the encrypted plaintext of the segment (segment format v1).
+3. Budget of 8 min per run and initial moving p95 of 35 s.
+4. §4: repetition penalty, cutoff at more than 32 consecutive whitespace characters and retry with a corrective message.
+
+## 6. Empty title: schema-constrained decoding (verified on 2026-11-08; decision pending)
+
+**Verification result** (`docs/benchmarks.md`): LiteRT-LM 0.18.1 respects `x-guidance.whitespace_flexible=false`, `minLength`, `maxLength`, `pattern`, `maxItems` and `additionalProperties:false`, and `ResponseFormat.regex` works.
+
+- `whitespace_flexible=false` eliminates the `\n\t` loop (5/5, from 32 s to about 6 s).
+- **The full hardened schema does not fix the title and worsens the content** (titles like `", personas:[{"`, empty fields). It is not adopted as is until a decision is made.
+- Next proposed test, not run: `x-guidance.whitespace_pattern` with an optional space, to allow `"titulo": "..."` without allowing the loop.
+
+### What the spike uses today
+
+`CognitionBenchWorker.kt`, with no JSON example or few-shot.
+
+System prompt:
 
 ```text
 Extrae información estructurada del texto del usuario. Responde solo con JSON válido que siga el esquema: titulo (frase corta), personas, fechas (ISO 8601 si es posible), temas y tareas pendientes. Listas vacías si no hay datos.
 ```
 
-Esquema, pasado como `ResponseFormat.json(SCHEMA)` con `enableResponseFormat = true`:
+Schema, passed as `ResponseFormat.json(SCHEMA)` with `enableResponseFormat = true`:
 
 ```json
 {"type":"object","properties":{
@@ -194,25 +194,25 @@ Esquema, pasado como `ResponseFormat.json(SCHEMA)` con `enableResponseFormat = t
  "required":["titulo","personas","fechas","temas","tareas"]}
 ```
 
-El mensaje de usuario es el texto del segmento, sin más.
+The user message is just the segment text.
 
-### Qué ofrece LiteRT-LM 0.18.1 (verificado el 2026-11-07)
+### What LiteRT-LM 0.18.1 offers (verified on 2026-11-07)
 
-- La documentación C++ de v0.18.1 (`docs/api/cpp/constrained-decoding.md`) indica decodificación restringida con LLGuidance mediante regex, JSON Schema y gramáticas Lark.
-- En Kotlin, `classes.jar` de `litertlm-android:0.18.1` expone `ResponseFormat.json(schema)` y `ResponseFormat.regex(pattern)`, con `ResponseFormat.Type = {REGEX, JSON_OBJECT}`. Lark no está expuesto.
-- La guía Kotlin de v0.18.1 no documenta `ResponseFormat`. La API existe en el binario y la añadió el PR #2859.
-- **El spike ya la usa.** Por eso las salidas inválidas son prefijos de JSON válido: `{ "titulo":": "` más espacios en blanco.
-  - El bucle de `\n\t` es whitespace que la gramática JSON permite entre tokens.
-  - `": "` cumple `{"type":"string"}`.
-  - El esquema actual es demasiado laxo.
-- LLGuidance documenta en su `json_schema.md` las opciones:
-  - `x-guidance.whitespace_flexible` (`true` por defecto; `false` obliga a JSON compacto);
-  - `x-guidance.whitespace_pattern` (por ejemplo `[\x20\x0A]{0,2}`).
-- **No está verificado que LiteRT-LM pase `x-guidance` a LLGuidance.**
+- The v0.18.1 C++ documentation (`docs/api/cpp/constrained-decoding.md`) describes constrained decoding with LLGuidance through regex, JSON Schema and Lark grammars.
+- In Kotlin, `classes.jar` of `litertlm-android:0.18.1` exposes `ResponseFormat.json(schema)` and `ResponseFormat.regex(pattern)`, with `ResponseFormat.Type = {REGEX, JSON_OBJECT}`. Lark is not exposed.
+- The v0.18.1 Kotlin guide does not document `ResponseFormat`. The API exists in the binary and was added by PR #2859.
+- **The spike already uses it.** That is why the invalid outputs are prefixes of valid JSON: `{ "titulo":": "` plus whitespace.
+  - The `\n\t` loop is whitespace that the JSON grammar allows between tokens.
+  - `": "` satisfies `{"type":"string"}`.
+  - The current schema is too lax.
+- LLGuidance documents these options in its `json_schema.md`:
+  - `x-guidance.whitespace_flexible` (`true` by default; `false` forces compact JSON);
+  - `x-guidance.whitespace_pattern` (for example `[\x20\x0A]{0,2}`).
+- **It is not verified that LiteRT-LM passes `x-guidance` to LLGuidance.**
 
-### Propuesta
+### Proposal
 
-Mantener la decodificación restringida y endurecer el esquema:
+Keep constrained decoding and harden the schema:
 
 ```json
 {"type":"object",
@@ -227,17 +227,17 @@ Mantener la decodificación restringida y endurecer el esquema:
  "required":["titulo","personas","fechas","temas","tareas"]}
 ```
 
-**Qué se espera de cada cambio:**
+**What each change is expected to do:**
 
-- `whitespace_flexible: false` impide el bucle de espacios. Ataca la causa de los 5 inválidos y deja el corte por más de 32 espacios del §4 como red de seguridad.
-- `minLength` y `pattern` en `titulo` impiden `": "` y el título vacío.
-- `maxItems` limita salidas largas.
+- `whitespace_flexible: false` prevents the whitespace loop. It attacks the cause of the 5 invalid ones and leaves the §4 cutoff at more than 32 spaces as a safety net.
+- `minLength` and `pattern` on `titulo` prevent `": "` and the empty title.
+- `maxItems` limits long outputs.
 
-**Cómo validarlo, en spikes/diag y sin tocar el prompt del benchmark actual:**
+**How to validate it, in spikes/diag and without touching the current benchmark prompt:**
 
-- Repetir el lote de 100 con el esquema nuevo.
-- Medir JSON válido, títulos vacíos y tiempo por segmento.
-- Comprobar en las salidas que no hay whitespace entre tokens. Si lo hay, LiteRT-LM ignora `x-guidance` y habría que usar `ResponseFormat.regex` con una expresión equivalente.
-- Probar también que `minLength` y `pattern` se respetan, porque llguidance los admite pero no está probado a través de LiteRT-LM.
+- Repeat the batch of 100 with the new schema.
+- Measure valid JSON, empty titles and time per segment.
+- Check in the outputs that there is no whitespace between tokens. If there is, LiteRT-LM ignores `x-guidance` and an equivalent expression with `ResponseFormat.regex` would have to be used.
+- Also test that `minLength` and `pattern` are respected, because llguidance supports them but it is not proven through LiteRT-LM.
 
-**Few-shot** con un ejemplo de título relleno: complemento, solo si el esquema endurecido no basta, porque alarga el prefill en cada segmento.
+**Few-shot** with an example of a filled-in title: a complement, only if the hardened schema is not enough, because it lengthens the prefill on every segment.

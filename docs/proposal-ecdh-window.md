@@ -1,98 +1,98 @@
-# Propuesta: clave efímera por ventana de tiempo + HKDF por segmento
+# Proposal: per-time-window ephemeral key + per-segment HKDF
 
-**Estado: Rechazada (2026-11-07).** Se mantiene un ECDH por segmento. No hay nada implementado y CLAUDE.md no cambia.
+**Status: Rejected (2026-11-07).** One ECDH per segment is kept. Nothing is implemented and CLAUDE.md does not change.
 
-**Motivo:** el criterio era adoptarla solo si ECDH supera el 5 % del tiempo total por segmento. En `CognitionWorker` medido en el Pixel 10 (detalle en `docs/benchmarks.md`), ECDH quedó muy por debajo:
+**Reason:** the criterion was to adopt it only if ECDH exceeds 5% of the total time per segment. In `CognitionWorker` measured on the Pixel 10 (details in `docs/benchmarks.md`), ECDH stayed far below that:
 
-| Lote | ECDH media | Total/seg media | ECDH % del total |
+| Batch | ECDH mean | Total/seg mean | ECDH % of total |
 | --- | --- | --- | --- |
-| 10 | 91,8 ms | 11 817 ms | 0,777 % |
-| 100 | 100,2 ms | 20 311 ms | 0,493 % |
+| 10 | 91.8 ms | 11,817 ms | 0.777% |
+| 100 | 100.2 ms | 20,311 ms | 0.493% |
 
-El máximo en un segmento individual fue 1,45 %. El LLM ocupa más del 99 % del tiempo. La propuesta ahorraría como mucho ese < 1 %, y a cambio empeoraría el secreto hacia adelante dentro de la ventana (riesgo 1).
+The maximum for an individual segment was 1.45%. The LLM takes more than 99% of the time. The proposal would save at most that < 1%, and in exchange would worsen forward secrecy within the window (risk 1).
 
-**Reabrir solo si** cambia el reparto de costes, por ejemplo si muchos segmentos dejan de pasar por el LLM o el LLM baja a menos de 2 s por segmento.
+**Reopen only if** the cost split changes, for example if many segments stop going through the LLM or the LLM drops below 2 s per segment.
 
-El resto del documento se conserva como registro del análisis.
+The rest of the document is kept as a record of the analysis.
 
-## Problema
+## Problem
 
-Hoy cada segmento lleva su propia efímera, y descifrarlo exige un ECDH con `K_inbox` en StrongBox.
+Today each segment carries its own ephemeral key, and decrypting it requires an ECDH with `K_inbox` in StrongBox.
 
-| Operación | Medido en Pixel 10 (2026-11-07) |
+| Operation | Measured on Pixel 10 (2026-11-07) |
 | --- | --- |
-| ECDH con privada en StrongBox | ≈ 44 ms (rango 40–53 ms) |
-| ECDH y keygen en software | < 1 ms |
+| ECDH with private key in StrongBox | ≈ 44 ms (range 40–53 ms) |
+| ECDH and keygen in software | < 1 ms |
 
-Si se hace en serie, 1000 segmentos gastan unos 44 s de StrongBox (estimación a partir de la medida).
+Done serially, 1000 segments spend about 44 s of StrongBox time (estimate from the measurement).
 
-## Diseño
+## Design
 
-`K_inbox` y `K_wrap` no cambian. Solo cambia cómo se obtiene `K_seg`.
+`K_inbox` and `K_wrap` do not change. Only how `K_seg` is obtained changes.
 
-**Ingesta, al abrir la ventana `w`:**
+**Ingestion, when window `w` opens:**
 
-1. Generar el par efímero en software `(e_w, E_w)`.
+1. Generate the ephemeral pair in software `(e_w, E_w)`.
 2. `Z_w = ECDH(e_w, K_inbox_pub)`.
 3. `PRK_w = HKDF-Extract(salt = window_id, IKM = Z_w)`.
-4. Poner a cero `e_w` y `Z_w`. Guardar `E_w` en la cabecera de cada segmento de la ventana.
+4. Zero `e_w` and `Z_w`. Store `E_w` in the header of each segment of the window.
 
-**Ingesta, por cada segmento `i`:**
+**Ingestion, for each segment `i`:**
 
 ```text
 K_seg_i = HKDF-Expand(PRK_w, info = "sebrain/seg/v1" || window_id || i, L = 32)
 header  = version || window_id || E_w || i
-ct      = AES-256-GCM(K_seg_i, nonce aleatorio de 96 bits, plaintext, aad = header)
+ct      = AES-256-GCM(K_seg_i, random 96-bit nonce, plaintext, aad = header)
 ```
 
-**Cognición, por lote:**
+**Cognition, per batch:**
 
-1. Agrupar segmentos por `window_id`.
-2. Hacer un ECDH en StrongBox por ventana para obtener `Z_w` y derivar `PRK_w`.
-3. Derivar cada `K_seg_i` en software.
-4. Poner a cero `PRK_w` al terminar la ventana.
+1. Group segments by `window_id`.
+2. Do one StrongBox ECDH per window to obtain `Z_w` and derive `PRK_w`.
+3. Derive each `K_seg_i` in software.
+4. Zero `PRK_w` when the window is finished.
 
-**La ventana se cierra** al ocurrir lo primero de: tiempo máximo (propuesta inicial: 15 min), número máximo de segmentos, bloqueo de pantalla o muerte del proceso.
+**The window closes** on whichever comes first: maximum time (initial proposal: 15 min), maximum number of segments, screen lock or process death.
 
-**Coste:** 1 ECDH de StrongBox por ventana en vez de 1 por segmento.
+**Cost:** 1 StrongBox ECDH per window instead of 1 per segment.
 
-## Riesgos
+## Risks
 
-| # | Riesgo | Gravedad | Mitigación | Riesgo residual |
+| # | Risk | Severity | Mitigation | Residual risk |
 | --- | --- | --- | --- | --- |
-| 1 | **Secreto hacia adelante dentro de la ventana.** `PRK_w` vive en RAM de un proceso siempre activo, incluso con el teléfono bloqueado. Quien lea esa memoria descifra los segmentos ya escritos de la ventana; hoy solo obtendría el segmento en curso. | **Alta** | Ratchet: `PRK_(i+1) = HKDF(PRK_i, "ratchet")`, borrando el anterior tras cada segmento. | Los segmentos futuros de la ventana siguen expuestos. El cierre al bloquear limita la exposición, pero la ingesta con el teléfono bloqueado abre ventanas nuevas igualmente. |
-| 2 | **Radio de impacto en cognición.** Filtrar un `Z_w` expone toda la ventana, no un segmento. | Media | Ventanas cortas y número máximo de segmentos. | Inherente al diseño. |
-| 3 | **Reutilización de clave y nonce.** Repetir `i` tras un reinicio o un error reutilizaría `K_seg_i`. Con nonce aleatorio el fallo es menos grave, pero se pierde la garantía de clave única. | Alta si ocurre | El estado de ventana vive solo en RAM y nunca se persiste. Al reiniciar el proceso se abre una ventana nueva. | Bajo. |
-| 4 | **Borrado de memoria no garantizado.** En la JVM, `fill(0)` no alcanza las copias que haga el GC o las que queden dentro de librerías. | Media | Mantener el estado en un único `ByteArray` o en nativo con `mlock` y borrado explícito. | Afecta también al diseño actual, pero aquí la clave vive minutos en vez de milisegundos. |
-| 5 | **Mayor superficie de implementación.** HKDF, ratchet y gestión de ventanas son código criptográfico propio que hay que probar. | Media | Vectores de prueba RFC 5869, y pruebas de pérdida y desorden de segmentos. | Bajo. |
-| 6 | **Ratchet y segmentos perdidos.** El receptor debe poder avanzar la cadena sin todos los segmentos. | Baja | Avanzar hasta `i` desde el último estado conocido. El coste es despreciable. | Bajo. |
+| 1 | **Forward secrecy within the window.** `PRK_w` lives in the RAM of an always-on process, even with the phone locked. Whoever reads that memory can decrypt the segments already written in the window; today they would only obtain the current segment. | **High** | Ratchet: `PRK_(i+1) = HKDF(PRK_i, "ratchet")`, erasing the previous one after each segment. | Future segments of the window remain exposed. Closing on lock limits exposure, but ingestion with the phone locked opens new windows anyway. |
+| 2 | **Blast radius in cognition.** Leaking one `Z_w` exposes the whole window, not one segment. | Medium | Short windows and a maximum number of segments. | Inherent to the design. |
+| 3 | **Key and nonce reuse.** Repeating `i` after a restart or an error would reuse `K_seg_i`. With a random nonce the failure is less severe, but the unique-key guarantee is lost. | High if it occurs | Window state lives only in RAM and is never persisted. When the process restarts a new window opens. | Low. |
+| 4 | **Memory erasure not guaranteed.** On the JVM, `fill(0)` does not reach copies made by the GC or those left inside libraries. | Medium | Keep the state in a single `ByteArray` or in native code with `mlock` and explicit erasure. | Also affects the current design, but here the key lives for minutes instead of milliseconds. |
+| 5 | **Larger implementation surface.** HKDF, ratchet and window management are custom cryptographic code that has to be tested. | Medium | RFC 5869 test vectors, and tests for lost and out-of-order segments. | Low. |
+| 6 | **Ratchet and lost segments.** The receiver must be able to advance the chain without all the segments. | Low | Advance to `i` from the last known state. The cost is negligible. | Low. |
 
-El riesgo 1 es el principal: empeora una propiedad de seguridad real del diseño actual a cambio de ahorrar tiempo.
+Risk 1 is the main one: it worsens a real security property of the current design in exchange for saving time.
 
-## Por qué no adoptarla aún
+## Why not adopt it yet
 
-El coste por segmento de la cognición lo domina el LLM, no el ECDH. Con los datos de Edge Gallery (Gemma-4-E2B TPU, JSON):
+The per-segment cost of cognition is dominated by the LLM, not by ECDH. With the Edge Gallery data (Gemma-4-E2B TPU, JSON):
 
-| Paso | Tiempo aproximado |
+| Step | Approximate time |
 | --- | --- |
-| Primer token | 1206–1396 ms |
-| Generar 100 tokens a 19 tok/s (salida de ejemplo) | ≈ 5,2 s |
-| ECDH con StrongBox | ≈ 0,044 s |
+| First token | 1206–1396 ms |
+| Generating 100 tokens at 19 tok/s (sample output) | ≈ 5.2 s |
+| ECDH with StrongBox | ≈ 0.044 s |
 
-El ECDH es menos del 1 % de un segmento que pase por el LLM, y esta propuesta ahorraría como mucho ese porcentaje. Esto es una estimación: aún no hay benchmark de `CognitionWorker` y el tamaño de salida es supuesto.
+ECDH is less than 1% of a segment that goes through the LLM, and this proposal would save at most that percentage. This is an estimate: there is no `CognitionWorker` benchmark yet and the output size is assumed.
 
-La propuesta solo compensa si hay muchos segmentos que no pasan por el LLM (por ejemplo, descartados por deduplicación antes de la extracción). Hoy eso no ocurre, porque la deduplicación se hace antes de cifrar, en la ingesta.
+The proposal only pays off if there are many segments that do not go through the LLM (for example, discarded by deduplication before extraction). Today that does not happen, because deduplication is done before encrypting, at ingestion.
 
-## Alternativas
+## Alternatives
 
-| Opción | Coste de ECDH | Efecto en seguridad | Valoración |
+| Option | ECDH cost | Security effect | Assessment |
 | --- | --- | --- | --- |
-| **A. Mantener el diseño actual** | 44 ms por segmento | Sin cambios | **Recomendada por ahora** |
-| **B. Agrupar varias capturas en un segmento** | 44 ms por grupo | Una ventana de exposición por grupo; retiene datos en RAM hasta cerrarlo | Solo si A resulta insuficiente |
-| **C. Esta propuesta con ratchet** | 44 ms por ventana | Riesgos 1 a 6 | Si la medición lo justifica |
-| **D. Esta propuesta sin ratchet** | 44 ms por ventana | Sin secreto hacia adelante dentro de la ventana | No recomendada |
+| **A. Keep the current design** | 44 ms per segment | No change | **Recommended for now** |
+| **B. Group several captures into one segment** | 44 ms per group | One exposure window per group; keeps data in RAM until it closes | Only if A proves insufficient |
+| **C. This proposal with ratchet** | 44 ms per window | Risks 1 to 6 | If the measurement justifies it |
+| **D. This proposal without ratchet** | 44 ms per window | No forward secrecy within the window | Not recommended |
 
-## Decisión
+## Decision
 
-1. Se midió `CognitionWorker` con el umbral del 5 % como criterio: ECDH quedó en 0,49–0,78 %. **Rechazada.**
-2. Las preguntas sobre la ventana de 15 min y el cierre al bloquear ya no aplican.
+1. `CognitionWorker` was measured with the 5% threshold as the criterion: ECDH came in at 0.49–0.78%. **Rejected.**
+2. The questions about the 15-min window and closing on lock no longer apply.

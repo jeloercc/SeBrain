@@ -1,89 +1,89 @@
-# SeBrain — contexto para Claude Code
+# SeBrain — context for Claude Code
 
-App Android nativa (Kotlin + C/JNI) que actúa como segundo cerebro 100 % local en un Google Pixel 10 (Tensor G5).
-Ingiere datos de otras apps, los procesa con IA on-device y los guarda cifrados.
-Documento de investigación completo (el porqué de cada decisión): https://claude.ai/artifact/VzkdPNuHAbtrMDV83R2HSJ
+Native Android app (Kotlin + C/JNI) that acts as a 100% local second brain on a Google Pixel 10 (Tensor G5).
+It ingests data from other apps, processes it with on-device AI and stores it encrypted.
+Full research document (the reason behind each decision): https://claude.ai/artifact/VzkdPNuHAbtrMDV83R2HSJ
 
-## Reglas duras (no negociables)
+## Hard rules (non-negotiable)
 
-- La app NO declara `android.permission.INTERNET`. Si una dependencia lo fusiona, eliminarlo con `tools:node="remove"`.
-- Cero SDKs de analítica, telemetría o crash reporting (Firebase, Crashlytics, etc.).
-  - **Excepción pendiente de confirmar:** ML Kit GenAI (`com.google.mlkit:genai-prompt`, opcional tras un ajuste) arrastra `transport-backend-cct`, `transport-runtime` y librerías `firebase-*`. Resultado en `docs/benchmarks.md`.
-- Ningún dato en claro sale del proceso. Nada se escribe en disco sin cifrar, salvo binarios de modelos.
-- `allowBackup="false"`, `dataExtractionRules` que excluyan todo, `FLAG_SECURE` en pantallas con contenido de la bóveda.
-- Los modelos se importan localmente (SAF / `adb push`) y se verifican con SHA-256 fijado en código. La app no descarga nada.
-- Toda librería nativa alineada a páginas de 16 KB (`-Wl,-z,max-page-size=16384`, NDK r27+).
+- The app does NOT declare `android.permission.INTERNET`. If a dependency merges it, remove it with `tools:node="remove"`.
+- Zero analytics, telemetry or crash reporting SDKs (Firebase, Crashlytics, etc.).
+  - **Exception pending confirmation:** ML Kit GenAI (`com.google.mlkit:genai-prompt`, optional behind a setting) pulls in `transport-backend-cct`, `transport-runtime` and `firebase-*` libraries. Result in `docs/benchmarks.md`.
+- No plaintext data leaves the process. Nothing is written to disk unencrypted, except model binaries.
+- `allowBackup="false"`, `dataExtractionRules` that exclude everything, `FLAG_SECURE` on screens with vault content.
+- Models are imported locally (SAF / `adb push`) and verified with a SHA-256 pinned in code. The app downloads nothing.
+- Every native library aligned to 16 KB pages (`-Wl,-z,max-page-size=16384`, NDK r27+).
 - Language: code, comments, identifiers, repo docs, commit messages, system prompts and JSON keys are in English. Extracted values keep the source language of the captured text (do not translate user data). Conversation with the user stays in Spanish.
 
-## Stack decidido
+## Decided stack
 
-| Capa | Usar | NO usar (descartado) |
+| Layer | Use | Do NOT use (discarded) |
 | --- | --- | --- |
-| LLM background | LiteRT-LM (Kotlin) **fijado a `litertlm-android:0.18.1`** + `litert-npu-runtime-google-tensor:2.3.2`, backend NPU → GPU → CPU. 0.19.1 falla con ese runtime (`undefined symbol: LiteRtDispatchQueryInterface`). No subir de versión sin volver a probar la NPU en el Pixel 10 | MLC LLM / TVM (no usa la TPU del Tensor G5) |
-| Aceleración NPU | LiteRT CompiledModel + Google Tensor ML SDK (Beta) | Delegado NNAPI (deprecado en Android 15) |
-| LLM interactivo | LiteRT-LM por defecto. Opcional tras un ajuste, fuera del núcleo: ML Kit GenAI Prompt API (Gemini Nano), solo con Activity en primer plano; la app no depende de la versión `nano-*` | Gemini Nano desde Worker o foreground service (`BACKGROUND_USE_BLOCKED`) |
-| Embeddings | EmbeddingGemma 2 Text 270M, Matryoshka a 256 dims, L2 normalizado | — |
-| Modelo de extracción | Gemma 3 1B int4 (subir a Gemma 4 E2B si la TPU lo sostiene) | — |
-| Base de datos | `sqlcipher-android` (build propio) con clave raw `x'…'` | `android.database.sqlite`, Room sin SQLCipher |
-| Vectores | `sqlite-vec` compilado estático dentro de SQLCipher (`sqlite3_auto_extension`) | `sqlite-vss` (abandonado) |
-| Texto | FTS5, búsqueda híbrida con RRF (k = 60) | — |
-| Trabajo diferido | WorkManager (cargando, batería no baja, idle para lotes grandes) | Servicios residentes con el LLM cargado |
+| Background LLM | LiteRT-LM (Kotlin) **pinned to `litertlm-android:0.18.1`** + `litert-npu-runtime-google-tensor:2.3.2`, backend NPU → GPU → CPU. 0.19.1 fails with that runtime (`undefined symbol: LiteRtDispatchQueryInterface`). Do not upgrade without retesting the NPU on the Pixel 10 | MLC LLM / TVM (does not use the Tensor G5 TPU) |
+| NPU acceleration | LiteRT CompiledModel + Google Tensor ML SDK (Beta) | NNAPI delegate (deprecated in Android 15) |
+| Interactive LLM | LiteRT-LM by default. Optional behind a setting, outside the core: ML Kit GenAI Prompt API (Gemini Nano), only with an Activity in the foreground; the app does not depend on the `nano-*` version | Gemini Nano from a Worker or foreground service (`BACKGROUND_USE_BLOCKED`) |
+| Embeddings | EmbeddingGemma 2 Text 270M, Matryoshka at 256 dims, L2 normalized | — |
+| Extraction model | Gemma 3 1B int4 (move up to Gemma 4 E2B if the TPU sustains it) | — |
+| Database | `sqlcipher-android` (own build) with raw key `x'…'` | `android.database.sqlite`, Room without SQLCipher |
+| Vectors | `sqlite-vec` compiled statically inside SQLCipher (`sqlite3_auto_extension`) | `sqlite-vss` (abandoned) |
+| Text | FTS5, hybrid search with RRF (k = 60) | — |
+| Deferred work | WorkManager (charging, battery not low, idle for large batches) | Resident services with the LLM loaded |
 
-## Arquitectura (tres procesos, una bóveda)
+## Architecture (three processes, one vault)
 
-1. **Ingesta** (siempre activa, sin IA): Share intent, `NotificationListenerService` con allowlist por paquete, tile + OCR (opcional). Normaliza, deduplica (SHA-256 del contenido canónico) y cifra con ECIES usando la clave pública `K_inbox` en segmentos AES-GCM (`K_seg` efímera por segmento). Funciona con el teléfono bloqueado.
-2. **Cognición** (`CognitionWorker`): descifra segmentos → chunking → extracción JSON con decodificación restringida → embeddings → inserta en `capture`, `chunk`, `chunk_fts`, `chunk_vec` en una transacción. Borra el segmento solo tras `COMMIT`. Carga el LLM por lote y lo libera al terminar.
-3. **Consulta** (app abierta): embedding de la consulta → RRF FTS5 + vec0 → top 8 → LiteRT-LM con citas `[n]`. Con el ajuste de Gemini Nano activo, se usa Nano y se vuelve a LiteRT-LM si AICore devuelve `BUSY`.
+1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (SHA-256 of the canonical content) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
+2. **Cognition** (`CognitionWorker`): decrypts segments → chunking → JSON extraction with constrained decoding → embeddings → inserts into `capture`, `chunk`, `chunk_fts`, `chunk_vec` in one transaction. Deletes the segment only after `COMMIT`. Loads the LLM per batch and releases it when done.
+3. **Query** (app open): query embedding → RRF FTS5 + vec0 → top 8 → LiteRT-LM with `[n]` citations. With the Gemini Nano setting on, Nano is used and it falls back to LiteRT-LM if AICore returns `BUSY`.
 
-### Claves (Android Keystore)
+### Keys (Android Keystore)
 
-- `K_inbox`: par EC P-256, `PURPOSE_AGREE_KEY`, StrongBox (fallback TEE si StrongBox lo rechaza).
-- `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; envuelve la DEK de 32 bytes guardada en `noBackupFilesDir`.
-- `K_secret` (opcional): AES-256-GCM con `AUTH_BIOMETRIC_STRONG` para campos marcados como secreto.
-- Nunca pasar la DEK como passphrase (evita el PBKDF2). Poner a cero los buffers tras usarlos.
+- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it).
+- `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; wraps the 32-byte DEK stored in `noBackupFilesDir`.
+- `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
+- Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.
 
 ### AccessibilityService
 
-Desactivado y fuera del alcance hasta la Fase 7. Android 17 lo revoca con Advanced Protection activo. No declarar `isAccessibilityTool`.
+Disabled and out of scope until Phase 7. Android 17 revokes it with Advanced Protection on. Do not declare `isAccessibilityTool`.
 
-## Entorno verificado (2026-11-07)
+## Verified environment (2026-11-07)
 
-- Dispositivo: Pixel 10 (frankel), Android 17, SDK 37 (sdk_full 37.1), parche 2026-10-05.
-- Bootloader bloqueado (`verifiedbootstate=green`, `flash.locked=1`): ML Kit GenAI disponible. No desbloquear.
+- Device: Pixel 10 (frankel), Android 17, SDK 37 (sdk_full 37.1), patch 2026-10-05.
+- Bootloader locked (`verifiedbootstate=green`, `flash.locked=1`): ML Kit GenAI available. Do not unlock.
 - `strongbox_keystore=300`, `hardware_keystore=500`. AICore 26.10.15.7.
-- Mac de desarrollo: Intel x86_64, macOS 15.8.2, JDK 21 (Temurin 21.0.13 x64), Android command line tools instalados a mano, sin Homebrew (`ANDROID_HOME=~/Library/Android/sdk`; adb desde `$ANDROID_HOME/platform-tools`).
-- Google Tensor SDK Beta (Pixel 10 y 11): acceso concedido. Aún sin usar; no se usa en el spike de diagnóstico.
-- ML Kit Prompt API: `com.google.mlkit:genai-prompt:1.0.0-beta5`. `getBaseModelName()` observado el 2026-11-07: `nano-v4-full`.
-- Tensor ML SDK: la compilación de modelos para la TPU exige estación Linux x86_64. En la Mac, usar modelos TPU ya compilados (`.litertlm` de LiteRT Community / model garden) o un contenedor/VM Linux. No intentar compilar para TPU en macOS.
-- Modelo de los spikes: `gemma-4-E2B-it_Google_Tensor_G5.litertlm` copiado de la app Edge Gallery (SHA-256 `62faebcf…705f27`). **Solo para spikes.** En la app final el modelo debe obtenerse de una fuente oficial (`litert-community` en Hugging Face), con los términos de Gemma aceptados, y con el SHA-256 fijado en código. Se sigue importando por SAF / `adb push`: la app no descarga nada.
+- Development Mac: Intel x86_64, macOS 15.8.2, JDK 21 (Temurin 21.0.13 x64), Android command line tools installed by hand, no Homebrew (`ANDROID_HOME=~/Library/Android/sdk`; adb from `$ANDROID_HOME/platform-tools`).
+- Google Tensor SDK Beta (Pixel 10 and 11): access granted. Not used yet; not used in the diagnostic spike.
+- ML Kit Prompt API: `com.google.mlkit:genai-prompt:1.0.0-beta5`. `getBaseModelName()` observed on 2026-11-07: `nano-v4-full`.
+- Tensor ML SDK: compiling models for the TPU requires a Linux x86_64 workstation. On the Mac, use already compiled TPU models (`.litertlm` from LiteRT Community / model garden) or a Linux container/VM. Do not try to compile for TPU on macOS.
+- Spike model: `gemma-4-E2B-it_Google_Tensor_G5.litertlm` copied from the Edge Gallery app (SHA-256 `62faebcf…705f27`). **Spikes only.** In the final app the model must be obtained from an official source (`litert-community` on Hugging Face), with the Gemma terms accepted, and with the SHA-256 pinned in code. It is still imported via SAF / `adb push`: the app downloads nothing.
 
-## Módulos Gradle
+## Gradle modules
 
-`:app` (Compose) · `:ingest` · `:cognition` · `:core:crypto` · `:core:vault` (incluye el `.so` de SQLCipher + sqlite-vec) · `:core:ml`
+`:app` (Compose) · `:ingest` · `:cognition` · `:core:crypto` · `:core:vault` (includes the SQLCipher + sqlite-vec `.so`) · `:core:ml`
 
-`minSdk` y `targetSdk`: Android 16/17 (el único dispositivo es el Pixel 10). No añadir compatibilidad con versiones antiguas.
+`minSdk` and `targetSdk`: Android 16/17 (the only device is the Pixel 10). Do not add compatibility with older versions.
 
-## Fase actual: 0 — Spikes de riesgo
+## Current phase: 0 — Risk spikes
 
-Cada spike entrega código mínimo + números medidos en el Pixel 10. Nada de UI todavía.
+Each spike delivers minimal code + numbers measured on the Pixel 10. No UI yet.
 
-- [ ] Build de `sqlcipher-android` con `sqlite-vec.c` (`-DSQLITE_CORE`) y FTS5, alineado a 16 KB. Criterio: `SELECT vec_version()` y FTS5 en `PRAGMA compile_options` en el dispositivo.
-- [ ] Benchmark LiteRT-LM: EmbeddingGemma 2 (270M) y Gemma 3 1B en NPU, GPU y CPU. Medir latencia, tokens/s, RAM pico y temperatura tras 10 min.
-- [x] ML Kit: `getBaseModelName()` devuelve un modelo `nano-*` y genera texto con bootloader bloqueado y sin `INTERNET`. Observado el 2026-11-07: `nano-v4-full`.
-- [x] Keystore: ¿StrongBox acepta `PURPOSE_AGREE_KEY` en EC P-256? Sí (`KeyInfo.securityLevel=STRONGBOX`, ECDH ≈ 44 ms).
+- [ ] Build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
+- [ ] LiteRT-LM benchmark: EmbeddingGemma 2 (270M) and Gemma 3 1B on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
+- [x] ML Kit: `getBaseModelName()` returns a `nano-*` model and generates text with a locked bootloader and without `INTERNET`. Observed on 2026-11-07: `nano-v4-full`.
+- [x] Keystore: does StrongBox accept `PURPOSE_AGREE_KEY` on EC P-256? Yes (`KeyInfo.securityLevel=STRONGBOX`, ECDH ≈ 44 ms).
 
-Salida de la fase: tabla de benchmarks en `docs/benchmarks.md` y decisión de backend por modelo.
+Phase exit: benchmark table in `docs/benchmarks.md` and backend decision per model.
 
-## Decisiones abiertas (no asumir; preguntar)
+## Open decisions (do not assume; ask)
 
-- Modo de procesamiento del inbox: Estricto (solo desbloqueado) o Equilibrado (tras el primer desbloqueo).
-- Confirmar la excepción de ML Kit: LiteRT-LM es el motor por defecto y ML Kit queda opcional tras un ajuste, pendiente de cerrar con el análisis de telemetría de `docs/benchmarks.md`.
-- Distribución: solo sideload o Play privado.
-- Allowlist inicial de apps para notificaciones.
+- Inbox processing mode: Strict (unlocked only) or Balanced (after first unlock).
+- Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
+- Distribution: sideload only or private Play.
+- Initial allowlist of apps for notifications.
 
-## Forma de trabajar
+## Way of working
 
-- Rol: arquitecto de sistemas Android. Respuestas técnicas y directas, sin halagos ni relleno.
-- Antes de usar una API de LiteRT-LM, Tensor SDK o ML Kit GenAI, verificar la firma en la documentación actual: cambian rápido y la memoria del modelo está desactualizada.
-- Señalar explícitamente cualquier limitación del HAL/OS en lugar de rodearla en silencio.
-- Cambios en la jerarquía de claves o en el esquema de la BD: proponer primero, no aplicar directamente.
+- Role: Android systems architect. Technical and direct answers, no flattery or filler.
+- Before using a LiteRT-LM, Tensor SDK or ML Kit GenAI API, verify the signature in the current documentation: they change quickly and the model's memory is out of date.
+- Explicitly point out any HAL/OS limitation instead of silently working around it.
+- Changes to the key hierarchy or the DB schema: propose first, do not apply directly.
