@@ -27,6 +27,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Mediciones con pantalla encendida sin desbloquear el teléfono a mano.
+        if (intent.getBooleanExtra("show", false)) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
 
         val text = TextView(this).apply {
             setPadding(32, 96, 32, 32)
@@ -93,13 +98,22 @@ class MainActivity : Activity() {
         val n = intent.getIntExtra("n", 10)
         val delay = intent.getIntExtra("delay", 90).toLong()
         val request = OneTimeWorkRequestBuilder<CognitionBenchWorker>()
-            .setInputData(CognitionBenchWorker.input(n, fg = false))
+            .setInputData(
+                CognitionBenchWorker.input(
+                    n, fg = false,
+                    tag = intent.getStringExtra("tag"),
+                    reuse = intent.getBooleanExtra("reuse", false),
+                    detail = intent.getBooleanExtra("detail", false),
+                ),
+            )
             .setInitialDelay(delay, TimeUnit.SECONDS)
             .setConstraints(androidx.work.Constraints.Builder().setRequiresCharging(true).build())
             .build()
         WorkManager.getInstance(this)
-            .enqueueUniqueWork("cognition_bg", ExistingWorkPolicy.KEEP, request)
+            .enqueueUniqueWork("cognition_bg", ExistingWorkPolicy.REPLACE, request)
         Diag.info("Cognition bg programado: lote $n, retraso $delay s, requiresCharging, sin FGS")
+        // Sin `show`, la tarea se retira de recientes para que un desbloqueo no reabra la actividad.
+        if (!intent.getBooleanExtra("show", false)) finishAndRemoveTask()
     }
 
     override fun onDestroy() {

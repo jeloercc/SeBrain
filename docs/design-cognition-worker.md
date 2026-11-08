@@ -16,10 +16,13 @@
   - Con la media del lote de 10 (11,8 s por segmento), 25 segmentos son unos 5 min.
   - Con la media del lote de 100 (20,3 s), 25 segmentos son unos 8,5 min.
   - Con el p95 (32,5 s), 25 segmentos son unos 13,5 min y no caben.
+  - **Tope medido en segundo plano real: unos 15 segmentos por ejecución.** Con el presupuesto de 8 min, la corrida A dio 29,3 s por segmento, más 5,1 s de carga y 22,3 s de SHA-256, es decir, unos 15. El control del 2026-11-08 dio unos 18 (23,5 s por segmento, 14,0 s y 23,7 s). El límite de 25 solo se alcanza con la pantalla encendida.
+  - **Causa:** en segundo plano el proceso queda en `cpuset=/background` (CPU 0–2) y `createConversation` tarda 14,9 s frente a 2,68 s con la pantalla encendida.
   - Por eso el presupuesto de tiempo es obligatorio y no basta con contar segmentos.
 - Antes de empezar un segmento se comprueba:
   - `elapsed + p95_estimado < 8 min`, donde `p95_estimado` es el p95 móvil de los últimos segmentos (valor inicial 35 s).
   - Si no cabe, se guarda el checkpoint y se devuelve `Result.success()`.
+- **Doze:** con idle forzado el Worker no arrancó en 15 min (`DEVICE_NOT_DOZING`) y arrancó 6 s después de `unforce`. El inbox debe tolerar esperas largas.
 - **Restricciones de WorkManager:** cargando, batería no baja y `requiresDeviceIdle` para lotes grandes, como dice CLAUDE.md.
 - **Encadenado:** si al terminar quedan segmentos en el inbox, el Worker encola el siguiente con `enqueueUniqueWork("cognition", KEEP, …)`. `KEEP` evita que dos Workers se ejecuten a la vez.
   - Un Worker único no impide que un bucle bloqueante siga corriendo tras un `REPLACE`; eso ya ocurrió en el spike.
@@ -112,7 +115,7 @@ intento 1 → válido → seguir
 **El reintento no puede repetir la misma configuración.** La corrida 2 de `docs/benchmarks.md` lo confirma:
 
 - La generación es determinista: fallaron los mismos 5 segmentos con 256 y con 512 tokens.
-- El fallo es un bucle de tabuladores y espacios tras `{ "titulo":": "`, no un truncado.
+- El fallo es un bucle de `\n\t` tras `{ "titulo":": "`, no un truncado.
 - Doblar `maxOutputToken` no sirve.
 
 El reintento usa:
@@ -161,7 +164,13 @@ Sirven para ajustar el presupuesto de 8 min y el límite de 25.
 3. Presupuesto de 8 min por ejecución y p95 móvil inicial de 35 s.
 4. §4: penalización de repetición, corte por más de 32 caracteres de espacio en blanco seguidos y reintento con mensaje correctivo.
 
-## 6. Título vacío: decodificación restringida por esquema (aprobado, condicionado a la verificación de restricciones)
+## 6. Título vacío: decodificación restringida por esquema (verificado el 2026-11-08; pendiente de decisión)
+
+**Resultado de la verificación** (`docs/benchmarks.md`): LiteRT-LM 0.18.1 respeta `x-guidance.whitespace_flexible=false`, `minLength`, `maxLength`, `pattern`, `maxItems` y `additionalProperties:false`, y `ResponseFormat.regex` funciona.
+
+- `whitespace_flexible=false` elimina el bucle de `\n\t` (5/5, de 32 s a unos 6 s).
+- **El esquema endurecido completo no arregla el título y empeora el contenido** (títulos como `", personas:[{"`, campos vacíos). No se adopta tal cual hasta decidir.
+- Siguiente prueba propuesta, sin ejecutar: `x-guidance.whitespace_pattern` con un espacio opcional, para permitir `"titulo": "..."` sin permitir el bucle.
 
 ### Qué usa hoy el spike
 
@@ -193,7 +202,7 @@ El mensaje de usuario es el texto del segmento, sin más.
 - En Kotlin, `classes.jar` de `litertlm-android:0.18.1` expone `ResponseFormat.json(schema)` y `ResponseFormat.regex(pattern)`, con `ResponseFormat.Type = {REGEX, JSON_OBJECT}`. Lark no está expuesto.
 - La guía Kotlin de v0.18.1 no documenta `ResponseFormat`. La API existe en el binario y la añadió el PR #2859.
 - **El spike ya la usa.** Por eso las salidas inválidas son prefijos de JSON válido: `{ "titulo":": "` más espacios en blanco.
-  - El bucle de tabuladores es whitespace que la gramática JSON permite entre tokens.
+  - El bucle de `\n\t` es whitespace que la gramática JSON permite entre tokens.
   - `": "` cumple `{"type":"string"}`.
   - El esquema actual es demasiado laxo.
 - LLGuidance documenta en su `json_schema.md` las opciones:

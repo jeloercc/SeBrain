@@ -363,7 +363,7 @@ Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del sp
 3. **ECDH con el LLM activo:** 83–127 ms (media 91 ms), frente a 44 ms en el spike aislado. Se reproduce sin Edge Gallery, así que no lo causaba Edge Gallery. La causa sigue sin medirse.
 4. **El JSON inválido no se debe al límite de tokens.**
    - Fallan **los mismos 5 segmentos** que en la corrida 1 (29, 33, 43, 68, 83), con texto idéntico. La generación es determinista.
-   - Las 5 salidas completas son `{ "titulo":": "` seguido de tabuladores y espacios repetidos hasta agotar el límite: 520–521 caracteres con 512 tokens, 264 con 256.
+   - Las 5 salidas completas son `{ "titulo":": "` seguido de `\n\t` repetidos (corregido el 2026-11-08; el log mostraba los saltos de línea como espacios) hasta agotar el límite: 520–521 caracteres con 512 tokens, 264 con 256.
    - Es un bucle degenerado de espacios en blanco bajo decodificación restringida, no un JSON largo truncado.
    - Doblar los tokens solo duplica el tiempo perdido: 32 s por segmento fallido, frente a una mediana de 10 s.
 5. **El título vacío es sistemático.** 19 de los 95 válidos tienen `titulo` igual a `": "`. Los 5 inválidos empiezan igual. El modelo emite `": "` como valor del primer campo, lo que apunta al prompt o al esquema y no al azar. No investigado.
@@ -436,3 +436,104 @@ Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del sp
 - **Poco después:** el teléfono se desconectó del USB. Desde las 23:01:02 no hay logs, y a las 23:16 `adb devices` no lo veía.
 - **Sin resultado:** no hay ningún segmento procesado y no se sabe si el Worker llegó a ejecutarse con el modo idle forzado.
 - **El modo idle forzado puede seguir activo en el teléfono:** `dumpsys deviceidle unforce` no se pudo ejecutar. Hay que ejecutarlo al reconectar y repetir la corrida B.
+
+## Segundo plano: idle forzado, `cpuset`, conversación única y restricciones del esquema, 2026-11-08
+
+Sesión de 15:30 a 16:18. Pixel conectado a corriente (`AC powered`), batería del 34 % al 56 %. Mismo modelo y motor (`litertlm-android:0.18.1`, NPU), `maxOutputToken` 512, prompt sin cambios. Desglose con `ExperimentalFlags.enableBenchmark` (hay que activarlo **antes** de crear el `Engine`; si no, `getBenchmarkInfo` lanza `Benchmark is not enabled`).
+
+**Inicio de sesión:** `dumpsys deviceidle unforce` confirmado (`mForceIdle=false`, `mState=ACTIVE`). Volvió a confirmarse tras la corrida B y al final de la sesión.
+
+### Corrida B: idle forzado
+
+| Intento | Qué pasó | ¿Válido? |
+| --- | --- | --- |
+| 15:30:43 | 8,4 min en `IDLE` sin arrancar (`DEVICE_NOT_DOZING` sin cumplir). A las 15:39:06 se levantó el teléfono (`WAKE_REASON_LIFT`) y a las 15:39:13 se pulsó el botón de encendido; la actividad se restauró y reprogramó el Worker. Con `deviceIdle=true` y `importance=325`, el Worker arrancó, la NPU cargó en 6346 ms y generó el segmento 0. Luego cayó por un error mío (orden de `enableBenchmark`) | No |
+| **15:43:11** | **15 min en `IDLE` sin arrancar.** La única restricción sin cumplir al final era `DEVICE_NOT_DOZING`; 84 de 84 muestras con el proceso muerto | **Sí** |
+
+- **Con idle forzado, el Worker no se ejecuta.** Tras `unforce` (15:58:36) arrancó en 6 s (15:58:42).
+- No se midió una ventana de mantenimiento real: con `force-idle` no hubo ninguna en esos 15 min.
+- En el primer intento, un Worker ya programado arrancó en idle tras abrirse la app. Ese único segmento indica que la NPU no queda bloqueada por `deviceIdle=true`, pero no es una corrida limpia.
+
+### Mismo lote en tres estados
+
+10 segmentos, `importance` y `cpuset` medidos durante la corrida.
+
+| Métrica | Pantalla encendida, top-app | Segundo plano, control | Segundo plano, conversación única |
+| --- | --- | --- | --- |
+| Hora | 16:03 | 15:58–16:03 | 16:07–16:09 |
+| `importance` | 100 | 230 | 230 |
+| `cpuset` (muestras) | `/top-app` (9 de 10) | `/background` (26 de 26) | `/background` (10 de 11) |
+| CPU permitidas | 0–7 | **0–2** | **0–2** |
+| Carga del motor | 3657 ms | 14 007 ms | 6106 ms |
+| `createConversation` | **2,68 s** (2,63–2,77) | **14,9 s** (12,2–16,9) | 19,85 s, una sola vez |
+| Prefill | 124–171 tokens; 141–789 tok/s | 124–171 tokens; 41–603 tok/s | 63–138 tokens; 115–442 tok/s |
+| Decode | 17,0–18,1 tok/s | 14,9–16,6 tok/s | 14,2–15,6 tok/s |
+| LLM media | 9,59 s | 23,35 s | 6,11 s |
+| Total por segmento (p95) | 9,68 s (11,5) | **23,46 s** (26,0) | **6,21 s** (9,1) |
+| Lote completo con carga | 100,7 s | 249,1 s | 88,5 s |
+| ECDH media / % del total | 92,3 ms / 0,95 % | 101,6 ms / 0,43 % | 98,4 ms / 1,58 % |
+| JSON válido | 10/10 | 10/10 | 10/10 |
+| Título vacío | 2/10 | 2/10 | **10/10** |
+
+**Máscara de CPU de cada grupo** (`/dev/cpuset/*/cpus`): `top-app` 0–7, `foreground` 0–6, `system-background` 0–4, `background` 0–2.
+
+**Frecuencias por grupo de CPU**, muestreadas cada 10 s, MHz:
+
+| Corrida | policy0 (CPU 0–1) | policy2 (2–4) | policy5 (5–6) | policy7 (7) |
+| --- | --- | --- | --- | --- |
+| Pantalla encendida: media / máx | 1051 / 1881 | 801 / 1785 | 736 / 1785 | **1732 / 3782** |
+| Control en segundo plano, con proceso vivo: media / máx | 1124 / 2246 | 916 / 3052 | 848 / 3052 | 813 / 3782 |
+| Conversación única: media / máx | 1156 / 2246 | 856 / 3052 | 510 / 3052 | 745 / 3168 |
+
+El muestreo es grueso y las frecuencias son de todo el sistema, no del proceso, así que no se pueden atribuir al Worker.
+
+**Conclusiones:**
+
+1. **El coste fijo de la corrida A es `createConversation`.** En segundo plano tarda 14,9 s de media, frente a 2,68 s con la pantalla encendida (×5,6). El decode apenas cambia (unos 15 frente a 17,6 tok/s).
+2. **La causa medida más directa es el `cpuset`.** En `/background` el proceso solo dispone de las CPU 0–2, frente a 0–7 en `/top-app`. Encaja con que una operación de CPU como `createConversation` sea la más afectada, y con que el SHA-256 pase de 5 a 23–24 s. **No se probó la relación causal** cambiando solo el `cpuset`, y no se sabe qué hace `createConversation` en esos segundos. La compilación de la gramática de LLGuidance es una candidata no verificada.
+3. **La conversación precargada no se puede medir como se propuso.** `Conversation.clone()` no existe en `litertlm-android:0.18.1` (sí en 0.19.1, que rompe la NPU), y tampoco hay API para fijar el prefijo del prompt. Lo único posible en 0.18.1 es **una sola `Conversation` para todo el lote**, y eso es lo medido:
+   - Baja el total a 6,21 s por segmento (−74 %) y el lote de 249 s a 88,5 s.
+   - **No es utilizable tal cual:** el historial se acumula entre segmentos. Las salidas cambian desde el segmento 1 (125 caracteres frente a 119) y el título sale vacío en 10 de 10, frente a 2 de 10.
+   - Sirve como cota de lo que se ganaría evitando `createConversation`.
+4. **Comparación con la corrida A:** el coste fijo estimado allí era de 21,8 s (ajuste lineal); hoy, medido directamente, `createConversation` son 14,9 s. El control total es 23,46 s por segmento frente a 29,29 s, sin desglose en la corrida A y en una sesión distinta.
+5. **Tope en segundo plano medido.** Con 8 min por ejecución, la corrida A (29,3 s por segmento, 5,1 s de carga y 22,3 s de SHA-256) da unos 15 segmentos. El control de hoy (23,5 s, 14,0 s y 23,7 s) da unos 18.
+
+**Contaminación física:** el teléfono se movió o se tocó durante la sesión pese a estar reservado.
+
+| Hora | Evento | Efecto |
+| --- | --- | --- |
+| 15:39:06 y 15:39:13 | `WAKE_REASON_LIFT` y `power_button` | Invalidó el primer intento de B |
+| 16:01:54 | `WAKE_REASON_LIFT` | Control: segmentos 6–9 con `interactive=true` al final; `createConversation` baja de unos 16,5 s a 12–14 s. Sin esos segmentos, los 6 primeros dan 15,9 s |
+| 16:09:47 | `WAKE_REASON_TAP` | Conversación única: durante el segmento 9 |
+
+**No explicado:** a las 15:43:00, justo tras reinstalar el APK y antes de la corrida, la app arrancó en modo `all` (Keystore y Nano) sin que yo la lanzara. `am start -S` la mató 3 s después. No afecta a los datos y no se encontró el origen en el buffer.
+
+### Restricciones del esquema con LiteRT-LM 0.18.1 (sonda del §6)
+
+`SchemaProbe.kt`, en primer plano con la pantalla encendida (16:10–16:18). Textos: los 5 segmentos que fallaban (29, 33, 43, 68, 83) y otros 3 de control por sonda. El veredicto automático de la sonda marca «NO RESPETA» cuando hay JSON inválido, aunque la restricción probada sí se cumpla, así que la columna «Veredicto» se revisó a mano sobre las salidas.
+
+| Restricción | Sonda automática | Veredicto real | Evidencia |
+| --- | --- | --- | --- |
+| Control: esquema actual | 0/5 | Reproduce el fallo | Los 5 segmentos caen en el bucle de espacio en blanco |
+| `x-guidance.whitespace_flexible=false` | 5/5 | **Se respeta** | JSON compacto sin whitespace fuera de strings, 5,7–6,9 s frente a 32 s; LiteRT-LM pasa `x-guidance` a LLGuidance |
+| `minLength=40` en `titulo` | 2/3 | **Se respeta** | Los 3 títulos tienen ≥ 40 caracteres. El fallo del segmento 3 es el bucle de whitespace, ajeno a `minLength`. El modelo rellena con basura para llegar |
+| `maxLength=10` | 3/3 | **Se respeta** | Títulos cortados: `": Cita con"`, `"Estado del"` |
+| `pattern ^ZZ` | 3/3 | **Se respeta** | `"ZZoom reunión de diseño"`, `"ZZA pedido enviado"` |
+| `maxItems=1` en `personas` | 3/3 | **Se respeta** | Una sola persona. En el segmento 0 mete dos nombres en un item: `"Laura Méndez, Diego"` |
+| `additionalProperties=false` | 2/3 | **Se respeta** | Con la instrucción de añadir `lugar`, no aparece (segmentos 0 y 4); el control sin la restricción sí lo emite. El fallo del segmento 3 es el bucle |
+| `ResponseFormat.regex` (JSON compacto) | 5/5 | **Funciona** | Alternativa disponible; no hace falta, porque `x-guidance` pasa |
+| Esquema endurecido completo | 5/5 | Se respetan las reglas, **calidad peor** | Sin bucle, pero con títulos basura y campos perdidos (abajo) |
+
+**Corrección:** el bucle es de `\n\t` repetidos. Antes lo describí como «tabuladores y espacios», porque el log sustituía los saltos de línea por espacios.
+
+**Las restricciones se respetan, pero no resuelven el título.** Salidas del esquema endurecido:
+
+```text
+{"titulo":", personas:[{","personas":["Mamá","abuela Carmen","tía Rosa"],"fechas":[],"temas":[],"tareas":[]}
+{"titulo":", \"personas\": [\"Dra. Patricia Ruiz\"], \"fechas\": [\"2024-05-17\"], \"temas\": [\"Cita\"", ...
+{"titulo":">Resumen de llamada con cliente", ...
+```
+
+Con `whitespace_flexible=false` solo, el título tampoco se arregla: `": "`, `": Cita dentista"`, `": Resumen de llamada con cliente"`.
+
+**Patrón observado, sin demostrar:** los títulos correctos aparecen cuando el modelo pone un salto de línea entre `:` y la comilla (`"titulo":⏎"Plan de escalada"`). Los títulos con `": "` aparecen cuando `"titulo":"` queda pegado. Es compatible con que la gramática fuerce `"titulo":"` y el modelo siga como si aún tuviera que escribir `": "`. Encaja con que el JSON compacto lo empeore. Sin probar: `x-guidance.whitespace_pattern` con un espacio opcional.

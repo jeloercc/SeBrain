@@ -17,9 +17,11 @@ import androidx.work.workDataOf
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.ThinkingConfig
 import java.io.File
@@ -45,13 +47,15 @@ import javax.crypto.spec.SecretKeySpec
  * extracción JSON con LiteRT-LM. La ingesta simulada (fuera del cronómetro) cifra con
  * ECIES contra K_inbox, igual que la jerarquía actual: una efímera por segmento.
  */
+@OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
 class CognitionBenchWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         val n = inputData.getInt(KEY_BATCH, 10)
         val fg = inputData.getBoolean(KEY_FG, true)
-        val label = if (fg) "Cognition lote $n" else "Cognition bg lote $n"
+        val tag = inputData.getString(KEY_TAG)
+        val label = (if (fg) "Cognition lote $n" else "Cognition bg lote $n") + (tag?.let { " [$it]" } ?: "")
         if (fg) setForeground(foregroundInfo(label))
         logEnvironment("$label inicio")
 
@@ -84,6 +88,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         }
         Diag.info("$label ingesta simulada de $n segmentos en %.0f ms (fuera del cronómetro)".format(ingestMs))
 
+        // enableBenchmark debe activarse antes de crear el Engine.
+        val detail = inputData.getBoolean(KEY_DETAIL, false)
+        if (detail) ExperimentalFlags.enableBenchmark = true
         val batchStart = System.nanoTime()
         val (engine, initMs) = try { timedMs {
             Engine(
@@ -109,6 +116,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         var emptyTitle = 0
         val power = applicationContext.getSystemService(PowerManager::class.java)
         val thermal = IntArray(8)
+        val reuse = inputData.getBoolean(KEY_REUSE, false)
+        val (shared, sharedMs) = timedMs { if (reuse) newConversation(engine) else null }
+        if (reuse) Diag.result("$label conversación única", "INFO", "%.0f ms".format(sharedMs), "creación, una sola vez")
         engine.use {
             for (i in 0 until n) {
                 if (isStopped) {
@@ -131,7 +141,21 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 val text = String(plain, Charsets.UTF_8)
                 plain.fill(0)
 
-                val (out, llmMs) = timedMs { extract(engine, text) }
+                var breakdown = ""
+                val (out, llmMs) = timedMs {
+                    if (shared != null) {
+                        val o = send(shared, text)
+                        if (detail) breakdown = describe(shared, 0.0)
+                        o
+                    } else {
+                        val (c, createMs) = timedMs { newConversation(engine) }
+                        c.use {
+                            val o = send(it, text)
+                            if (detail) breakdown = describe(it, createMs)
+                            o
+                        }
+                    }
+                }
                 val totalMs = (System.nanoTime() - t0) / 1_000_000.0
 
                 val parsed = runCatching { org.json.JSONObject(out) }.getOrNull()
@@ -144,8 +168,8 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 Diag.result(
                     "$label seg $i", if (valid) "PASS" else "JSON_INVALIDO",
                     "total=%.0f ms".format(totalMs),
-                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; salida=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; tituloVacio=%b"
-                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty),
+                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; salida=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; tituloVacio=%b; %s"
+                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty, breakdown),
                 )
                 if (!valid) {
                     // Texto sintético: se registra completo para diagnosticar el fallo.
@@ -173,17 +197,24 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         )
     }
 
-    private fun extract(engine: Engine, text: String): String {
-        val config = ConversationConfig(
+    private fun newConversation(engine: Engine) = engine.createConversation(
+        ConversationConfig(
             systemInstruction = Contents.of(SYSTEM),
             maxOutputToken = MAX_OUTPUT_TOKENS,
             thinkingConfig = ThinkingConfig(false),
             enableResponseFormat = true,
-        )
-        return engine.createConversation(config).use { conversation ->
-            val reply = conversation.sendMessage(text, responseFormat = ResponseFormat.json(SCHEMA))
-            reply.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-        }
+        ),
+    )
+
+    private fun send(conversation: Conversation, text: String): String =
+        conversation.sendMessage(text, responseFormat = ResponseFormat.json(SCHEMA))
+            .contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+
+    private fun describe(conversation: Conversation, createMs: Double): String {
+        val b = conversation.getBenchmarkInfo()
+        return "create=%.0f ttft=%.0f prefillTok=%d prefillTps=%.1f decodeTok=%d decodeTps=%.1f"
+            .format(createMs, b.timeToFirstTokenInSecond * 1000, b.lastPrefillTokenCount,
+                b.lastPrefillTokensPerSecond, b.lastDecodeTokenCount, b.lastDecodeTokensPerSecond)
     }
 
     // --- Cripto: ECIES por segmento (jerarquía actual, sin cambios) ---
@@ -303,7 +334,11 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
     companion object {
         const val KEY_BATCH = "batch"
         const val KEY_FG = "fg"
-        fun input(n: Int, fg: Boolean = true) = workDataOf(KEY_BATCH to n, KEY_FG to fg)
+        const val KEY_TAG = "tag"
+        const val KEY_REUSE = "reuse"
+        const val KEY_DETAIL = "detail"
+        fun input(n: Int, fg: Boolean = true, tag: String? = null, reuse: Boolean = false, detail: Boolean = false) =
+            workDataOf(KEY_BATCH to n, KEY_FG to fg, KEY_TAG to tag, KEY_REUSE to reuse, KEY_DETAIL to detail)
         fun sample(i: Int): String = SAMPLES[i % SAMPLES.size].format(i)
 
         private const val MAX_OUTPUT_TOKENS = 512
