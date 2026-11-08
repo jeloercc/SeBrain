@@ -2,10 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Regla dura de CLAUDE.md: si ML Kit fusiona INTERNET, se elimina. -->
+    <!-- CLAUDE.md hard rule: if ML Kit merges INTERNET, it is removed. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
-    <!-- Benchmark de CognitionWorker: lotes de más de 10 min necesitan un Worker en primer plano. -->
+    <!-- CognitionWorker benchmark: batches over 10 min need a foreground Worker. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 

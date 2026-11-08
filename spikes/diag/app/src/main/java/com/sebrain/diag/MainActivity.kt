@@ -16,10 +16,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Modos, vía `adb shell am start -n com.sebrain.diag/.MainActivity --es mode <modo>`:
- * - all (por defecto): Keystore y Gemini Nano en primer plano.
- * - bg: programa el Worker con retraso; enviar la app a segundo plano antes de que dispare.
- * - idle: no ejecuta nada; sirve para ver qué hace ML Kit por sí solo al arrancar el proceso.
+ * Modes, via `adb shell am start -n com.sebrain.diag/.MainActivity --es mode <mode>`:
+ * - all (default): Keystore and Gemini Nano in the foreground.
+ * - bg: schedules the Worker with a delay; send the app to the background before it fires.
+ * - idle: runs nothing; shows what ML Kit does on its own when the process starts.
  */
 class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -27,7 +27,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // Mediciones con pantalla encendida sin desbloquear el teléfono a mano.
+        // Screen-on measurements without unlocking the phone by hand.
         if (intent.getBooleanExtra("show", false)) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -49,23 +49,23 @@ class MainActivity : Activity() {
             "whitespace" -> scope.launch {
                 WhitespaceProbe(applicationContext, intent.getStringExtra("set") ?: "whitespace").run()
             }
-            "idle" -> Diag.info("modo idle: sin llamadas a Keystore ni a ML Kit")
+            "idle" -> Diag.info("idle mode: no calls to Keystore or ML Kit")
             else -> scope.launch {
-                Diag.info("=== INICIO ===")
+                Diag.info("=== START ===")
                 KeystoreDiag(applicationContext).run()
                 NanoDiag().run()
-                Diag.info("=== FIN ===")
+                Diag.info("=== END ===")
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        Diag.info("lifecycle: onResume (app en primer plano)")
+        Diag.info("lifecycle: onResume (app in the foreground)")
     }
 
     override fun onPause() {
-        Diag.info("lifecycle: onPause (la app deja el primer plano)")
+        Diag.info("lifecycle: onPause (app leaves the foreground)")
         super.onPause()
     }
 
@@ -75,10 +75,10 @@ class MainActivity : Activity() {
             .build()
         WorkManager.getInstance(this)
             .enqueueUniqueWork("bg_nano", ExistingWorkPolicy.REPLACE, request)
-        Diag.info("Worker programado en $BG_DELAY_SECONDS s")
+        Diag.info("Worker scheduled in $BG_DELAY_SECONDS s")
     }
 
-    /** Lote de 10 y luego lote de 100, en serie; cada Worker carga y libera el motor. */
+    /** Batch of 10 and then batch of 100, in series; each Worker loads and releases the engine. */
     private fun scheduleCognitionBench() {
         val sizes = (intent.getStringExtra("batches") ?: "10,100").split(",").map { it.trim().toInt() }
         val requests = sizes.map {
@@ -90,12 +90,12 @@ class MainActivity : Activity() {
             .beginUniqueWork("cognition_bench", ExistingWorkPolicy.REPLACE, requests.first())
         requests.drop(1).forEach { chain = chain.then(it) }
         chain.enqueue()
-        Diag.info("CognitionBenchWorker programado: lotes $sizes")
+        Diag.info("CognitionBenchWorker scheduled: batches $sizes")
     }
 
     /**
-     * Worker real en segundo plano: sin FGS, con retraso y requiresCharging.
-     * Tras programarlo se cierra la app y se apaga la pantalla desde adb.
+     * Real background Worker: no FGS, with a delay and requiresCharging.
+     * After scheduling it, the app is closed and the screen is turned off from adb.
      */
     private fun scheduleBackgroundCognition() {
         val n = intent.getIntExtra("n", 10)
@@ -114,8 +114,8 @@ class MainActivity : Activity() {
             .build()
         WorkManager.getInstance(this)
             .enqueueUniqueWork("cognition_bg", ExistingWorkPolicy.REPLACE, request)
-        Diag.info("Cognition bg programado: lote $n, retraso $delay s, requiresCharging, sin FGS")
-        // Sin `show`, la tarea se retira de recientes para que un desbloqueo no reabra la actividad.
+        Diag.info("Cognition bg scheduled: batch $n, delay $delay s, requiresCharging, no FGS")
+        // Without `show`, the task is removed from recents so an unlock cannot reopen the activity.
         if (!intent.getBooleanExtra("show", false)) finishAndRemoveTask()
     }
 

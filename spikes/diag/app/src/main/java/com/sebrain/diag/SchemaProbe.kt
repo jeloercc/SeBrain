@@ -14,9 +14,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Verifica qué restricciones del esquema JSON respeta LiteRT-LM 0.18.1 (llguidance).
- * Lanzar con `--es mode schema`. Usa los textos de los segmentos que fallaban (29, 33, 43, 68, 83)
- * y sondas diseñadas para provocar cada violación.
+ * Checks which JSON schema constraints LiteRT-LM 0.18.1 (llguidance) respects.
+ * Start with `--es mode schema`. Uses the texts of the segments that failed (29, 33, 43, 68, 83)
+ * and probes designed to provoke each violation.
  */
 class SchemaProbe(private val context: Context) {
 
@@ -25,7 +25,7 @@ class SchemaProbe(private val context: Context) {
         val segments: List<Int>,
         val format: () -> ResponseFormat,
         val extraSystem: String = "",
-        val check: (String, JSONObject?) -> String?, // null = cumple; texto = violación
+        val check: (String, JSONObject?) -> String?, // null = satisfied; text = violation
     )
 
     fun run() {
@@ -39,10 +39,10 @@ class SchemaProbe(private val context: Context) {
                 ),
             ).also { it.initialize() }
         } catch (t: Throwable) {
-            Diag.error("schema carga del motor", t); return
+            Diag.error("schema engine load", t); return
         }
         engine.use { probes().forEach { runProbe(engine, it) } }
-        Diag.info("schema FIN")
+        Diag.info("schema END")
     }
 
     private fun runProbe(engine: Engine, p: Probe) {
@@ -60,10 +60,10 @@ class SchemaProbe(private val context: Context) {
             val json = runCatching { JSONObject(out) }.getOrNull()
             val violation = p.check(out, json)
             if (violation == null) ok++ else notes += "seg $i: $violation"
-            Diag.info("schema ${p.name} seg $i %.0f ms salida=${out.replace('\n', '⏎').replace('\t', '⇥').take(700)}".format(ms))
+            Diag.info("schema ${p.name} seg $i %.0f ms output=${out.replace('\n', '⏎').replace('\t', '⇥').take(700)}".format(ms))
         }
         Diag.result(
-            "schema ${p.name}", if (ok == p.segments.size) "RESPETA" else "NO RESPETA",
+            "schema ${p.name}", if (ok == p.segments.size) "RESPECTED" else "NOT RESPECTED",
             "$ok/${p.segments.size}", notes.joinToString("; ").replace('|', '/'),
         )
     }
@@ -84,52 +84,52 @@ class SchemaProbe(private val context: Context) {
     private fun probes(): List<Probe> {
         val failing = listOf(29, 33, 43, 68, 83)
         return listOf(
-            Probe("control esquema actual", failing, { ResponseFormat.json(BASE) }, check = ::basicValid),
+            Probe("control current schema", failing, { ResponseFormat.json(BASE) }, check = ::basicValid),
             Probe("x-guidance whitespace_flexible=false", failing, { ResponseFormat.json(schema(xg = true)) }) { out, j ->
-                basicValid(out, j) ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
+                basicValid(out, j) ?: whitespaceOutsideStrings(out)?.let { "whitespace outside strings: $it" }
             },
-            Probe("esquema endurecido completo", failing, { ResponseFormat.json(schema(xg = true, hard = true)) }) { out, j ->
+            Probe("full hardened schema", failing, { ResponseFormat.json(schema(xg = true, hard = true)) }) { out, j ->
                 basicValid(out, j) ?: titleRule(j!!.optString("title"), 3, 80, Regex("^[^\\s:\"]"))
-                    ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
+                    ?: whitespaceOutsideStrings(out)?.let { "whitespace outside strings: $it" }
             },
-            Probe("minLength=40 en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","minLength":40}""")) }) { out, j ->
+            Probe("minLength=40 on title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","minLength":40}""")) }) { out, j ->
                 basicValid(out, j) ?: j!!.optString("title").let { if (it.length < 40) "len=${it.length}" else null }
             },
-            Probe("maxLength=10 en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","maxLength":10}""")) }) { out, j ->
+            Probe("maxLength=10 on title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","maxLength":10}""")) }) { out, j ->
                 basicValid(out, j) ?: j!!.optString("title").let { if (it.length > 10) "len=${it.length}" else null }
             },
-            Probe("pattern ^ZZ en title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","pattern":"^ZZ"}""")) }) { out, j ->
+            Probe("pattern ^ZZ on title", listOf(0, 3, 7), { ResponseFormat.json(schema(title = """{"type":"string","pattern":"^ZZ"}""")) }) { out, j ->
                 basicValid(out, j) ?: j!!.optString("title").let { if (!it.startsWith("ZZ")) "title=\"${it.take(40)}\"" else null }
             },
-            Probe("maxItems=1 en people", listOf(0, 4, 5), { ResponseFormat.json(schema(peopleMax = 1)) }) { out, j ->
+            Probe("maxItems=1 on people", listOf(0, 4, 5), { ResponseFormat.json(schema(peopleMax = 1)) }) { out, j ->
                 basicValid(out, j) ?: j!!.optJSONArray("people")?.length()?.let { if (it > 1) "people=$it" else null }
             },
             Probe(
                 "additionalProperties=false", listOf(0, 3, 4), { ResponseFormat.json(schema(additional = false)) },
                 extraSystem = " Always also add a \"place\" field with the location mentioned.",
-            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "apareció \"place\"" else null },
+            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "\"place\" appeared" else null },
             Probe(
-                "control additionalProperties ausente", listOf(0, 3, 4), { ResponseFormat.json(BASE) },
+                "control additionalProperties absent", listOf(0, 3, 4), { ResponseFormat.json(BASE) },
                 extraSystem = " Always also add a \"place\" field with the location mentioned.",
-            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "apareció \"place\" (esperado sin restricción)" else null },
-            Probe("regex JSON compacto", failing, { ResponseFormat.regex(COMPACT_REGEX) }) { out, j ->
+            ) { out, j -> basicValid(out, j) ?: if (j!!.has("place")) "\"place\" appeared (expected without the constraint)" else null },
+            Probe("regex compact JSON", failing, { ResponseFormat.regex(COMPACT_REGEX) }) { out, j ->
                 basicValid(out, j) ?: titleRule(j!!.optString("title"), 3, 80, Regex("^[^\\s:\"]"))
-                    ?: whitespaceOutsideStrings(out)?.let { "whitespace fuera de strings: $it" }
+                    ?: whitespaceOutsideStrings(out)?.let { "whitespace outside strings: $it" }
             },
         )
     }
 
     private fun basicValid(out: String, j: JSONObject?): String? =
-        if (j == null) "JSON inválido (${out.length} chars)" else null
+        if (j == null) "invalid JSON (${out.length} chars)" else null
 
     private fun titleRule(t: String, min: Int, max: Int, re: Regex): String? = when {
-        t.length < min -> "title corto (${t.length}): \"$t\""
-        t.length > max -> "title largo (${t.length})"
-        !re.containsMatchIn(t) -> "title no cumple pattern: \"${t.take(40)}\""
+        t.length < min -> "short title (${t.length}): \"$t\""
+        t.length > max -> "long title (${t.length})"
+        !re.containsMatchIn(t) -> "title does not match pattern: \"${t.take(40)}\""
         else -> null
     }
 
-    /** Cuenta caracteres de espacio en blanco fuera de strings JSON. */
+    /** Counts whitespace characters outside JSON strings. */
     private fun whitespaceOutsideStrings(s: String): Int? {
         var inStr = false; var esc = false; var n = 0
         for (c in s) {

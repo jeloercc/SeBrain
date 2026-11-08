@@ -22,19 +22,19 @@ import javax.crypto.spec.GCMParameterSpec
 private const val ALIAS = "diag_k_wrap_lock"
 
 /**
- * Prueba `setUnlockedDeviceRequired` con el dispositivo bloqueado. Un receiver permite dispararla
- * desde adb con la pantalla apagada, cuando no hay Activity en primer plano:
- * `am broadcast -n com.sebrain.diag/.LockProbeReceiver --es op prep|probe --es label <texto>`
+ * Tests `setUnlockedDeviceRequired` with the device locked. A receiver allows triggering it
+ * from adb with the screen off, when no Activity is in the foreground:
+ * `am broadcast -n com.sebrain.diag/.LockProbeReceiver --es op prep|probe --es label <text>`
  */
 class LockProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val blob = File(context.noBackupFilesDir, "lock_probe.bin")
-        val label = intent.getStringExtra("label") ?: "sin etiqueta"
+        val label = intent.getStringExtra("label") ?: "no label"
         try {
             when (intent.getStringExtra("op")) {
                 "prep" -> prepare(blob)
                 "probe" -> probe(context, blob, label)
-                else -> Diag.info("LockProbe: op desconocida")
+                else -> Diag.info("LockProbe: unknown op")
             }
         } catch (t: Throwable) {
             Diag.error("LockProbe", t)
@@ -72,7 +72,7 @@ class LockProbeReceiver : BroadcastReceiver() {
             }
         }
         dek.fill(0)
-        Diag.result("LockProbe preparación", "PASS", "K_wrap de prueba y blob creados", "StrongBox")
+        Diag.result("LockProbe preparation", "PASS", "test K_wrap and blob created", "StrongBox")
     }
 
     private fun probe(context: Context, blob: File, label: String) {
@@ -87,7 +87,7 @@ class LockProbeReceiver : BroadcastReceiver() {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
             val dek = cipher.doFinal(ciphertext)
-            check(sha256(dek).contentEquals(expected)) { "la DEK no coincide" }
+            check(sha256(dek).contentEquals(expected)) { "the DEK does not match" }
             dek.fill(0)
         }
         attempt(label, "cifrar", locked) { key ->
@@ -102,7 +102,7 @@ class LockProbeReceiver : BroadcastReceiver() {
         try {
             val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             block(keyStore.getKey(ALIAS, null) as SecretKey)
-            Diag.result(test, if (locked) "FAIL" else "PASS", "operación correcta", if (locked) "no se bloqueó" else "control positivo")
+            Diag.result(test, if (locked) "FAIL" else "PASS", "operation succeeded", if (locked) "was not blocked" else "positive control")
         } catch (t: Throwable) {
             Diag.error(test, t)
             val chain = generateSequence(t) { it.cause }.toList()

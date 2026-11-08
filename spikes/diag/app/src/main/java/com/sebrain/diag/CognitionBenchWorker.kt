@@ -43,9 +43,9 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Benchmark de CognitionWorker: por segmento mide ECDH (StrongBox), HKDF, AES-GCM y
- * extracción JSON con LiteRT-LM. La ingesta simulada (fuera del cronómetro) cifra con
- * ECIES contra K_inbox, igual que la jerarquía actual: una efímera por segmento.
+ * CognitionWorker benchmark: per segment it measures ECDH (StrongBox), HKDF, AES-GCM and
+ * JSON extraction with LiteRT-LM. Simulated ingestion (outside the stopwatch) encrypts with
+ * ECIES against K_inbox, like the current hierarchy: one ephemeral key per segment.
  */
 @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
 class CognitionBenchWorker(context: Context, params: WorkerParameters) :
@@ -55,13 +55,13 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         val n = inputData.getInt(KEY_BATCH, 10)
         val fg = inputData.getBoolean(KEY_FG, true)
         val tag = inputData.getString(KEY_TAG)
-        val label = (if (fg) "Cognition lote $n" else "Cognition bg lote $n") + (tag?.let { " [$it]" } ?: "")
+        val label = (if (fg) "Cognition batch $n" else "Cognition bg batch $n") + (tag?.let { " [$it]" } ?: "")
         if (fg) setForeground(foregroundInfo(label))
-        logEnvironment("$label inicio")
+        logEnvironment("$label start")
 
         return try {
             run(n, label)
-            logEnvironment("$label fin")
+            logEnvironment("$label end")
             Result.success()
         } catch (t: Throwable) {
             Diag.error(label, t)
@@ -72,11 +72,11 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
 
     private fun run(n: Int, label: String) {
         val model = File(applicationContext.filesDir, "models/$MODEL_FILE")
-        check(model.exists()) { "Falta el modelo en ${model.path}" }
+        check(model.exists()) { "Model missing at ${model.path}" }
 
         val (sha, shaMs) = timedMs { sha256(model) }
-        Diag.info("$label SHA-256 del modelo en %.0f ms (fuera del cronómetro)".format(shaMs))
-        check(sha == MODEL_SHA256) { "SHA-256 no coincide: $sha" }
+        Diag.info("$label model SHA-256 in %.0f ms (outside the stopwatch)".format(shaMs))
+        check(sha == MODEL_SHA256) { "SHA-256 mismatch: $sha" }
 
         val inbox = inboxKey()
         val inboxPub = inbox.second
@@ -86,9 +86,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         val (_, ingestMs) = timedMs {
             for (i in 0 until n) ingest(dir, i, inboxPub, SAMPLES[i % SAMPLES.size].format(i))
         }
-        Diag.info("$label ingesta simulada de $n segmentos en %.0f ms (fuera del cronómetro)".format(ingestMs))
+        Diag.info("$label simulated ingestion of $n segments in %.0f ms (outside the stopwatch)".format(ingestMs))
 
-        // enableBenchmark debe activarse antes de crear el Engine.
+        // enableBenchmark must be set before the Engine is created.
         val detail = inputData.getBoolean(KEY_DETAIL, false)
         if (detail) ExperimentalFlags.enableBenchmark = true
         val batchStart = System.nanoTime()
@@ -101,11 +101,11 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 ),
             ).also { it.initialize() }
         } } catch (t: Throwable) {
-            Diag.error("$label carga del motor NPU", t)
-            Diag.result("$label carga del motor", "FAIL", "-", "Backend.NPU; ${Diag.describe(t)}")
+            Diag.error("$label NPU engine load", t)
+            Diag.result("$label engine load", "FAIL", "-", "Backend.NPU; ${Diag.describe(t)}")
             throw t
         }
-        Diag.result("$label carga del motor", "PASS", "%.0f ms".format(initMs), "Backend.NPU; $MODEL_FILE")
+        Diag.result("$label engine load", "PASS", "%.0f ms".format(initMs), "Backend.NPU; $MODEL_FILE")
 
         val ecdh = ArrayList<Double>(n)
         val hkdf = ArrayList<Double>(n)
@@ -118,11 +118,11 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         val thermal = IntArray(8)
         val reuse = inputData.getBoolean(KEY_REUSE, false)
         val (shared, sharedMs) = timedMs { if (reuse) newConversation(engine) else null }
-        if (reuse) Diag.result("$label conversación única", "INFO", "%.0f ms".format(sharedMs), "creación, una sola vez")
+        if (reuse) Diag.result("$label single conversation", "INFO", "%.0f ms".format(sharedMs), "creation, once")
         engine.use {
             for (i in 0 until n) {
                 if (isStopped) {
-                    Diag.result("$label detenido", "INFO", "seg $i", "isStopped=true; stopReason=$stopReason")
+                    Diag.result("$label stopped", "INFO", "seg $i", "isStopped=true; stopReason=$stopReason")
                     return
                 }
                 if (!inputData.getBoolean(KEY_FG, true) && (i == 0 || i == n - 1)) logEnvironment("$label seg $i")
@@ -166,18 +166,18 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 if (titleEmpty) emptyTitle++
                 ecdh += ecdhMs; hkdf += hkdfMs; aes += aesMs; llm += llmMs; total += totalMs
                 Diag.result(
-                    "$label seg $i", if (valid) "PASS" else "JSON_INVALIDO",
+                    "$label seg $i", if (valid) "PASS" else "JSON_INVALID",
                     "total=%.0f ms".format(totalMs),
-                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; salida=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; tituloVacio=%b; %s"
+                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; output=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; emptyTitle=%b; %s"
                         .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty, breakdown),
                 )
                 if (!valid) {
-                    // Texto sintético: se registra completo para diagnosticar el fallo.
+                    // Synthetic text: logged in full to diagnose the failure.
                     out.replace('\n', ' ').chunked(800).forEachIndexed { k, part ->
-                        Diag.info("$label salida invalida seg $i parte $k: $part")
+                        Diag.info("$label invalid output seg $i part $k: $part")
                     }
                 }
-                if (i == 0) Diag.info("$label salida seg 0: ${out.replace('\n', ' ').take(400)}")
+                if (i == 0) Diag.info("$label output seg 0: ${out.replace('\n', ' ').take(400)}")
                 File(dir, "seg_$i.bin").delete()
             }
         }
@@ -189,9 +189,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         Diag.result("$label LLM", "PASS", "%.0f ms".format(llm.average()), stats(llm))
         Diag.result("$label total/seg", "PASS", "%.0f ms".format(total.average()), stats(total))
         Diag.result(
-            "$label ECDH % del total", if (100 * ecdh.sum() / total.sum() < 1) "< 1 %" else ">= 1 %",
+            "$label ECDH % of total", if (100 * ecdh.sum() / total.sum() < 1) "< 1 %" else ">= 1 %",
             "%.3f %%".format(100 * ecdh.sum() / total.sum()),
-            "suma ecdh=%.0f ms / suma total=%.0f ms; con carga del motor: %.3f %% de %.0f ms; JSON válido %d/%d; título vacío %d; thermalStatus por segmento %s; maxOutputToken=%d"
+            "sum ecdh=%.0f ms / sum total=%.0f ms; with engine load: %.3f %% of %.0f ms; valid JSON %d/%d; empty title %d; thermalStatus per segment %s; maxOutputToken=%d"
                 .format(ecdh.sum(), total.sum(), 100 * ecdh.sum() / wallMs, wallMs, jsonOk, n, emptyTitle,
                     thermal.withIndex().filter { it.value > 0 }.joinToString { "${it.index}:${it.value}" }, MAX_OUTPUT_TOKENS),
         )
@@ -217,7 +217,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 b.lastPrefillTokensPerSecond, b.lastDecodeTokenCount, b.lastDecodeTokensPerSecond)
     }
 
-    // --- Cripto: ECIES por segmento (jerarquía actual, sin cambios) ---
+    // --- Crypto: ECIES per segment (current hierarchy, unchanged) ---
 
     private fun inboxKey(): Pair<PrivateKey, PublicKey> {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -266,7 +266,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
             doFinal(seg.ciphertext)
         }
 
-    /** HKDF-SHA256 (RFC 5869) con salt vacío y L = 32. */
+    /** HKDF-SHA256 (RFC 5869) with empty salt and L = 32. */
     private fun hkdf(ikm: ByteArray, info: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
@@ -288,7 +288,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         }
     }
 
-    // --- Entorno ---
+    // --- Environment ---
 
     private fun logEnvironment(label: String) {
         val state = ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }
@@ -296,8 +296,8 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         val battery = applicationContext.getSystemService(BatteryManager::class.java)
         Diag.info(
             "$label: importance=${state.importance} thermalStatus=${power.currentThermalStatus} " +
-                "headroom10s=${power.getThermalHeadroom(10)} bateria=${battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}% " +
-                "cargando=${battery.isCharging} interactive=${power.isInteractive} deviceIdle=${power.isDeviceIdleMode} " +
+                "headroom10s=${power.getThermalHeadroom(10)} battery=${battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}% " +
+                "charging=${battery.isCharging} interactive=${power.isInteractive} deviceIdle=${power.isDeviceIdleMode} " +
                 "lightIdle=${power.isDeviceLightIdleMode}",
         )
     }
@@ -316,7 +316,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
     private fun stats(xs: List<Double>): String {
         val s = xs.sorted()
         fun p(q: Double) = s[((s.size - 1) * q).toInt()]
-        return "media=%.3f p50=%.3f p95=%.3f min=%.3f max=%.3f suma=%.1f n=%d ms"
+        return "mean=%.3f p50=%.3f p95=%.3f min=%.3f max=%.3f sum=%.1f n=%d ms"
             .format(xs.average(), p(0.5), p(0.95), s.first(), s.last(), xs.sum(), xs.size)
     }
 
@@ -366,7 +366,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
              "required":["title","people","dates","topics","tasks"]}
         """.trimIndent()
 
-        /** Textos sintéticos tipo notificación o contenido compartido. `%d` varía cada segmento. */
+        /** Synthetic notification-like or shared-content texts, in Spanish on purpose. `%d` varies per segment. */
         private val SAMPLES = listOf(
             "WhatsApp · Laura Méndez: Hola! Al final la reunión con el equipo de diseño pasa al jueves 14 a las 10:30 en la sala Norte. Trae los bocetos del onboarding y la lista de pantallas pendientes (#%d). Avísale también a Diego que necesitamos su feedback sobre los colores antes del miércoles.",
             "Gmail · Banco Central: Su factura de la tarjeta terminada en 4821 por 1.245,90 EUR vence el 28 de noviembre. Puede consultar el detalle de movimientos en la app. Referencia %d. Si ya realizó el pago, ignore este mensaje.",

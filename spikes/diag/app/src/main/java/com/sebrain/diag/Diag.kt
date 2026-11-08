@@ -4,7 +4,7 @@ import android.util.Log
 
 const val TAG = "SEBRAIN_DIAG"
 
-/** Salida común: logcat con una línea parseable y, opcionalmente, la pantalla. */
+/** Common output: logcat with a parseable line and, optionally, the screen. */
 object Diag {
     @Volatile
     var sink: ((String) -> Unit)? = null
@@ -15,7 +15,7 @@ object Diag {
 
     fun info(message: String) = emit(message)
 
-    /** Registra el error real: clase, mensaje, cadena de causas y stack trace. */
+    /** Logs the real error: class, message, cause chain and stack trace. */
     fun error(context: String, t: Throwable) {
         Log.e(TAG, "ERROR $context: ${describe(t)}", t)
         sink?.invoke("ERROR $context: ${describe(t)}")

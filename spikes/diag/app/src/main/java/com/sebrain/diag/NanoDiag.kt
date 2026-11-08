@@ -32,7 +32,7 @@ class NanoDiag {
     suspend fun run() {
         try {
             val initial = model.checkStatus()
-            Diag.result("Gemini Nano checkStatus", "INFO", statusName(initial), "estado inicial")
+            Diag.result("Gemini Nano checkStatus", "INFO", statusName(initial), "initial status")
 
             when (initial) {
                 FeatureStatus.UNAVAILABLE -> return
@@ -40,8 +40,8 @@ class NanoDiag {
             }
 
             Diag.result("getBaseModelName", "INFO", model.getBaseModelName())
-            streamPrompt("frío")
-            streamPrompt("segunda llamada")
+            streamPrompt("cold")
+            streamPrompt("second call")
         } catch (t: Throwable) {
             Diag.error("Gemini Nano", t)
             val code = (t as? GenAiException)?.let { " ${errorName(it.errorCode)}" } ?: ""
@@ -55,8 +55,8 @@ class NanoDiag {
         val (ok, ms) = timedMs {
             if (initial == FeatureStatus.DOWNLOADABLE) collectDownload() else pollUntilReady()
         }
-        val note = "descarga de AICore disparada por el spike"
-        Diag.result("Gemini Nano descarga", if (ok) "PASS" else "FAIL", "%.0f s".format(ms / 1000), note)
+        val note = "AICore download triggered by the spike"
+        Diag.result("Gemini Nano download", if (ok) "PASS" else "FAIL", "%.0f s".format(ms / 1000), note)
         return ok
     }
 
@@ -65,19 +65,19 @@ class NanoDiag {
         var lastLog = 0L
         model.download().collect { status ->
             when (status) {
-                is DownloadStatus.DownloadStarted -> Diag.info("descarga iniciada: $status")
+                is DownloadStatus.DownloadStarted -> Diag.info("download started: $status")
                 is DownloadStatus.DownloadProgress -> {
                     val now = System.currentTimeMillis()
                     if (now - lastLog > 10_000) {
                         lastLog = now
-                        Diag.info("descarga: ${status.totalBytesDownloaded} bytes")
+                        Diag.info("download: ${status.totalBytesDownloaded} bytes")
                     }
                 }
                 DownloadStatus.DownloadCompleted -> {
                     completed = true
-                    Diag.info("descarga completa")
+                    Diag.info("download complete")
                 }
-                is DownloadStatus.DownloadFailed -> Diag.error("descarga", status.e)
+                is DownloadStatus.DownloadFailed -> Diag.error("download", status.e)
             }
         }
         return completed
@@ -86,7 +86,7 @@ class NanoDiag {
     private suspend fun pollUntilReady(): Boolean {
         while (true) {
             val status = model.checkStatus()
-            Diag.info("esperando descarga en curso: ${statusName(status)}")
+            Diag.info("waiting for download in progress: ${statusName(status)}")
             when (status) {
                 FeatureStatus.AVAILABLE -> return true
                 FeatureStatus.UNAVAILABLE -> return false
@@ -106,8 +106,8 @@ class NanoDiag {
             text.append(chunk.candidates[0].text)
         }
         val totalMs = (System.nanoTime() - start) / 1_000_000.0
-        Diag.result("Prompt tiempo al primer token ($label)", "PASS", "%.0f ms".format(firstMs), "primer chunk de streaming")
-        Diag.result("Prompt tiempo total ($label)", "PASS", "%.0f ms".format(totalMs), "$chunks chunks, ${text.length} caracteres")
-        Diag.info("respuesta ($label): ${text.toString().replace('\n', ' ')}")
+        Diag.result("Prompt time to first token ($label)", "PASS", "%.0f ms".format(firstMs), "first streaming chunk")
+        Diag.result("Prompt total time ($label)", "PASS", "%.0f ms".format(totalMs), "$chunks chunks, ${text.length} characters")
+        Diag.info("response ($label): ${text.toString().replace('\n', ' ')}")
     }
 }

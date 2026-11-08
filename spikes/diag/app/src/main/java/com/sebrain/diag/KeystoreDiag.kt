@@ -33,7 +33,7 @@ class KeystoreDiag(private val context: Context) {
             "device.lock_state",
             "INFO",
             "isDeviceSecure=${keyguard.isDeviceSecure} isDeviceLocked=${keyguard.isDeviceLocked}",
-            "estado al empezar las pruebas de Keystore",
+            "state when the Keystore tests start",
         )
 
         val hasStrongBox =
@@ -75,11 +75,11 @@ class KeystoreDiag(private val context: Context) {
         }
         return try {
             val (pair, ms) = timedMs { attempt(strongBox = false) }
-            Diag.result("EC P-256 AGREE_KEY keygen TEE (reintento)", "PASS", "%.1f ms".format(ms))
+            Diag.result("EC P-256 AGREE_KEY keygen TEE (retry)", "PASS", "%.1f ms".format(ms))
             pair
         } catch (t: Throwable) {
             Diag.error("EC P-256 AGREE_KEY keygen TEE", t)
-            Diag.result("EC P-256 AGREE_KEY keygen TEE (reintento)", "FAIL", "-", Diag.describe(t))
+            Diag.result("EC P-256 AGREE_KEY keygen TEE (retry)", "FAIL", "-", Diag.describe(t))
             null
         }
     }
@@ -87,7 +87,7 @@ class KeystoreDiag(private val context: Context) {
     private fun runEcdh(keystorePair: KeyPair) {
         val softwareGen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC)
         softwareGen.initialize(ECGenParameterSpec("secp256r1"))
-        Diag.info("ECDH: efímera con provider software '${softwareGen.provider.name}'")
+        Diag.info("ECDH: ephemeral with software provider '${softwareGen.provider.name}'")
 
         val ephemeralMs = ArrayList<Double>()
         val softwareAgreeMs = ArrayList<Double>()
@@ -98,7 +98,7 @@ class KeystoreDiag(private val context: Context) {
                 val iterationStart = System.nanoTime()
                 val (ephemeral, genMs) = timedMs { softwareGen.generateKeyPair() }
 
-                // Lado emisor: privada efímera en software + pública del Keystore.
+                // Sender side: software ephemeral private + Keystore public.
                 val (sender, senderMs) = timedMs {
                     KeyAgreement.getInstance("ECDH").run {
                         init(ephemeral.private)
@@ -106,7 +106,7 @@ class KeystoreDiag(private val context: Context) {
                         generateSecret()
                     }
                 }
-                // Lado receptor: privada en Keystore + pública efímera.
+                // Receiver side: Keystore private + ephemeral public.
                 val (receiver, receiverMs) = timedMs {
                     KeyAgreement.getInstance("ECDH", PROVIDER).run {
                         init(keystorePair.private)
@@ -114,7 +114,7 @@ class KeystoreDiag(private val context: Context) {
                         generateSecret()
                     }
                 }
-                check(sender.contentEquals(receiver)) { "los secretos ECDH no coinciden" }
+                check(sender.contentEquals(receiver)) { "the ECDH secrets do not match" }
                 ephemeralMs += genMs
                 softwareAgreeMs += senderMs
                 keystoreAgreeMs += receiverMs
@@ -122,14 +122,14 @@ class KeystoreDiag(private val context: Context) {
             }
             val ks = Stats(keystoreAgreeMs)
             Diag.result(
-                "ECDH lado Keystore (privada Keystore + efímera pública)",
+                "ECDH Keystore side (Keystore private + ephemeral public)",
                 "PASS",
-                "%.2f ms promedio".format(ks.avg),
-                "$ks; secretos iguales en todas las iteraciones",
+                "%.2f ms average".format(ks.avg),
+                "$ks; equal secrets on every iteration",
             )
-            Diag.result("ECDH lado software", "PASS", "%.2f ms promedio".format(Stats(softwareAgreeMs).avg), Stats(softwareAgreeMs).toString())
-            Diag.result("Keygen efímera software", "PASS", "%.2f ms promedio".format(Stats(ephemeralMs).avg), Stats(ephemeralMs).toString())
-            Diag.result("ECDH completo (efímera + ambos lados)", "PASS", "%.2f ms promedio".format(Stats(totalMs).avg), Stats(totalMs).toString())
+            Diag.result("ECDH software side", "PASS", "%.2f ms average".format(Stats(softwareAgreeMs).avg), Stats(softwareAgreeMs).toString())
+            Diag.result("Ephemeral keygen software", "PASS", "%.2f ms average".format(Stats(ephemeralMs).avg), Stats(ephemeralMs).toString())
+            Diag.result("Full ECDH (ephemeral + both sides)", "PASS", "%.2f ms average".format(Stats(totalMs).avg), Stats(totalMs).toString())
         } catch (t: Throwable) {
             Diag.error("ECDH", t)
             Diag.result("ECDH", "FAIL", "-", Diag.describe(t))
@@ -164,11 +164,11 @@ class KeystoreDiag(private val context: Context) {
         }
         return try {
             val (key, ms) = timedMs { attempt(strongBox = false) }
-            Diag.result("AES-256-GCM keygen TEE (reintento)", "PASS", "%.1f ms".format(ms))
+            Diag.result("AES-256-GCM keygen TEE (retry)", "PASS", "%.1f ms".format(ms))
             key
         } catch (t: Throwable) {
             Diag.error("AES-256-GCM keygen TEE", t)
-            Diag.result("AES-256-GCM keygen TEE (reintento)", "FAIL", "-", Diag.describe(t))
+            Diag.result("AES-256-GCM keygen TEE (retry)", "FAIL", "-", Diag.describe(t))
             null
         }
     }
@@ -189,12 +189,12 @@ class KeystoreDiag(private val context: Context) {
                     cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, wrapped.first))
                     cipher.doFinal(wrapped.second)
                 }
-                check(dek.contentEquals(unwrapped)) { "el unwrap no coincide con la DEK" }
+                check(dek.contentEquals(unwrapped)) { "the unwrap does not match the DEK" }
                 wrapMs += encryptMs
                 unwrapMs += decryptMs
             }
-            Diag.result("AES-GCM wrap 32 bytes", "PASS", "%.2f ms promedio".format(Stats(wrapMs).avg), Stats(wrapMs).toString())
-            Diag.result("AES-GCM unwrap 32 bytes", "PASS", "%.2f ms promedio".format(Stats(unwrapMs).avg), Stats(unwrapMs).toString())
+            Diag.result("AES-GCM wrap 32 bytes", "PASS", "%.2f ms average".format(Stats(wrapMs).avg), Stats(wrapMs).toString())
+            Diag.result("AES-GCM unwrap 32 bytes", "PASS", "%.2f ms average".format(Stats(unwrapMs).avg), Stats(unwrapMs).toString())
         } catch (t: Throwable) {
             Diag.error("AES-GCM wrap/unwrap", t)
             Diag.result("AES-GCM wrap/unwrap", "FAIL", "-", Diag.describe(t))

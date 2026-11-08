@@ -23,8 +23,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // La librería de dispatch de la NPU de Tensor se carga desde nativeLibraryDir:
-    // hace falta que el instalador extraiga los .so.
+    // The Tensor NPU dispatch library is loaded from nativeLibraryDir:
+    // the installer must extract the .so files.
     packaging {
         jniLibs.useLegacyPackaging = true
     }

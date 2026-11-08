@@ -7,7 +7,7 @@ import androidx.work.WorkerParameters
 import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.prompt.Generation
 
-/** Intenta inferencia desde un Worker. Registra la importancia del proceso como evidencia. */
+/** Attempts inference from a Worker. Logs the process importance as evidence. */
 class BackgroundNanoWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
@@ -17,7 +17,7 @@ class BackgroundNanoWorker(context: Context, params: WorkerParameters) :
         val foreground =
             state.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
         val context = "process importance=${state.importance} foreground=$foreground"
-        Diag.info("Worker iniciado: $context")
+        Diag.info("Worker started: $context")
 
         val model = Generation.getClient()
         try {
@@ -26,7 +26,7 @@ class BackgroundNanoWorker(context: Context, params: WorkerParameters) :
                 "Worker background generateContent",
                 "SIN BLOQUEO",
                 "%.0f ms".format(ms),
-                "$context; respuesta de ${response.candidates[0].text.length} caracteres",
+                "$context; response of ${response.candidates[0].text.length} characters",
             )
         } catch (e: GenAiException) {
             Diag.error("Worker background generateContent", e)
