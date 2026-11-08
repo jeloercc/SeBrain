@@ -537,3 +537,36 @@ The sampling is coarse and the frequencies are system-wide, not per process, so 
 With `whitespace_flexible=false` alone, the title is not fixed either: `": "`, `": Cita dentista"`, `": Resumen de llamada con cliente"`.
 
 **Observed pattern, not proven:** correct titles appear when the model puts a newline between `:` and the quote (`"titulo":⏎"Plan de escalada"`). Titles with `": "` appear when `"titulo":"` is stuck together. This is compatible with the grammar forcing `"titulo":"` and the model carrying on as if it still had to write `": "`. It fits with compact JSON making it worse. Untested: `x-guidance.whitespace_pattern` with an optional space.
+
+## English prompt and `whitespace_pattern` probe, 2026-11-08
+
+`WhitespaceProbe.kt`, foreground with the screen on (16:31–16:36), NPU, `maxOutputToken` 512, a new conversation per segment. Each variant ran the same 15 segments: the 10 control segments (0–9) and the 5 that looped (29, 33, 43, 68, 83).
+
+English prompt:
+
+```text
+Extract structured information from the user's text. Respond only with valid JSON that follows the schema: title (short phrase), people, dates (ISO 8601 if possible), topics and pending tasks. Use empty lists if there is no data. Keep values in the original language of the text.
+```
+
+Schema keys: `title`, `people`, `dates`, `topics`, `tasks`. `whitespace_pattern` was set to `\x20`, which LLGuidance documents as matched at most once per whitespace location. The middle variant was added to separate the effect of the language from the effect of the whitespace setting.
+
+| Metric (15 segments) | Spanish + `whitespace_flexible=false` | English + `whitespace_flexible=false` | English + `whitespace_pattern=\x20` |
+| --- | --- | --- | --- |
+| Loops | 0 | 0 | 0 |
+| Valid JSON | 15/15 | 15/15 | 15/15 |
+| Empty title (only `:`, quotes or spaces) | 6 | **15** | **15** |
+| Title with leading junk and some text | 9 | 0 | 0 |
+| Usable title | **0** | **0** | **0** |
+| Prompt tokens per segment, mean | 134.3 | 141.3 | 141.3 |
+| Output tokens per segment, mean | 66.5 | 64.6 | 69.3 |
+| `createConversation`, mean | 2678 ms | 2667 ms | 2665 ms |
+| Total per segment, mean / max | 6705 / 10,048 ms | 6458 / 9869 ms | 6734 / 9998 ms |
+
+**Conclusions:**
+
+1. **`whitespace_pattern=\x20` also removes the loop:** 0 loops and 15/15 valid JSON, including the 5 segments that looped.
+2. **The title is broken in all 45 outputs.** The hypothesis that allowing a space would fix it is not supported: with the pattern, the model still emits `{"title":": ",...` and uses no space. The title problem remains unexplained.
+3. **English does not fix the title and leaves it emptier.** Spanish produced text after the junk in 9 of 15 cases (`": Cita dentista"`); English produced only `": "` in 15 of 15. One run per variant, deterministic generation, one prompt wording per language.
+4. **Cost of English:** +7 prompt tokens per segment, with no measurable time difference (within ±4%).
+5. **Values keep the source language.** On review of the English + `whitespace_pattern` outputs, `people`, `topics` and `tasks` stayed in Spanish in all 15 (for example `"Cita con la dentista"`, `"encargar la tarta"`). This was a manual review, not an automatic check.
+6. **Dates are still invented** when the text gives no year (`2024-05-10`, `2023-11-28`). The approved design adds `captured_at` to the prompt to address this; that is not tested here.

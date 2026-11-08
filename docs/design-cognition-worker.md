@@ -101,7 +101,7 @@ If it cannot be resolved, leave the date as literal text instead of inventing it
 - Parseable JSON.
 - All `required` keys are present.
 - Each list is a list of strings.
-- `titulo` is not empty after stripping spaces, quotes and `:`. In the spike it came out as `": "`.
+- `title` is not empty after stripping spaces, quotes and `:`. In the spike it came out as `": "`.
 
 **Flow:**
 
@@ -170,11 +170,11 @@ They are used to tune the 8-min budget and the limit of 25.
 
 - `whitespace_flexible=false` eliminates the `\n\t` loop (5/5, from 32 s to about 6 s).
 - **The full hardened schema does not fix the title and worsens the content** (titles like `", personas:[{"`, empty fields). It is not adopted as is until a decision is made.
-- Next proposed test, not run: `x-guidance.whitespace_pattern` with an optional space, to allow `"titulo": "..."` without allowing the loop.
+- `x-guidance.whitespace_pattern=\x20` also eliminates the loop (15/15 valid JSON, 0 loops), but **does not fix the title**: it is broken in 15 of 15, with the English prompt as well (`docs/benchmarks.md`). The empty title remains open.
 
-### What the spike uses today
+### What the spike used until 2026-11-08
 
-`CognitionBenchWorker.kt`, with no JSON example or few-shot.
+`CognitionBenchWorker.kt`, with no JSON example or few-shot. Replaced by the English prompt and keys (`title`, `people`, `dates`, `topics`, `tasks`), recorded in `docs/benchmarks.md`. The Spanish text below is kept as the measured baseline.
 
 System prompt:
 
