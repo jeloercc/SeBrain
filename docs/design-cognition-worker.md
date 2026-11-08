@@ -89,13 +89,27 @@ intento 1 → válido → seguir
                       → inválido → marcar "extracción fallida"
 ```
 
-**El reintento no puede repetir la misma configuración.** Con muestreo determinista, la segunda salida sería idéntica a la primera. El reintento usa:
+**El reintento no puede repetir la misma configuración.** La corrida 2 de `docs/benchmarks.md` lo confirma:
 
-- `maxOutputToken` al doble;
-- `ThinkingConfig(false)`, igual que el primer intento;
-- un mensaje adicional: «La respuesta anterior no era JSON válido o tenía el título vacío. Devuelve solo el objeto JSON».
+- La generación es determinista: fallaron los mismos 5 segmentos con 256 y con 512 tokens.
+- El fallo es un bucle de tabuladores y espacios tras `{ "titulo":": "`, no un truncado.
+- Doblar `maxOutputToken` no sirve.
 
-Las salidas inválidas del spike de 256 tokens apuntan a que la salida se truncó. El benchmark con 512 tokens dirá si el doble basta.
+El reintento usa:
+
+- `RepetitionPenaltyConfig` y/o `NoRepeatNgramConfig`. Las dos clases existen en `litertlm-android:0.18.1`; los valores hay que medirlos.
+- El mensaje adicional: «La respuesta anterior no era JSON válido o tenía el título vacío. Devuelve solo el objeto JSON, con un título de 3 a 8 palabras».
+- El mismo `maxOutputToken` (512) y `ThinkingConfig(false)`.
+
+**Corte temprano.** Durante el streaming (`sendMessageAsync`), si aparecen más de 32 caracteres seguidos de espacio en blanco fuera de un string, se cancela con `cancelProcess()` y se pasa directamente al reintento. Cada bucle cuesta unos 32 s, frente a una mediana de 10 s por segmento.
+
+**Título vacío.** Afectó a 19 de los 95 válidos y siempre con el valor `": "`, lo que apunta al prompt o al esquema. Antes de fiarlo al reintento hay que probar:
+
+- poner `titulo` en otra posición del esquema;
+- añadir `minLength: 3` al esquema, si `ResponseFormat.json` lo respeta (sin verificar);
+- incluir un ejemplo en el prompt de sistema.
+
+Queda para el benchmark del modelo de extracción.
 
 **«Extracción fallida» no bloquea el lote:**
 

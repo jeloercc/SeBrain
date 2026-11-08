@@ -325,3 +325,46 @@ Datos medidos por el usuario en Edge Gallery, en el Pixel 10. No proceden del sp
 6. **`ExistingWorkPolicy.REPLACE` no detiene un bucle bloqueante.** Una corrida de 100 quedó contaminada cuando se lanzó una segunda en el mismo proceso: las dos se ejecutaron a la vez y esos datos se descartaron. El Worker real debe comprobar `isStopped` entre segmentos.
 7. **Versión de LiteRT-LM.** Con `0.19.1`, `Backend.NPU` falla al cargar `libLiteRtDispatch_GoogleTensor.so` de `litert-npu-runtime-google-tensor:2.3.2`: `Could not load symbol LiteRtDispatchQueryInterface: undefined symbol`. 0.19.x espera la nueva ABI de dispatch y el runtime publicado exporta `LiteRtDispatchGetApi`. La versión `0.18.1` funciona.
 8. **Muestra limitada.** Es un lote de cada tamaño, con textos sintéticos, en un solo dispositivo y sin control térmico.
+
+### Repetición del lote de 100 (corrida 2), 2026-11-07 22:17–22:37
+
+**Cambios respecto a la corrida 1:**
+- `maxOutputToken` pasa de 256 a 512.
+- `thermalStatus` y `getThermalHeadroom(10)` se muestrean en cada segmento.
+- Las salidas inválidas se registran completas.
+- Se comprueba `isStopped` entre segmentos.
+- Edge Gallery cerrado con `force-stop` y sin descargas (ningún servicio activo).
+- Mismo prompt, mismos textos y mismo modelo. Inicio con batería a 35,1 °C, 80 %, USB.
+
+| Métrica | Corrida 1 (21:38) | Corrida 2 (22:17) |
+| --- | --- | --- |
+| Duración del lote | 33,9 min | 19,5 min |
+| Carga del motor | 3146 ms | 4786 ms |
+| ECDH media (p95) | 100,2 ms (128,7) | 91,0 ms (101,2) |
+| LLM media (p50 / p95) | 20 204 ms (18 654 / 32 439) | 11 563 ms (10 262 / 16 048) |
+| Total/seg media (p95) | 20 311 ms (32 548) | 11 658 ms (16 156) |
+| **ECDH % del total** | 0,493 % | **0,781 %** |
+| JSON válido | 95/100 | **95/100** |
+| Título vacío entre los válidos | no medido | **19/95** |
+| `thermalStatus` | 1 al inicio y al final | 0 en 48 segmentos, 1 en 52; nunca ≥ 2 |
+
+**Total/seg medio por bloques de 10 segmentos (ms):**
+
+| Bloque | 0–9 | 10–19 | 20–29 | 30–39 | 40–49 | 50–59 | 60–69 | 70–79 | 80–89 | 90–99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Corrida 1 | 12 789 | 22 705 | 27 134 | 28 968 | 23 925 | 16 844 | 17 761 | 18 062 | 18 241 | 16 681 |
+| Corrida 2 | 12 130 | 10 704 | 11 803 | 12 628 | 12 151 | 9 407 | 12 241 | 11 658 | 12 272 | 11 586 |
+| `headroom10s` medio, corrida 2 | 0,686 | 0,726 | 0,769 | 0,780 | 0,796 | 0,802 | 0,807 | 0,808 | 0,810 | 0,816 |
+
+**Conclusiones:**
+
+1. **La ralentización de la corrida 1 no se reproduce.** Con Edge Gallery cerrado, el tiempo por segmento se mantiene estable en 9,4–12,6 s durante todo el lote. `thermalStatus` no pasó de 1, aunque el headroom subió de 0,69 a 0,82. La correlación apunta a la carga de Edge Gallery (FGS de descarga activo en la corrida 1) y no a la temperatura, pero **la causa no está demostrada**: no se midió la carga de CPU, de E/S ni de la NPU.
+2. **ECDH sigue < 1 %.** Es el 0,781 % con un LLM más rápido; el máximo por segmento fue 1,45 %. La decisión de mantener un ECDH por segmento no cambia.
+3. **ECDH con el LLM activo:** 83–127 ms (media 91 ms), frente a 44 ms en el spike aislado. Se reproduce sin Edge Gallery, así que no lo causaba Edge Gallery. La causa sigue sin medirse.
+4. **El JSON inválido no se debe al límite de tokens.**
+   - Fallan **los mismos 5 segmentos** que en la corrida 1 (29, 33, 43, 68, 83), con texto idéntico. La generación es determinista.
+   - Las 5 salidas completas son `{ "titulo":": "` seguido de tabuladores y espacios repetidos hasta agotar el límite: 520–521 caracteres con 512 tokens, 264 con 256.
+   - Es un bucle degenerado de espacios en blanco bajo decodificación restringida, no un JSON largo truncado.
+   - Doblar los tokens solo duplica el tiempo perdido: 32 s por segmento fallido, frente a una mediana de 10 s.
+5. **El título vacío es sistemático.** 19 de los 95 válidos tienen `titulo` igual a `": "`. Los 5 inválidos empiezan igual. El modelo emite `": "` como valor del primer campo, lo que apunta al prompt o al esquema y no al azar. No investigado.
+6. **Implicación para el diseño:** un reintento con la misma entrada y más tokens no arregla nada. El §4 de `docs/design-cognition-worker.md` se ajustó en consecuencia.
