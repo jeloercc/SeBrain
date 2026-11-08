@@ -1,0 +1,21 @@
+# Modelos: se importan por SAF / adb push con SHA-256 fijado; nunca van al repo.
+*.litertlm
+*.tflite
+*.task
+*.gguf
+*.onnx
+*.safetensors
+*.xnnpack_cache
+*_mldrift_*_cache.bin
+models/
+
+# Binarios nativos y paquetes de terceros (se resuelven por Gradle o se compilan).
+*.so
+*.aar
+*.apk
+*.aab
+
+# Entorno local
+.DS_Store
+local.properties
+.idea/
