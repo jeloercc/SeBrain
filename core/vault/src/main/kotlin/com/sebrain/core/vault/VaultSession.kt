@@ -1,11 +1,13 @@
 package com.sebrain.core.vault
 
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.sebrain.core.crypto.VaultKeyException
 import com.sebrain.core.crypto.WrappedDekStore
@@ -20,7 +22,9 @@ class VaultSessionClosingException : IllegalStateException("The vault session is
 
 /**
  * Opens the vault on demand. It closes after the idle timeout and when the screen turns off,
- * so the database is never left open on a locked device.
+ * and it is only usable while the screen is on and the device is unlocked. Apps cannot observe
+ * the lock itself, and the keyguard can lock some seconds after the screen turns off, so the
+ * screen state is the boundary: otherwise a session opened in that gap would stay open locked.
  *
  * The raw key stays in memory while the database is open: sqlcipher-android keeps a reference
  * to the key array for later connections, so it can only be zeroed after close. See
@@ -33,6 +37,8 @@ class VaultSession(
     private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val keyguard = appContext.getSystemService(KeyguardManager::class.java)
+    private val power = appContext.getSystemService(PowerManager::class.java)
     private val lock = ReentrantLock()
     private val handler = Handler(Looper.getMainLooper())
     private val idleCheck = Runnable { onIdleCheck() }
@@ -58,6 +64,18 @@ class VaultSession(
     fun <T> withDatabase(block: (SQLiteDatabase) -> T): T {
         val db = lock.withLock {
             if (closePending) throw VaultSessionClosingException()
+            val refusal = when {
+                keyguard.isDeviceLocked -> VaultKeyException.DeviceLocked()
+                !power.isInteractive -> VaultKeyException.ScreenOff()
+                else -> null
+            }
+            if (refusal != null) {
+                // Also covers a missed screen-off broadcast.
+                if (database != null) {
+                    if (activeUses > 0) closePending = true else closeLocked()
+                }
+                throw refusal
+            }
             if (database != null && activeUses == 0 && isExpired()) closeLocked()
             val current = database ?: openLocked()
             activeUses++

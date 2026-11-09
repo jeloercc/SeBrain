@@ -18,6 +18,9 @@ sealed class VaultKeyException(message: String, cause: Throwable? = null) : Exce
     class DeviceLocked(cause: Throwable? = null) :
         VaultKeyException("The device is locked; K_wrap cannot be used", cause)
 
+    /** The screen is off. The vault is not opened then, because the later lock could not be observed. */
+    class ScreenOff : VaultKeyException("The screen is off; the vault stays closed")
+
     /** The unwrapped DEK does not open the database. The database is left untouched. */
     class KeyMismatch(cause: Throwable? = null) :
         VaultKeyException("The DEK does not open this database; the database was not modified", cause)

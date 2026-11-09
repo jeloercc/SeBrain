@@ -14,7 +14,9 @@
 
 ## Session lifetime
 
-The session closes on the idle timeout and when the screen turns off, in both modes.
+The session closes on the idle timeout and when the screen turns off, in both modes. It is refused while the device is locked (`DeviceLocked`) or the screen is off (`ScreenOff`).
+
+**Why the screen state is the boundary:** apps cannot subscribe to the lock event, and the keyguard can lock some seconds after the screen turns off. A session opened in that gap would never receive a screen-off broadcast and would stay open on a locked device. Refusing to open with the screen off closes that gap. Every use also rechecks both states, which covers a missed broadcast.
 
 **Idle timeout: 5 minutes, approved** (`DEFAULT_IDLE_TIMEOUT_MS`). It is long enough for gaps between short operations and limits how long the key stays in memory. It is a constructor parameter.
 
@@ -45,6 +47,7 @@ A problem with the key never modifies or deletes the database.
 | Blob malformed or fails authentication | `WrappedDekCorrupted` |
 | Blob exists, `K_wrap` missing | `WrapKeyMissing` |
 | Device locked | `DeviceLocked` |
+| Screen off | `ScreenOff` |
 | DEK does not open the database | `KeyMismatch` |
 
 ## Locked-phone processing (decided 2026-11-08, not implemented)

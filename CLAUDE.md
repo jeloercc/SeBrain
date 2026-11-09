@@ -37,7 +37,7 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ### Keys (Android Keystore)
 
-- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Not implemented yet.
+- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Implemented in `:core:crypto` (`InboxKey`); not yet tested on the device.
 - `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; wraps the 32-byte DEK stored in `noBackupFilesDir`.
 - `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
 - Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.

@@ -614,8 +614,22 @@ Both keys are EC P-256 `PURPOSE_AGREE_KEY` and report `KeyInfo.securityLevel = S
 | (c) Encrypting to the public key works while locked | PASS | Software ECDH with an ephemeral key, HKDF, AES-256-GCM |
 | (c) The entry written while locked decrypts after unlock | PASS | Round trip of the 22-byte plaintext |
 | (d) `K_inbox` without an unlock requirement does ECDH while locked | PASS | Secrets match |
-| (e) LiteRT-LM on the NPU from a Worker with the device locked | **Not verified** | See below |
+| (e) LiteRT-LM on the NPU from a Worker with the device locked | PASS (2026-11-09) | `deviceLocked=true` at start, on the segment and at the end; see below |
 
 **(e):** two runs were invalid because the device was woken by `WAKE_REASON_TAP` a few seconds after the screen was turned off (21:13:08 and 21:14:25) and was unlocked when the Worker ran. The second run logged `deviceLocked=false` on every segment, so it says nothing about the locked state.
 
-A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler deferred it for 19 minutes with all constraints met, but the device was unlocked before inference. **(e) stays pending and does not block other work.** It must be verified before outbox code is written. A locked-phone Worker should expect start delays of many minutes.
+A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler deferred it for 19 minutes with all constraints met, but the device was unlocked before inference. A locked-phone Worker should expect start delays of many minutes.
+
+**(e) verified on 2026-11-09, 15:32–15:33.** One segment, job started with `cmd jobscheduler run -f` after locking, process at `importance=230`, screen off, not charging. No wake event during the run.
+
+| Metric | Value |
+| --- | --- |
+| `deviceLocked` | `true` at start, on the segment and at the end |
+| Backend | NPU, loaded with no dispatch error |
+| Engine load | 32,444 ms |
+| `createConversation` | 15,895 ms |
+| Decode | 512 tokens at 15.6 tok/s |
+| Total for the segment | 51,287 ms |
+
+- The output was invalid JSON because it hit the 512-token limit. The spike Worker still uses the old schema (title first, flexible whitespace), which loops on some inputs; the minimal schema decided in `docs/design-cognition-worker.md` is not applied to it. This does not affect what (e) checks.
+- It is a single segment, so the timings are one sample. The engine load was much slower than in earlier background runs (5–16 s); the cause was not measured.

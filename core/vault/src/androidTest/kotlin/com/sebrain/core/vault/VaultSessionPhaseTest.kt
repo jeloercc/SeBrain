@@ -91,6 +91,8 @@ class VaultSessionPhaseTest {
         waitUntil(SCREEN_OFF_WAIT_MS) { keyguard.isDeviceLocked }
         Log.i(TAG, "device locked")
 
+        // Keystore itself must refuse, independently of the session's own check.
+        assertThrows(VaultKeyException.DeviceLocked::class.java) { WrappedDekStore(blob, wrapKey).unwrap().fill(0) }
         assertThrows(VaultKeyException.DeviceLocked::class.java) { read(open) }
         val fresh = session()
         assertThrows(VaultKeyException.DeviceLocked::class.java) { read(fresh) }
