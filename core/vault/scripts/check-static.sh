@@ -39,4 +39,19 @@ for c in debugRuntimeClasspath debugAndroidTestRuntimeClasspath; do
     fi
 done
 
+echo "== release .so"
+AAR=$BUILD/outputs/aar/vault-release.aar
+if [ -f "$AAR" ]; then
+    TMP=$(mktemp -d)
+    unzip -q -o "$AAR" jni/arm64-v8a/libsqlcipher.so -d "$TMP"
+    SIZE=$(stat -f %z "$TMP/jni/arm64-v8a/libsqlcipher.so")
+    echo "release AAR .so bytes: $SIZE"
+    [ "$SIZE" -lt 3000000 ] || { echo "FAIL: release .so is not stripped"; FAIL=1; }
+    "$LLVM/llvm-readelf" -S "$TMP/jni/arm64-v8a/libsqlcipher.so" | grep -q '\.symtab' && { echo "FAIL: release .so has a symbol table"; FAIL=1; }
+    "$LLVM/llvm-readelf" -l "$TMP/jni/arm64-v8a/libsqlcipher.so" | grep LOAD | grep -qv '0x4000$' && { echo "FAIL: release LOAD alignment"; FAIL=1; }
+    rm -rf "$TMP"
+else
+    echo "FAIL: missing $AAR; run :core:vault:assembleRelease"; FAIL=1
+fi
+
 [ "$FAIL" -eq 0 ] && echo "STATIC CHECKS: PASS" || { echo "STATIC CHECKS: FAIL"; exit 1; }
