@@ -115,6 +115,7 @@ class VaultSessionPhaseTest {
         assertArrayEquals("Balanced: key must be zero", ByteArray(67), balanced.session.lastClosedKey)
         Log.i(TAG, "balanced closed on idle timeout")
 
+        assertTrue("the device was unlocked during the test", keyguard.isDeviceLocked)
         val error = assertThrows(VaultKeyException.DeviceLocked::class.java) { balanced.read() }
         Log.i(TAG, "balanced cannot reopen while locked: ${error.javaClass.simpleName}")
     }
@@ -141,7 +142,7 @@ class VaultSessionPhaseTest {
 
     private companion object {
         const val TAG = "SEBRAIN_VAULT_PHASE"
-        const val BALANCED_IDLE_MS = 30_000L
+        const val BALANCED_IDLE_MS = 10_000L
         const val SCREEN_OFF_WAIT_MS = 90_000L
         const val IDLE_MARGIN_MS = 15_000L
     }

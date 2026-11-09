@@ -42,6 +42,12 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 - `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
 - Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.
 
+### Locked-phone processing (decided, not implemented)
+
+- The vault DEK is never unwrapped while locked, in any mode. Idle timeout: 5 minutes. Keeping the session open while charging is rejected.
+- Strict: cognition only while unlocked; the vault closes on lock.
+- Balanced: while locked, `CognitionWorker` decrypts with `K_inbox` and writes results encrypted to `K_outbox` (EC P-256, StrongBox, private part `setUnlockedDeviceRequired(true)`); a merge step inserts them into the vault after unlock.
+
 ### AccessibilityService
 
 Disabled and out of scope until Phase 7. Android 17 revokes it with Advanced Protection on. Do not declare `isAccessibilityTool`.
@@ -89,7 +95,7 @@ Each spike delivered minimal code + numbers measured on the Pixel 10. Details in
 
 ## Open decisions (do not assume; ask)
 
-- Inbox processing mode: Strict (unlocked only) or Balanced (after first unlock).
+- Default vault mode (Strict or Balanced). Behavior of each mode is decided: see `docs/design-vault-session.md`.
 - Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
 - Distribution: sideload only or private Play.
 - Initial allowlist of apps for notifications.

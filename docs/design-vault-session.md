@@ -52,3 +52,78 @@ A problem with the key never modifies or deletes the database.
 | Blob exists, `K_wrap` missing | `WrapKeyMissing` |
 | Device locked | `DeviceLocked` |
 | DEK does not open the database | `KeyMismatch` |
+
+## Locked-phone processing (decided 2026-11-08, not implemented)
+
+The idle timeout is 5 minutes. The vault DEK is never unwrapped while locked, in any mode. Keeping the session open while charging is rejected, because it exposes the whole vault while locked.
+
+- **`STRICT`:** cognition runs only while unlocked; the vault closes on lock.
+- **`BALANCED`:** encrypted outbox. While locked, `CognitionWorker` decrypts inbox segments with `K_inbox`, runs the LLM and embeddings, and writes the results encrypted to `K_outbox`. After unlock, a merge step inserts them into the vault.
+
+### Key properties
+
+| Key | `STRICT` | `BALANCED` |
+| --- | --- | --- |
+| `K_inbox` (EC P-256, `AGREE_KEY`, StrongBox) | Private part `setUnlockedDeviceRequired(true)` | Private part usable while locked |
+| `K_outbox` (EC P-256, `AGREE_KEY`, StrongBox) | Not needed | Private part `setUnlockedDeviceRequired(true)`; public part used while locked |
+| `K_wrap` | Unlocked only | Unlocked only |
+
+Keystore properties cannot be changed after creation, so each mode needs its own `K_inbox` alias and segments must carry a key id. On a mode change, new segments use the new key, and the old key is deleted once its segments are drained.
+
+**To verify in a spike before implementing:** StrongBox accepts `setUnlockedDeviceRequired(true)` on an EC `AGREE_KEY` key and rejects ECDH while locked; the public key is readable while locked (otherwise cache it on disk); LLM and NPU work with the keyguard confirmed locked.
+
+### Outbox entry format (proposal)
+
+One file per segment, `noBackupFilesDir/outbox/<segment_id>.obx`, written atomically (temporary file, fsync, rename).
+
+```text
+magic "SBOX" (4) | format version (1) | K_outbox key id (16) | segment_id (16)
+| ephemeral public key, SEC1 uncompressed (65) | nonce (12) | AES-256-GCM ciphertext + tag
+AAD = all bytes before the ciphertext
+K_entry = HKDF-SHA256(ECDH(ephemeral, K_outbox_pub), info = "sebrain/outbox/v1" || key id || segment_id, L = 32)
+```
+
+The plaintext is a 4-byte JSON length, UTF-8 JSON, then `chunk count × 256` little-endian `float32` values, padded to a multiple of 4 KiB to reduce size leakage.
+
+```json
+{"schema":1,"segment_id":"…","captured_at":"…","source":"…","text":"…",
+ "extractor_model":"…","embedding_model":"…","embedding_dims":256,
+ "extraction":{"status":"ok","attempts":1,"failure_code":null,
+   "people":[],"dates":[],"topics":[],"tasks":[],"title":"…"},
+ "chunks":[{"index":0,"start":0,"end":120}]}
+```
+
+No new vault tables are needed: the merge reuses the approved `capture.segment_id UNIQUE`, `extraction_status` and `extraction_attempts`.
+
+### Merge step
+
+Runs only while unlocked, triggered by an unlock seen by the always-on ingestion process and when the app opens. For each entry: ECDH with `K_outbox`, decrypt, then insert in one transaction; delete the entry only after `COMMIT`. It checks the lock state between entries.
+
+### Failure cases
+
+| Case | Behavior |
+| --- | --- |
+| Death after the outbox write, before deleting the segment | Reprocessing finds the existing entry and only deletes the segment |
+| Death after `COMMIT`, before deleting the entry | `segment_id` already exists: skip the insert and delete the entry |
+| Writing an entry | Re-read and decrypt with `K_entry` before deleting the segment |
+| Corrupted entry at merge | Move to a quarantine directory, record it and continue. The source segment is gone, so that capture is lost |
+| Device locks during merge | Stop at the next entry; each entry is its own transaction |
+| `K_outbox` missing | Stop the merge and keep the entries; the vault is unaffected |
+| Unknown schema or embedding model or dimensions | Keep the entry and report it; do not insert |
+| Outbox too large (proposal: 500 entries or 200 MB) | Stop cognition; segments stay encrypted in the inbox |
+
+### What is exposed while locked (code running in the app after first unlock)
+
+| Asset | `STRICT` | `BALANCED` |
+| --- | --- | --- |
+| Vault and DEK | Not reachable | Not reachable once the session has closed |
+| Pending inbox segments | Not decryptable | **Decryptable** with `K_inbox` |
+| Segment being processed | None | **Plaintext in RAM** |
+| Outbox entries already written | None | Not decryptable |
+| File count, sizes, timestamps | Inbox | Inbox and outbox |
+
+Before first unlock, app storage is not available, so the Worker cannot run.
+
+**Open point:** `BALANCED` currently keeps an already open session through the idle timeout, so the vault can stay open for up to 5 minutes after locking. The DEK is not unwrapped then, but the exposure is the one the rejected option was meant to avoid. Closing on lock in both modes would remove it.
+
+**`CognitionWorker` note:** in `STRICT`, `requiresDeviceIdle` must not be used, because the device is rarely idle while unlocked.
