@@ -38,7 +38,10 @@ LOCAL_CFLAGS := \
     -DSQLITE_ENABLE_SNAPSHOT \
     -DSQLITE_USE_URI \
     -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
-    -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+    -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
+    -DSQLITE_CORE \
+    -DSQLITE_VEC_STATIC \
+    -DSQLITE_VEC_ENABLE_NEON
 
 ifeq ($(APP_OPTIM),release)
 LOCAL_CFLAGS += -DNDEBUG
@@ -56,12 +59,15 @@ LOCAL_SRC_FILES := \
     JniConstants.cpp \
     JNIString.cpp \
     CursorWindow.cpp \
-    $(SEBRAIN_GENERATED_DIR)/sqlite3.c
+    $(SEBRAIN_GENERATED_DIR)/sqlite3.c \
+    $(SEBRAIN_ROOT)/third_party/sqlite-vec/sqlite-vec.c \
+    $(SEBRAIN_JNI_DIR)/vault_jni.c
 
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH) \
     $(LOCAL_PATH)/nativehelper \
-    $(SEBRAIN_GENERATED_DIR)
+    $(SEBRAIN_GENERATED_DIR) \
+    $(SEBRAIN_ROOT)/third_party/sqlite-vec
 
 LOCAL_LDLIBS := -ldl -llog
 LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384
