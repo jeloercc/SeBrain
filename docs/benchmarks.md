@@ -598,3 +598,22 @@ Schema keys: `title`, `people`, `dates`, `topics`, `tasks`. `whitespace_pattern`
 3. **`createConversation` cost comes from enabling constrained decoding:** 2660 ms versus 3 ms in the foreground. This identifies the cost that was only a candidate before. The background figure (14.9 s per segment) was not re-measured without constraints, so the saving there is an extrapolation.
 4. **Time per segment is the same in the foreground,** because the unconstrained output is about twice as long (fence and pretty-printing), which offsets the saved setup. One run per variant; generation is deterministic.
 5. **Dates are still invented when the text gives no year,** as in the previous section.
+
+## Outbox spike: key properties while locked, 2026-11-08
+
+`spikes/diag/.../OutboxProbeReceiver.kt`, triggered with `am broadcast` on the Pixel 10. Every locked result was logged with `KeyguardManager.isDeviceLocked() == true`.
+
+Both keys are EC P-256 `PURPOSE_AGREE_KEY` and report `KeyInfo.securityLevel = STRONGBOX`.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| (a) StrongBox accepts `setUnlockedDeviceRequired(true)` on an EC `AGREE_KEY` key | PASS | Key generated; ECDH secret matches the software side while unlocked |
+| (a) ECDH with that key fails while locked | PASS (rejected) | `InvalidKeyException` caused by `KeyStoreException: Device locked` (internal code -72) |
+| (a) ECDH works after unlock | PASS | Secrets match |
+| (b) The public key can be read while locked | PASS | 91 bytes, equal to the key recorded while unlocked |
+| (c) Encrypting to the public key works while locked | PASS | Software ECDH with an ephemeral key, HKDF, AES-256-GCM |
+| (c) The entry written while locked decrypts after unlock | PASS | Round trip of the 22-byte plaintext |
+| (d) `K_inbox` without an unlock requirement does ECDH while locked | PASS | Secrets match |
+| (e) LiteRT-LM on the NPU from a Worker with the device locked | **Not verified** | See below |
+
+**(e):** two runs were invalid because the device was woken by `WAKE_REASON_TAP` a few seconds after the screen was turned off (21:13:08 and 21:14:25) and was unlocked when the Worker ran. The second run logged `deviceLocked=false` on every segment, so it says nothing about the locked state.
