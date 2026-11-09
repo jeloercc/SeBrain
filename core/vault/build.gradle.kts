@@ -67,6 +67,8 @@ android {
 }
 
 dependencies {
+    api(project(":core:crypto"))
+
     // Required by the upstream Java layer (SupportSQLite interfaces).
     implementation("androidx.sqlite:sqlite:2.7.0")
 
