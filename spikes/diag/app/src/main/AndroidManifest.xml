@@ -25,6 +25,10 @@
             android:name=".LockProbeReceiver"
             android:exported="true"
             tools:ignore="ExportedReceiver" />
+        <receiver
+            android:name=".OutboxProbeReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"

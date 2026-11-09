@@ -37,15 +37,15 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ### Keys (Android Keystore)
 
-- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it).
+- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Not implemented yet.
 - `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; wraps the 32-byte DEK stored in `noBackupFilesDir`.
 - `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
 - Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.
 
 ### Locked-phone processing (decided, not implemented)
 
-- The vault DEK is never unwrapped while locked, in any mode. Idle timeout: 5 minutes. Keeping the session open while charging is rejected.
-- Strict: cognition only while unlocked; the vault closes on lock.
+- The vault closes on lock in both modes and its DEK is never unwrapped while locked. Idle timeout while unlocked: 5 minutes. Keeping the session open while charging is rejected.
+- Strict: cognition only while unlocked.
 - Balanced: while locked, `CognitionWorker` decrypts with `K_inbox` and writes results encrypted to `K_outbox` (EC P-256, StrongBox, private part `setUnlockedDeviceRequired(true)`); a merge step inserts them into the vault after unlock.
 
 ### AccessibilityService

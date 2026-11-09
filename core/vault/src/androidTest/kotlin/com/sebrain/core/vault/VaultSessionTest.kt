@@ -44,7 +44,7 @@ class VaultSessionTest {
     private fun session(
         idleTimeoutMs: Long = VaultSession.DEFAULT_IDLE_TIMEOUT_MS,
         key: WrapKey = wrapKey,
-    ) = VaultSession(context, databaseFile, WrappedDekStore(blobFile, key), VaultMode.BALANCED, idleTimeoutMs)
+    ) = VaultSession(context, databaseFile, WrappedDekStore(blobFile, key), idleTimeoutMs)
 
     private fun createVault() = session().use { s ->
         s.withDatabase { db ->

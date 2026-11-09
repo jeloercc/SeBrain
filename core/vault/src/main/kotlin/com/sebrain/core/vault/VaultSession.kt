@@ -15,20 +15,12 @@ import kotlin.concurrent.withLock
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SQLiteNotADatabaseException
 
-/** How long the vault stays open. The default is intentionally not set here. */
-enum class VaultMode {
-    /** Closes on the idle timeout and when the screen turns off. */
-    STRICT,
-
-    /** Closes only on the idle timeout. */
-    BALANCED,
-}
-
 /** The session is closing, so it does not accept new work. */
 class VaultSessionClosingException : IllegalStateException("The vault session is closing")
 
 /**
- * Opens the vault on demand and closes it when it stops being needed.
+ * Opens the vault on demand. It closes after the idle timeout and when the screen turns off,
+ * so the database is never left open on a locked device.
  *
  * The raw key stays in memory while the database is open: sqlcipher-android keeps a reference
  * to the key array for later connections, so it can only be zeroed after close. See
@@ -38,7 +30,6 @@ class VaultSession(
     context: Context,
     private val databaseFile: File,
     private val dekStore: WrappedDekStore,
-    private val mode: VaultMode,
     private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -119,14 +110,12 @@ class VaultSession(
         database = db
         rawKey = key
         lastUseMs = SystemClock.elapsedRealtime()
-        if (mode == VaultMode.STRICT) {
-            appContext.registerReceiver(
-                screenOffReceiver,
-                IntentFilter(Intent.ACTION_SCREEN_OFF),
-                Context.RECEIVER_NOT_EXPORTED,
-            )
-            receiverRegistered = true
-        }
+        appContext.registerReceiver(
+            screenOffReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            Context.RECEIVER_NOT_EXPORTED,
+        )
+        receiverRegistered = true
         return db
     }
 

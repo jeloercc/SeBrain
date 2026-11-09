@@ -1,6 +1,6 @@
 # Design: vault session and key lifetime
 
-**Status: Implemented in `:core:crypto` and `:core:vault`.** The default mode and the Share integration are not decided yet.
+**Status: Session implemented in `:core:crypto` and `:core:vault`.** The outbox is designed but not implemented. The default mode and the Share integration are not decided yet.
 
 ## Flow
 
@@ -14,14 +14,9 @@
 
 ## Session lifetime
 
-| Mode | Closes on |
-| --- | --- |
-| `STRICT` | Idle timeout, and the screen turning off |
-| `BALANCED` | Idle timeout only |
+The session closes on the idle timeout and when the screen turns off, in both modes.
 
-The mode is a required constructor parameter. The default is not decided.
-
-**Idle timeout: 5 minutes proposed** (`DEFAULT_IDLE_TIMEOUT_MS`). It is long enough for gaps between short operations and limits how long the key stays in memory. It is a constructor parameter.
+**Idle timeout: 5 minutes, approved** (`DEFAULT_IDLE_TIMEOUT_MS`). It is long enough for gaps between short operations and limits how long the key stays in memory. It is a constructor parameter.
 
 Work in progress is never interrupted. If a close is requested during `withDatabase`, the session closes when the work ends, and new work is refused with `VaultSessionClosingException` until then.
 
@@ -32,14 +27,13 @@ Zeroing the key early is not possible:
 - `sqlcipher-android` keeps a reference to the key `byte[]` in `SQLiteDatabaseConfiguration.password` and reuses it for every new connection. Zeroing it after opening would break later connections.
 - SQLCipher keeps the derived key in native memory for as long as the connection is open.
 
-**This exposure is mitigated by limiting the session lifetime, not by early zeroization.** The controls are the idle timeout, closing on screen off in `STRICT`, and zeroing the Kotlin key array on close. SQLCipher clears its own native key material; this project does not control it.
+**This exposure is mitigated by limiting the session lifetime, not by early zeroization.** The controls are the idle timeout, closing on screen off, and zeroing the Kotlin key array on close. SQLCipher clears its own native key material; this project does not control it.
 
 ## Limitations
 
 - **The idle timer does not run while the device is in deep sleep.** The timer uses the main `Handler`, which pauses during suspend, so a session can outlive its timeout by the time the device slept. The next use checks elapsed real time and reopens the session if it has expired. A wake-up alarm would remove this gap at a battery cost; it is not implemented.
-- **`STRICT` closes on `ACTION_SCREEN_OFF`.** The keyguard can lock later than the screen turns off, so this is earlier than the actual lock, which is the safe direction.
-- **The DEK cannot be unwrapped while the device is locked, in either mode.** `setUnlockedDeviceRequired(true)` applies to `K_wrap`, so `BALANCED` can only keep an already open session while locked and cannot open a new one.
-  - **Consequence for `CognitionWorker`:** a Worker running with the phone locked can decrypt inbox segments with `K_inbox`, but cannot open the vault unless a session is already open. This affects the open decision on the inbox processing mode.
+- **The session closes on `ACTION_SCREEN_OFF`.** The keyguard can lock later than the screen turns off, so this is earlier than the actual lock, which is the safe direction.
+- **The DEK cannot be unwrapped while the device is locked, in either mode,** because `setUnlockedDeviceRequired(true)` applies to `K_wrap`.
 
 ## Error handling
 
@@ -55,7 +49,7 @@ A problem with the key never modifies or deletes the database.
 
 ## Locked-phone processing (decided 2026-11-08, not implemented)
 
-The idle timeout is 5 minutes. The vault DEK is never unwrapped while locked, in any mode. Keeping the session open while charging is rejected, because it exposes the whole vault while locked.
+The idle timeout is 5 minutes while unlocked. The vault closes on lock in both modes, and its DEK is never unwrapped while locked. Keeping the session open while charging is rejected, because it exposes the whole vault while locked.
 
 - **`STRICT`:** cognition runs only while unlocked; the vault closes on lock.
 - **`BALANCED`:** encrypted outbox. While locked, `CognitionWorker` decrypts inbox segments with `K_inbox`, runs the LLM and embeddings, and writes the results encrypted to `K_outbox`. After unlock, a merge step inserts them into the vault.
@@ -64,13 +58,15 @@ The idle timeout is 5 minutes. The vault DEK is never unwrapped while locked, in
 
 | Key | `STRICT` | `BALANCED` |
 | --- | --- | --- |
-| `K_inbox` (EC P-256, `AGREE_KEY`, StrongBox) | Private part `setUnlockedDeviceRequired(true)` | Private part usable while locked |
+| `K_inbox` (EC P-256, `AGREE_KEY`, StrongBox), one key per mode | Private part `setUnlockedDeviceRequired(true)` | Private part usable while locked |
 | `K_outbox` (EC P-256, `AGREE_KEY`, StrongBox) | Not needed | Private part `setUnlockedDeviceRequired(true)`; public part used while locked |
 | `K_wrap` | Unlocked only | Unlocked only |
 
-Keystore properties cannot be changed after creation, so each mode needs its own `K_inbox` alias and segments must carry a key id. On a mode change, new segments use the new key, and the old key is deleted once its segments are drained.
+Keystore properties cannot be changed after creation, so there are two `K_inbox` keys, one per mode, and every segment stores a key id. On a mode change, new segments use the new key, and the old key is deleted once no pending segment references it.
 
-**To verify in a spike before implementing:** StrongBox accepts `setUnlockedDeviceRequired(true)` on an EC `AGREE_KEY` key and rejects ECDH while locked; the public key is readable while locked (otherwise cache it on disk); LLM and NPU work with the keyguard confirmed locked.
+**Switching `BALANCED` to `STRICT`:** pending segments under the old key remain decryptable while locked until they are processed and the old key is deleted.
+
+The spike in `docs/benchmarks.md` verifies these key properties on the Pixel.
 
 ### Outbox entry format (proposal)
 
@@ -116,14 +112,12 @@ Runs only while unlocked, triggered by an unlock seen by the always-on ingestion
 
 | Asset | `STRICT` | `BALANCED` |
 | --- | --- | --- |
-| Vault and DEK | Not reachable | Not reachable once the session has closed |
+| Vault and DEK | Not reachable | Not reachable |
 | Pending inbox segments | Not decryptable | **Decryptable** with `K_inbox` |
 | Segment being processed | None | **Plaintext in RAM** |
 | Outbox entries already written | None | Not decryptable |
 | File count, sizes, timestamps | Inbox | Inbox and outbox |
 
 Before first unlock, app storage is not available, so the Worker cannot run.
-
-**Open point:** `BALANCED` currently keeps an already open session through the idle timeout, so the vault can stay open for up to 5 minutes after locking. The DEK is not unwrapped then, but the exposure is the one the rejected option was meant to avoid. Closing on lock in both modes would remove it.
 
 **`CognitionWorker` note:** in `STRICT`, `requiresDeviceIdle` must not be used, because the device is rarely idle while unlocked.

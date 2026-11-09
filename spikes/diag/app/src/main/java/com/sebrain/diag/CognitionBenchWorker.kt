@@ -168,8 +168,9 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 Diag.result(
                     "$label seg $i", if (valid) "PASS" else "JSON_INVALID",
                     "total=%.0f ms".format(totalMs),
-                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; output=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; emptyTitle=%b; %s"
-                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty, breakdown),
+                    "ecdh=%.2f hkdf=%.3f aes=%.3f llm=%.0f ms; output=%d chars; ecdh%%=%.3f; thermal=%d headroom10s=%.3f; emptyTitle=%b; deviceLocked=%b; %s"
+                        .format(ecdhMs, hkdfMs, aesMs, llmMs, out.length, 100 * ecdhMs / totalMs, thermalStatus, headroom, titleEmpty,
+                            applicationContext.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked, breakdown),
                 )
                 if (!valid) {
                     // Synthetic text: logged in full to diagnose the failure.
@@ -298,7 +299,8 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
             "$label: importance=${state.importance} thermalStatus=${power.currentThermalStatus} " +
                 "headroom10s=${power.getThermalHeadroom(10)} battery=${battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}% " +
                 "charging=${battery.isCharging} interactive=${power.isInteractive} deviceIdle=${power.isDeviceIdleMode} " +
-                "lightIdle=${power.isDeviceLightIdleMode}",
+                "lightIdle=${power.isDeviceLightIdleMode} " +
+                "deviceLocked=${applicationContext.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked}",
         )
     }
 
