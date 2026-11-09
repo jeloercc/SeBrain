@@ -22,3 +22,8 @@ local.properties
 
 # Local build tools (Tcl and generated sources), never committed
 tools/
+
+# Gradle build output
+.gradle/
+.kotlin/
+build/
