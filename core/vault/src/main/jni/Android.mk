@@ -9,7 +9,8 @@ include $(CLEAR_VARS)
 LOCAL_PATH := $(UPSTREAM_JNI)/sqlcipher
 LOCAL_MODULE := libsqlcipher
 
-# Upstream default flags, without SQLITE_ENABLE_LOAD_EXTENSION.
+# Upstream default flags. SQLITE_ENABLE_LOAD_EXTENSION is replaced by SQLITE_OMIT_LOAD_EXTENSION:
+# upstream enables extension loading on every connection (see vault_jni.c).
 LOCAL_CFLAGS := \
     -DSQLITE_HAS_CODEC \
     -DSQLCIPHER_CRYPTO_LIBTOMCRYPT \
@@ -39,6 +40,7 @@ LOCAL_CFLAGS := \
     -DSQLITE_USE_URI \
     -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
     -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
+    -DSQLITE_OMIT_LOAD_EXTENSION \
     -DSQLITE_CORE \
     -DSQLITE_VEC_STATIC \
     -DSQLITE_VEC_ENABLE_NEON

@@ -81,7 +81,8 @@ Kotlin calls `System.loadLibrary("sqlcipher")`, then `VaultNative.registerExtens
 
 - Per CLAUDE.md, the DEK is never passed as a passphrase. The key is the ASCII byte array `x'<64 hex chars>'`, passed to the `byte[] password` overload of `SQLiteDatabase.openOrCreateDatabase`.
 - SQLCipher's `crypto_impl.c` documents that form as raw key data, so PBKDF2 is skipped.
-- The hex array and the DEK are zeroed after opening. A hex `String` must never be created, because it cannot be zeroed.
+- The hex array and the DEK are zeroed **after `close()`, not after opening**: `SQLiteDatabaseConfiguration` keeps a reference to the `byte[]` and reuses it for every new connection. A hex `String` must never be created, because it cannot be zeroed.
+- A wrong key raises `SQLiteNotADatabaseException` and does not delete the database file.
 
 ## 3. Module layout
 
@@ -122,9 +123,10 @@ An instrumented test on the Pixel 10 (`:core:vault:connectedDebugAndroidTest`) p
 | 6 | `vec0` insert and query | `CREATE VIRTUAL TABLE v USING vec0(embedding float[256])`; insert 1000 deterministic L2-normalized vectors; a `MATCH` query with `k = 8` returns the same ids and order as a brute-force computation in Kotlin |
 | 7 | `vec0` delete and persistence | A deleted row stops being returned; the results of check 6 survive close and reopen |
 | 8 | FTS5 | `ENABLE_FTS5` is in `PRAGMA compile_options`; a `MATCH` query with `bm25()` returns the expected order; with `tokenize='unicode61 remove_diacritics 2'`, `reunion` finds `reunión` |
-| 9 | Extension loading is off | `SELECT load_extension('x')` fails |
+| 9 | Extension loading is off | `SELECT load_extension('x')` fails with `no such function`. Upstream enables extension loading on every connection, so SQLite is built with `SQLITE_OMIT_LOAD_EXTENSION` |
 | 10 | 16 KB alignment | `llvm-readelf -l libsqlcipher.so`: every `LOAD` segment has `Align 0x4000`. `zipalign -c -P 16 -v 4` passes on the APK |
 | 11 | Manifest | `aapt2 dump permissions` shows no `android.permission.INTERNET` |
+| 13 | No network, no telemetry | The merged manifest of `:core:vault` and of the test APK has no `INTERNET`, and the runtime classpaths contain no analytics or telemetry dependency |
 | 12 | 16 KB runtime | On the 16 KB emulator image, with the `arm64-v8a` build installed via `adb install --abi arm64-v8a`: the test asserts `Os.sysconf(_SC_PAGESIZE) == 16384`, `System.loadLibrary("sqlcipher")` succeeds, and checks 1, 5, 6 and 8 pass |
 
 **About 16 KB at runtime:** `getconf PAGE_SIZE` on this Pixel 10 returns 4096, and its 16 KB mode must not be enabled, so the Pixel only covers the static check 10. Check 12 uses the official 16 KB emulator image instead:
