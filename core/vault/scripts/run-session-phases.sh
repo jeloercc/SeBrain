@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the VaultSession checks that need process restarts or a locked device.
-# Usage: run-session-phases.sh <serial> before-lock|lock|after-unlock
+# Usage: run-session-phases.sh <serial> before-lock|lock|balanced-locked|after-unlock
 set -eu
 
 SERIAL=$1
@@ -31,6 +31,12 @@ lock)
     $ADB shell input keyevent KEYCODE_SLEEP
     wait "$PHASE_PID"
     $ADB logcat -d -s SEBRAIN_VAULT_PHASE:I | grep SEBRAIN_VAULT_PHASE
+    ;;
+balanced-locked)
+    run_phase phaseCreate create
+    $ADB shell input keyevent KEYCODE_SLEEP
+    until $ADB shell dumpsys trust | grep -q 'deviceLocked=1'; do sleep 1; done
+    run_phase phaseBalancedCannotOpenLocked balancedLocked
     ;;
 after-unlock)
     run_phase phaseAfterUnlock afterUnlock

@@ -114,10 +114,18 @@ class VaultSessionPhaseTest {
         waitUntil(BALANCED_IDLE_MS + IDLE_MARGIN_MS) { !balanced.session.isOpen }
         assertArrayEquals("Balanced: key must be zero", ByteArray(67), balanced.session.lastClosedKey)
         Log.i(TAG, "balanced closed on idle timeout")
+    }
 
-        assertTrue("the device was unlocked during the test", keyguard.isDeviceLocked)
-        val error = assertThrows(VaultKeyException.DeviceLocked::class.java) { balanced.read() }
-        Log.i(TAG, "balanced cannot reopen while locked: ${error.javaClass.simpleName}")
+    /** A fresh session in a new process, so the DEK has to be unwrapped while locked. */
+    @Test
+    fun phaseBalancedCannotOpenLocked() {
+        onlyInPhase("balancedLocked")
+        assertTrue("the device must be locked", keyguard.isDeviceLocked)
+        val balanced = balanced()
+        assertThrows(VaultKeyException.DeviceLocked::class.java) { balanced.read() }
+        assertFalse(balanced.session.isOpen)
+        assertTrue("the wrapped DEK must still exist", balanced.blob.exists())
+        Log.i(TAG, "balanced refused to open while locked")
     }
 
     @Test
