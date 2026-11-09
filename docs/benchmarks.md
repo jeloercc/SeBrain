@@ -617,3 +617,5 @@ Both keys are EC P-256 `PURPOSE_AGREE_KEY` and report `KeyInfo.securityLevel = S
 | (e) LiteRT-LM on the NPU from a Worker with the device locked | **Not verified** | See below |
 
 **(e):** two runs were invalid because the device was woken by `WAKE_REASON_TAP` a few seconds after the screen was turned off (21:13:08 and 21:14:25) and was unlocked when the Worker ran. The second run logged `deviceLocked=false` on every segment, so it says nothing about the locked state.
+
+A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler deferred it for 19 minutes with all constraints met, but the device was unlocked before inference. **(e) stays pending and does not block other work.** It must be verified before outbox code is written. A locked-phone Worker should expect start delays of many minutes.
