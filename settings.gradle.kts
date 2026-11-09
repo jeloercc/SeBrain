@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "sebrain"
 include(":core:vault")
 include(":core:crypto")
+include(":ingest")
