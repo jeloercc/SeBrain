@@ -55,4 +55,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
+    }
+
+    sourceSets.getByName("main") {
+        java.srcDir(rootProject.file("third_party/sqlcipher-android/sqlcipher/src/main/java"))
+    }
+}
+
+dependencies {
+    // Required by the upstream Java layer (SupportSQLite interfaces).
+    implementation("androidx.sqlite:sqlite:2.7.0")
 }
