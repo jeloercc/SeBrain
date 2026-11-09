@@ -12,7 +12,9 @@
 | `sqlcipher/sqlcipher` | `v4.20.0`, SQLite 3.54.1 | commit `355d4db92d3404e71faa8088d071a71d767807f4` | Submodule of the above; matches the release tag |
 | `sqlcipher/libtomcrypt` | as pinned by the release | commit `476a9579ae94f32b9ea9e2747bfb04b302370259` | Upstream's default crypto provider. See decision D1 |
 | `asg017/sqlite-vec` | `v0.1.9` (latest stable) | `sqlite-vec-0.1.9-amalgamation.zip`, SHA-256 `b87cdda12112657ba5ab8842f0088a4090982eaf41f22b2bd6d495b81765a8c9`; commit `e9f598abfa0c06b328d8fe5da9c3760cce74be10` | `v0.1.10-alpha.4` exists and is not used |
-| Android NDK | r30 LTS, `30.0.16248370` | `ndkVersion` in `:core:vault` | Upstream pins r25c (`25.2.9519653`), below the project's r27+ rule. See section 6 |
+| Android NDK | r30 LTS, `30.0.16248370` | `ndkVersion` in `:core:vault` | Upstream pins r25c (`25.2.9519653`), below the project's r27+ rule. Verified on this Mac (section 6) |
+| Tcl | `8.6.18`, built from source into `tools/tcl` | `tcl8.6.18-src.tar.gz`, SHA-256 `14f9af32b1767ff718477a8f974ad03c34341097e6b43f4ce54644ee974e268e` | Build tool only, for the amalgamation; `tools/` is not committed |
+| 16 KB emulator image | `system-images;android-37.1;google_apis_ps16k;x86_64`, revision 9 | Android emulator `37.2.13.0` | Runtime test only (section 4) |
 | `androidx.sqlite:sqlite` | `2.7.0` | Gradle | Required by the upstream Java layer |
 | AGP / Gradle / JDK | 9.5.1 / 9.6.0 / 21 | Same as `spikes/diag` | `ndkBuild` is used, so CMake is not needed |
 
@@ -31,7 +33,7 @@ The prebuilt AAR from Maven cannot be used: it does not contain sqlite-vec, and 
 Same commands the upstream `build.gradle` uses, wrapped in a Gradle task that runs before `preBuild` and writes to `build/generated/sqlcipher/`:
 
 ```sh
-./configure --with-tempstore=yes --disable-tcl
+./configure --with-tempstore=yes --disable-tcl --with-tclsh=$PROJECT/tools/tcl/bin/tclsh8.6
 make sqlite3.c
 ```
 
@@ -123,28 +125,37 @@ An instrumented test on the Pixel 10 (`:core:vault:connectedDebugAndroidTest`) p
 | 9 | Extension loading is off | `SELECT load_extension('x')` fails |
 | 10 | 16 KB alignment | `llvm-readelf -l libsqlcipher.so`: every `LOAD` segment has `Align 0x4000`. `zipalign -c -P 16 -v 4` passes on the APK |
 | 11 | Manifest | `aapt2 dump permissions` shows no `android.permission.INTERNET` |
+| 12 | 16 KB runtime | On the 16 KB emulator image, with the `arm64-v8a` build installed via `adb install --abi arm64-v8a`: the test asserts `Os.sysconf(_SC_PAGESIZE) == 16384`, `System.loadLibrary("sqlcipher")` succeeds, and checks 1, 5, 6 and 8 pass |
 
-**Limit of check 10:** `getconf PAGE_SIZE` on this Pixel 10 returns 4096, so running on the device does not exercise a 16 KB page size. Check 10 is static. A runtime check would need the Pixel's 16 KB developer option or a 16 KB emulator image; it is not part of this task unless requested.
+**About 16 KB at runtime:** `getconf PAGE_SIZE` on this Pixel 10 returns 4096, and its 16 KB mode must not be enabled, so the Pixel only covers the static check 10. Check 12 uses the official 16 KB emulator image instead:
+
+- It boots on this Intel Mac with Hypervisor.Framework and reports `PAGE_SIZE=16384`.
+- It runs `arm64-v8a` code through `libndk_translation`. A test `arm64` executable aligned to 16 KB ran there; the same program linked for 4 KB failed.
+- **Limits:** this exercises the real `arm64-v8a` `.so` under translation, not on real arm64 hardware. Only an executable was tried so far; loading a JNI library inside an app under translation is first confirmed by check 12 itself. Performance numbers from the emulator are not valid.
 
 **Also measured, not a pass/fail check:** time to open, and insert and KNN query time over 1000 and 10,000 vectors, as input for D1.
 
 ## 5. Steps
 
-1. Install NDK r30 with `sdkmanager` and check its host binaries (section 6).
+1. Done: NDK r30, Tcl 8.6.18 and the 16 KB emulator image are installed and verified (section 6).
 2. Add the submodules and vendor sqlite-vec, verifying the SHA-256.
-3. Generate the amalgamation on the Mac (section 6).
+3. Generate the amalgamation with the local Tcl.
 4. Create the root Gradle project and `:core:vault`; build `libsqlcipher.so`.
-5. Run the static checks, then the acceptance test on the Pixel 10.
+5. Run the static checks, then the acceptance test on the Pixel 10 and check 12 on the 16 KB emulator.
 6. Record the results in `docs/benchmarks.md`.
 
 ## 6. macOS Intel versus Linux
 
-**Nothing in this task is known to require Linux.** The only Linux requirement in the project is compiling models for the TPU, which is unrelated. Two items are unverified on this Mac and are checked first:
+**Nothing in this task requires Linux.** The only Linux requirement in the project is compiling models for the TPU, which is unrelated. Verified on this Mac (Intel i7-7700HQ, macOS 15.8) on 2026-11-08:
 
-| Item | Status | Check | Fallback |
-| --- | --- | --- | --- |
-| NDK r30 on Intel | Unverified. The Mac package is `android-ndk-r30-darwin.dmg`; the NDK shipped universal binaries in past releases, but I could not confirm the x86_64 slice for r30 | After installing: `file $NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang` | NDK r28c (`28.2.13676358`), which still meets the r27+ rule |
-| Amalgamation generation | Unverified. Upstream uses `--disable-tcl`, and SQLite's README says core deliverables build without Tcl. This Mac has Tcl 8.5.9, and many SQLite makefile targets need 8.6 or later, so the build must not pick it up | Run step 3 before anything else | Generate `sqlite3.c` once in a Linux container and use the file as the input |
+| Item | Result |
+| --- | --- |
+| NDK r30 on Intel | Works. `clang`, `ld.lld` and `llvm-readelf` are universal binaries with an x86_64 slice; a test `aarch64` library linked with `LOAD` alignment `0x4000`. The r28c fallback is not needed |
+| Tcl 8.6 | Built from source into `tools/tcl` (no Homebrew, nothing installed outside the project). `tclsh8.6` reports `8.6.18` |
+| Amalgamation | `make sqlite3.c` from SQLCipher `v4.20.0` (commit `355d4db…`) succeeded in about 18 s. `sqlite3.c` is SQLite 3.54.1 and contains the SQLCipher codec. SHA-256 `8cd2347d18886fee4651153fabeeeffb7cec008700987dab1c00261febc4220f` |
+| 16 KB emulator | Boots and reports `PAGE_SIZE=16384` (section 4) |
+
+The compilation of the generated `sqlite3.c` together with the JNI layer and sqlite-vec under r30 is not verified yet; it is step 4.
 
 Everything else works on the Mac: `make`, Apple command line tools (installed), `ndk-build`, and `llvm-readelf` from the NDK. CMake is not installed and is not needed. Homebrew is not used.
 

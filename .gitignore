@@ -19,3 +19,6 @@ models/
 .DS_Store
 local.properties
 .idea/
+
+# Local build tools (Tcl and generated sources), never committed
+tools/
