@@ -27,12 +27,14 @@ class LlmBench(private val context: Context, private val modelKey: String, priva
     private val label = "Llm $modelKey $backendName"
 
     fun run() {
+        Diag.info("$label start: ${processState()}")
         try {
             bench()
         } catch (t: Throwable) {
             Diag.error(label, t)
             Diag.result(label, "FAIL", "-", Diag.describe(t))
         }
+        Diag.info("$label end: ${processState()}")
         Diag.info("LLM_DONE $modelKey $backendName")
     }
 
@@ -119,6 +121,14 @@ class LlmBench(private val context: Context, private val modelKey: String, priva
 
     private fun text(message: com.google.ai.edge.litertlm.Message): String =
         message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+
+    /** Whether the run kept the foreground: a background process is limited to CPUs 0-2. */
+    private fun processState(): String {
+        val state = android.app.ActivityManager.RunningAppProcessInfo().also { android.app.ActivityManager.getMyMemoryState(it) }
+        val power = context.getSystemService(PowerManager::class.java)
+        val cpuset = runCatching { File("/proc/self/cpuset").readText().trim() }.getOrDefault("?")
+        return "importance=${state.importance} interactive=${power.isInteractive} cpuset=$cpuset"
+    }
 
     private fun rssMb(field: String): Long =
         File("/proc/self/status").readLines().firstOrNull { it.startsWith("$field:") }

@@ -37,13 +37,16 @@ for run in $RUNS; do
     backend=${run##*:}
     echo "== $model on $backend"
     $ADB logcat -c
+    # Streamed to a file: the device buffer rotates during long runs and loses the early lines.
+    $ADB logcat -v time -s SEBRAIN_DIAG:V > "$OUT/$model-$backend.log" &
+    LOGCAT_PID=$!
     $ADB shell am start -S -n $PACKAGE/.MainActivity --es mode llm --es model "$model" --es backend "$backend" > /dev/null
     i=0
-    until $ADB logcat -d -s SEBRAIN_DIAG:I | grep -q "LLM_DONE $model $backend"; do
+    until grep -q "LLM_DONE $model $backend" "$OUT/$model-$backend.log"; do
         sleep 3; i=$((i + 1))
         [ $i -gt 200 ] && { echo "timed out"; break; }
     done
-    $ADB logcat -d -v time -s SEBRAIN_DIAG:V > "$OUT/$model-$backend.log"
+    kill $LOGCAT_PID 2> /dev/null
     $ADB logcat -d -v time | grep -E "E/litert|E litert|E/native|lowmemorykiller.*sebrain" | tail -8 > "$OUT/$model-$backend-errors.log"
     $ADB shell am force-stop $PACKAGE
     grep -E "RESULT\|" "$OUT/$model-$backend.log" | sed 's/.*RESULT|//'

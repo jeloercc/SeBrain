@@ -660,3 +660,30 @@ A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler def
 - The share test left one capture ("Phone test capture …") in the real app vault on the phone.
 - The spike result is 5 segments, one run. With the old schema, segment 0 looped to the token limit in the earlier locked run.
 - The gap between screen-off and the keyguard locking was not exercised: this Pixel locks at once when the script turns the screen off.
+
+## EmbeddingGemma 2 Text 270M: sustained run per backend, 2026-11-10
+
+`spikes/diag/.../EmbeddingBench.kt` through `scripts/run-embedding-bench.sh`, Pixel 10, foreground, screen on, charging over USB. One process per backend, 10 minutes each, 2 minutes of cool-down in between. Output: 256 dimensions, L2 normalized. The text is 69 words (389 characters) of Spanish.
+
+**Models:** `litert-community/embeddinggemma-2-text-270m-litert-lm` at revision `9be6e8b9` (Apache-2.0, not gated), pushed with adb and verified by pinned SHA-256.
+
+| File | Backend | SHA-256 |
+| --- | --- | --- |
+| `embeddinggemma-2-text-270m_Google_Tensor_G5.litertlm` | NPU | `f066663433a31a8228b46f3271d2714a3b72a341ed4563cbc6d90f2e3dd0162d` |
+| `embeddinggemma-2-text-270m.litertlm` | GPU, CPU | `2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb` |
+
+| Backend | First minute | Last minute | Change | Texts in 10 min | Peak RSS | Max `thermalStatus` | Battery at the end |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NPU | 41.3 texts/s | 41.3 texts/s | 0% | 24,906 | 429 MB | 2 | 42.2 °C |
+| GPU | 8.3 texts/s | 2.9 texts/s | −65% | 4,563 | 566 MB | 2 | 41.9 °C |
+| CPU | 7.0 texts/s | 7.1 texts/s | +1% | 4,517 | 529 MB | 2 | 40.9 °C |
+
+**Backend decision for embeddings: NPU.** It is about 5 times faster than GPU or CPU and did not slow down in 10 minutes. The GPU loses two thirds of its speed as the device heats up. CPU is the fallback.
+
+**Limits:**
+
+- The backends ran in sequence, so GPU and CPU started on a device already warmed by the previous run. The GPU drop was not measured from a cold start.
+- The per-size latency, the load times and the first minutes of each run were lost: the script read the device log at the end and the buffer had rotated. The script now streams the log to a file. A repeat of the quick pass is recorded below if available.
+- Tokens per second are not reported: LiteRT-LM 0.18.1 does not expose token counts for embeddings.
+- Foreground only. Embedding from a background Worker, limited to CPUs 0–2, was not measured.
+- LiteRT-LM 0.18.1 loads this model: verified first on the emulator CPU (256 dimensions, norm 1.0, related text 0.88 versus unrelated 0.70 cosine).

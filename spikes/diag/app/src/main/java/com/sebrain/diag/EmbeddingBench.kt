@@ -24,12 +24,14 @@ class EmbeddingBench(private val context: Context, private val backendName: Stri
     private val label = "Embed $backendName"
 
     fun run() {
+        Diag.info("$label start: ${processState()}")
         try {
             bench()
         } catch (t: Throwable) {
             Diag.error(label, t)
             Diag.result(label, "FAIL", "-", Diag.describe(t))
         }
+        Diag.info("$label end: ${processState()}")
         Diag.info("EMBED_DONE $backendName")
     }
 
@@ -132,6 +134,14 @@ class EmbeddingBench(private val context: Context, private val backendName: Stri
     }
 
     /** A field of /proc/self/status in MB: VmHWM is the peak resident set, VmRSS the current one. */
+    /** Whether the run kept the foreground: a background process is limited to CPUs 0-2. */
+    private fun processState(): String {
+        val state = android.app.ActivityManager.RunningAppProcessInfo().also { android.app.ActivityManager.getMyMemoryState(it) }
+        val power = context.getSystemService(PowerManager::class.java)
+        val cpuset = runCatching { File("/proc/self/cpuset").readText().trim() }.getOrDefault("?")
+        return "importance=${state.importance} interactive=${power.isInteractive} cpuset=$cpuset"
+    }
+
     private fun rssMb(field: String): Long =
         File("/proc/self/status").readLines().firstOrNull { it.startsWith("$field:") }
             ?.filter { it.isDigit() }?.toLongOrNull()?.div(1024) ?: -1

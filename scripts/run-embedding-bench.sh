@@ -35,14 +35,17 @@ $ADB shell svc power stayon usb
 for backend in $BACKENDS; do
     echo "== $backend"
     $ADB logcat -c
+    # Streamed to a file: the device buffer rotates during long runs and loses the early lines.
+    $ADB logcat -v time -s SEBRAIN_DIAG:V > "$OUT/$backend.log" &
+    LOGCAT_PID=$!
     $ADB shell am start -S -n $PACKAGE/.MainActivity --es mode embed --es backend "$backend" --ei minutes "$MINUTES" > /dev/null
     i=0
     limit=$(( (MINUTES + 4) * 20 ))
-    until $ADB logcat -d -s SEBRAIN_DIAG:I | grep -q "EMBED_DONE $backend"; do
+    until grep -q "EMBED_DONE $backend" "$OUT/$backend.log"; do
         sleep 3; i=$((i + 1))
         [ $i -gt $limit ] && { echo "timed out"; break; }
     done
-    $ADB logcat -d -v time -s SEBRAIN_DIAG:V > "$OUT/$backend.log"
+    kill $LOGCAT_PID 2> /dev/null
     $ADB logcat -d -v time | grep -E "E/litert|E litert|Failed to initialize Dispatch" | tail -5 > "$OUT/$backend-errors.log"
     $ADB shell am force-stop $PACKAGE
     grep -E "RESULT\|" "$OUT/$backend.log" | sed 's/.*RESULT|//'
