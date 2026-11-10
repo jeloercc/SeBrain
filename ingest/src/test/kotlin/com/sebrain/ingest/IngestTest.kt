@@ -1,17 +1,18 @@
 package com.sebrain.ingest
 
+import com.sebrain.core.crypto.CapturePayload
+import com.sebrain.core.crypto.InboxSegmentCodec
 import java.io.File
 import java.nio.file.Files
 import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.PublicKey
 import java.security.spec.ECGenParameterSpec
 import java.time.Instant
 import java.time.ZoneId
-import java.util.UUID
-import javax.crypto.AEADBadTagException
 import javax.crypto.KeyAgreement
-import org.json.JSONObject
-import org.junit.Assert.assertArrayEquals
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -22,25 +23,23 @@ class IngestTest {
     private val pair: KeyPair = KeyPairGenerator.getInstance("EC")
         .apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
     private val inbox: File = Files.createTempDirectory("inbox").toFile()
-    private val ingestor = CaptureIngestor(
-        inbox, 2, { pair.public }, { Instant.parse("2026-11-09T10:00:00Z") }, { ZoneId.of("America/Mexico_City") }, RecentDigests(),
+    private val indexFile = File(inbox, "dedup.idx")
+
+    /** Software stand-in for K_dedup. */
+    private val tagger = { digest: ByteArray ->
+        Mac.getInstance("HmacSHA256").run { init(SecretKeySpec(ByteArray(32) { 7 }, "HmacSHA256")); doFinal(digest) }
+    }
+
+    private fun ingestor(publicKey: () -> PublicKey = { pair.public }) = CaptureIngestor(
+        inbox, 2, publicKey, DedupIndex(indexFile, tagger),
+        { Instant.parse("2026-11-09T10:00:00Z") }, { ZoneId.of("America/Mexico_City") },
     )
 
-    private fun agree(key: KeyPair) = { _: Byte, peer: java.security.PublicKey ->
-        KeyAgreement.getInstance("ECDH").run { init(key.private); doPhase(peer, true); generateSecret() }
+    private val agree = { _: Byte, peer: PublicKey ->
+        KeyAgreement.getInstance("ECDH").run { init(pair.private); doPhase(peer, true); generateSecret() }
     }
 
-    private fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-
-    @Test
-    fun hkdfMatchesRfc5869FirstBlock() {
-        val okm = SegmentCodec.hkdfSha256(
-            ByteArray(22) { 0x0b },
-            hex("000102030405060708090a0b0c"),
-            hex("f0f1f2f3f4f5f6f7f8f9"),
-        )
-        assertArrayEquals(hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"), okm)
-    }
+    private fun segments() = inbox.listFiles { f -> f.name.endsWith(".seg") }!!
 
     @Test
     fun normalizesLineEndingsSpacesAndUnicode() {
@@ -48,61 +47,66 @@ class IngestTest {
     }
 
     @Test
-    fun segmentRoundTripKeepsKeyIdAndId() {
-        val id = UUID.randomUUID()
-        val blob = SegmentCodec.encrypt("secret".toByteArray(), pair.public, 2, id)
-        val parsed = SegmentCodec.decrypt(blob, agree(pair))
-        assertEquals(2.toByte(), parsed.keyId)
-        assertEquals(id, parsed.segmentId)
-        assertArrayEquals("secret".toByteArray(), parsed.plaintext)
-    }
-
-    @Test
-    fun tamperedHeaderOrCiphertextIsRejected() {
-        val blob = SegmentCodec.encrypt("secret".toByteArray(), pair.public, 2, UUID.randomUUID())
-        for (index in listOf(10, blob.size - 1)) {
-            val tampered = blob.copyOf().also { it[index] = (it[index].toInt() xor 1).toByte() }
-            assertThrows(AEADBadTagException::class.java) { SegmentCodec.decrypt(tampered, agree(pair)) }
-        }
-    }
-
-    @Test
     fun storesEncryptedSegmentWithCapturedAt() {
-        val result = ingestor.ingest(Capture("Reunión el jueves", "share", "Asunto")) as IngestResult.Stored
+        val result = ingestor().ingest(Capture("Reunión el jueves", "share", "Asunto")) as IngestResult.Stored
         val file = File(inbox, "${result.segmentId}.seg")
         assertFalse(String(file.readBytes(), Charsets.ISO_8859_1).contains("jueves"))
-        assertEquals(1, inbox.listFiles()!!.size)
+        assertEquals(1, segments().size)
 
-        val payload = JSONObject(String(SegmentCodec.decrypt(file.readBytes(), agree(pair)).plaintext))
-        assertEquals("Reunión el jueves", payload.getString("text"))
-        assertEquals("2026-11-09T10:00:00Z", payload.getString("captured_at"))
-        assertEquals("America/Mexico_City", payload.getString("time_zone"))
-        assertEquals("share", payload.getString("source"))
-        assertEquals(64, payload.getString("content_sha256").length)
+        val payload = CapturePayload.decode(InboxSegmentCodec.decrypt(file.readBytes(), agree).plaintext)
+        assertEquals("Reunión el jueves", payload.text)
+        assertEquals("2026-11-09T10:00:00Z", payload.capturedAt)
+        assertEquals("America/Mexico_City", payload.timeZone)
+        assertEquals("share", payload.source)
+        assertEquals("Asunto", payload.subject)
+        assertEquals(64, payload.contentSha256.length)
     }
 
     @Test
     fun duplicatesAndEmptyTextAreNotStored() {
+        val ingestor = ingestor()
         assertTrue(ingestor.ingest(Capture("hello", "share")) is IngestResult.Stored)
         assertEquals(IngestResult.Duplicate, ingestor.ingest(Capture("  hello \r\n", "share")))
         assertEquals(IngestResult.Empty, ingestor.ingest(Capture(" \n ", "share")))
-        assertEquals(1, inbox.listFiles()!!.size)
+        assertEquals(1, segments().size)
+    }
+
+    @Test
+    fun deduplicationSurvivesARestart() {
+        assertTrue(ingestor().ingest(Capture("hello", "share")) is IngestResult.Stored)
+        assertEquals(IngestResult.Duplicate, ingestor().ingest(Capture("hello", "share")))
+        assertTrue(ingestor().ingest(Capture("other", "share")) is IngestResult.Stored)
+        assertEquals(64L, indexFile.length())
+    }
+
+    @Test
+    fun indexHoldsKeyedTagsNotPlainHashes() {
+        ingestor().ingest(Capture("hello", "share"))
+        val digest = CaptureNormalizer.sha256("hello")
+        val stored = indexFile.readBytes()
+        assertEquals(32, stored.size)
+        assertFalse("the plain SHA-256 must not be on disk", stored.contentEquals(digest))
+        assertTrue(stored.contentEquals(tagger(digest)))
+    }
+
+    @Test
+    fun tornIndexRecordIsIgnored() {
+        ingestor().ingest(Capture("hello", "share"))
+        indexFile.appendBytes(ByteArray(10))
+        assertEquals(IngestResult.Duplicate, ingestor().ingest(Capture("hello", "share")))
     }
 
     @Test
     fun oversizedTextIsRejected() {
-        assertEquals(IngestResult.TooLarge, ingestor.ingest(Capture("a".repeat(1024 * 1024 + 1), "share")))
-        assertEquals(0, inbox.listFiles()?.size ?: 0)
+        assertEquals(IngestResult.TooLarge, ingestor().ingest(Capture("a".repeat(1024 * 1024 + 1), "share")))
+        assertEquals(0, segments().size)
     }
 
     @Test
-    fun failedWriteCanBeRetried() {
-        val failing = CaptureIngestor(
-            inbox, 2, { error("no key") }, { Instant.EPOCH }, { ZoneId.of("UTC") }, RecentDigests(),
-        )
-        assertThrows(IllegalStateException::class.java) { failing.ingest(Capture("retry", "share")) }
-        assertThrows("not treated as a duplicate", IllegalStateException::class.java) {
-            failing.ingest(Capture("retry", "share"))
+    fun failedWriteIsNotRememberedAsDuplicate() {
+        assertThrows(IllegalStateException::class.java) {
+            ingestor { error("no key") }.ingest(Capture("retry", "share"))
         }
+        assertTrue(ingestor().ingest(Capture("retry", "share")) is IngestResult.Stored)
     }
 }

@@ -1,4 +1,4 @@
-package com.sebrain.ingest
+package com.sebrain.core.crypto
 
 import java.nio.ByteBuffer
 import java.security.KeyFactory
@@ -15,12 +15,13 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * ECIES segment with one ephemeral key per segment.
+ * Inbox segment: ECIES with one ephemeral key per segment. Written by ingestion with the
+ * public key only, and read by cognition with K_inbox.
  *
  * Format: magic "SBSG" (4) | version (1) | key id (1) | segment id (16) | ephemeral public key,
  * X.509 (91) | nonce (12) | AES-256-GCM ciphertext + tag. Everything before the ciphertext is AAD.
  */
-internal object SegmentCodec {
+object InboxSegmentCodec {
     private val MAGIC = "SBSG".toByteArray(Charsets.US_ASCII)
     private const val VERSION: Byte = 1
     private const val EPHEMERAL_BYTES = 91

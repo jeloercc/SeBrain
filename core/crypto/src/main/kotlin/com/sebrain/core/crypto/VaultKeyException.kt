@@ -16,7 +16,13 @@ sealed class VaultKeyException(message: String, cause: Throwable? = null) : Exce
 
     /** K_wrap requires an unlocked device and the device is locked. */
     class DeviceLocked(cause: Throwable? = null) :
-        VaultKeyException("The device is locked; K_wrap cannot be used", cause)
+        VaultKeyException("The device is locked; the key cannot be used", cause)
+
+    /** A segment references a K_inbox that no longer exists. */
+    class InboxKeyMissing(alias: String) : VaultKeyException("Keystore key '$alias' is missing")
+
+    /** A segment carries a key id this version does not know. */
+    class UnknownInboxKey(keyId: Byte) : VaultKeyException("Unknown K_inbox key id $keyId")
 
     /** The screen is off. The vault is not opened then, because the later lock could not be observed. */
     class ScreenOff : VaultKeyException("The screen is off; the vault stays closed")

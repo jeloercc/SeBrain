@@ -1,15 +1,17 @@
 package com.sebrain.ingest
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import com.sebrain.core.crypto.DedupKey
 import com.sebrain.core.crypto.InboxKey
 import com.sebrain.core.crypto.InboxMode
 import java.io.File
 
-/** Receives shared text, stores it encrypted and closes. It shows no content. */
+/** Receives shared text, stores it encrypted and closes. It shows no content and logs none. */
 class ShareActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -19,16 +21,20 @@ class ShareActivity : Activity() {
             return
         }
         val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+        val appContext = applicationContext
         Thread {
             val message = try {
-                when (ingestor(this).ingest(Capture(text, SOURCE, subject))) {
+                val result = ingestor(appContext).ingest(Capture(text, SOURCE, subject))
+                Log.i(TAG, "share result=${result.javaClass.simpleName}")
+                if (result is IngestResult.Stored) onCaptureStored?.invoke()
+                when (result) {
                     is IngestResult.Stored -> "Saved"
                     IngestResult.Duplicate -> "Already saved"
                     IngestResult.Empty -> "Nothing to save"
                     IngestResult.TooLarge -> "Text too large"
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Could not store the capture: ${e.javaClass.simpleName}")
+                Log.e(TAG, "share failed: ${e.javaClass.simpleName}")
                 "Could not save"
             }
             runOnUiThread { finishWith(message) }
@@ -40,20 +46,25 @@ class ShareActivity : Activity() {
         finish()
     }
 
-    private companion object {
-        const val TAG = "SEBRAIN_INGEST"
-        const val SOURCE = "share"
+    companion object {
+        private const val TAG = "SEBRAIN_INGEST"
+        private const val SOURCE = "share"
 
-        /** Provisional until the default mode is decided. */
-        val DEFAULT_MODE = InboxMode.STRICT
+        /** Set by the app to react to a new segment, for example to import the inbox. */
+        @Volatile
+        var onCaptureStored: (() -> Unit)? = null
 
-        // One instance per process, so the in-memory digests survive between shares.
+        fun inboxDir(context: Context) = File(context.noBackupFilesDir, "inbox")
+
         @Volatile
         private var shared: CaptureIngestor? = null
 
-        fun ingestor(activity: Activity): CaptureIngestor = shared ?: synchronized(this) {
-            shared ?: InboxKey(DEFAULT_MODE).let { key ->
-                CaptureIngestor(File(activity.noBackupFilesDir, "inbox"), key.keyId, key::publicKey)
+        /** One instance per process, so writes to the inbox and the tag index are serialized. */
+        fun ingestor(context: Context): CaptureIngestor = shared ?: synchronized(this) {
+            shared ?: run {
+                val key = InboxKey(InboxMode.DEFAULT)
+                val inbox = inboxDir(context)
+                CaptureIngestor(inbox, key.keyId, key::publicKey, DedupIndex(File(inbox, "dedup.idx"), DedupKey()::tag))
             }.also { shared = it }
         }
     }
