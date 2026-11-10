@@ -1,6 +1,6 @@
 # Design: vault session and key lifetime
 
-**Status: Session implemented in `:core:crypto` and `:core:vault`.** The outbox is designed but not implemented. The default mode and the Share integration are not decided yet.
+**Status: Session implemented in `:core:crypto` and `:core:vault`.** The outbox is designed but not implemented. The default mode is Balanced (decided 2026-11-09). Share is described in `docs/design-phase1-mvp.md`.
 
 ## Flow
 

@@ -31,14 +31,15 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ## Architecture (three processes, one vault)
 
-1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (SHA-256 of the canonical content) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
+1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (keyed tag of the canonical content, see `K_dedup`) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
 2. **Cognition** (`CognitionWorker`): decrypts segments → chunking → JSON extraction with constrained decoding → embeddings → inserts into `capture`, `chunk`, `chunk_fts`, `chunk_vec` in one transaction. Deletes the segment only after `COMMIT`. Loads the LLM per batch and releases it when done.
 3. **Query** (app open): query embedding → RRF FTS5 + vec0 → top 8 → LiteRT-LM with `[n]` citations. With the Gemini Nano setting on, Nano is used and it falls back to LiteRT-LM if AICore returns `BUSY`.
 
 ### Keys (Android Keystore)
 
-- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Implemented in `:core:crypto` (`InboxKey`); not yet tested on the device.
+- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Default mode: Balanced (decided 2026-11-09).
 - `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; wraps the 32-byte DEK stored in `noBackupFilesDir`.
+- `K_dedup`: HMAC-SHA256, StrongBox, no unlock requirement. Deduplication stores `HMAC(K_dedup, SHA-256(content))` tags; no plain content hashes on disk.
 - `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
 - Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.
 
@@ -88,14 +89,13 @@ Each spike delivered minimal code + numbers measured on the Pixel 10. Details in
 
 ## Next phases
 
-- **Phase 1, first task:** build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
+- **Phase 1 (vault + Share MVP):** implemented; see `docs/plan-phase1.md`, `docs/design-vault-session.md` and `docs/design-phase1-mvp.md`. Run `scripts/run-phone-tests.sh` for the phone tests.
 - **Phase 2, first task:** LiteRT-LM benchmark of EmbeddingGemma 2 (270M) on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
 - **Phase 4, extraction-model benchmark:** compare Gemma 3 1B with Gemma 4 E2B on NPU, GPU and CPU, with the same measurements.
   - Measure the `createConversation` cost with and without constrained decoding in the background. So far it was only measured in the foreground (2660 ms versus 3 ms); the background saving is an extrapolation.
 
 ## Open decisions (do not assume; ask)
 
-- Default vault mode (Strict or Balanced). Behavior of each mode is decided: see `docs/design-vault-session.md`.
 - Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
 - Distribution: sideload only or private Play.
 - Initial allowlist of apps for notifications.
