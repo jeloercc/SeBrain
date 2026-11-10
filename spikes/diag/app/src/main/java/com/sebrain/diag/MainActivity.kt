@@ -45,6 +45,13 @@ class MainActivity : Activity() {
             "bg" -> scheduleBackgroundTest()
             "cognition" -> scheduleCognitionBench()
             "cognition-bg" -> scheduleBackgroundCognition()
+            "llm" -> scope.launch {
+                LlmBench(
+                    applicationContext,
+                    intent.getStringExtra("model") ?: "",
+                    intent.getStringExtra("backend") ?: "gpu",
+                ).run()
+            }
             "embed" -> scope.launch {
                 EmbeddingBench(
                     applicationContext,

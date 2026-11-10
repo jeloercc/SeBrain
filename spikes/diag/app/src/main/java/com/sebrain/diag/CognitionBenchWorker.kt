@@ -360,7 +360,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
                 "Keep values in the original language of the text."
 
 /** Minimal schema decided in docs/design-cognition-worker.md: title last, compact JSON. */
-        private val SCHEMA = """
+        val SCHEMA = """
             {"type":"object","x-guidance":{"whitespace_flexible":false},"properties":{
               "people":{"type":"array","items":{"type":"string"}},
               "dates":{"type":"array","items":{"type":"string"}},
@@ -371,7 +371,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         """.trimIndent()
 
         /** Lists the fields in the schema order. */
-        private const val EXTRACTION_SYSTEM =
+        const val EXTRACTION_SYSTEM =
             "Extract structured information from the user's text. Respond only with valid JSON " +
                 "that follows the schema: people, dates (ISO 8601 if possible), topics, pending tasks " +
                 "and title (short phrase). Use empty lists if there is no data. " +
