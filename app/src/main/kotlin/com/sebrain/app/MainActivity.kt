@@ -2,11 +2,13 @@ package com.sebrain.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.WindowManager
 import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -25,6 +27,8 @@ import java.time.format.DateTimeFormatter
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var search: EditText
+    private lateinit var modelStatus: TextView
+    private lateinit var importButton: Button
     private lateinit var adapter: ArrayAdapter<String>
     private var shown: List<CaptureSummary> = emptyList()
     private val app get() = application as SeBrainApp
@@ -43,6 +47,16 @@ class MainActivity : Activity() {
                 override fun afterTextChanged(s: Editable?) = refresh()
             })
         }
+        modelStatus = TextView(this).apply { textSize = 12f }
+        importButton = Button(this).apply {
+            text = "Import embedding model"
+            setOnClickListener {
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),
+                    REQUEST_IMPORT_MODEL,
+                )
+            }
+        }
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, ArrayList<String>())
         val list = ListView(this).apply {
             adapter = this@MainActivity.adapter
@@ -53,6 +67,8 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 setPadding(32, 120, 32, 32)
                 addView(status)
+                addView(modelStatus)
+                addView(importButton)
                 addView(search)
                 addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             },
@@ -63,6 +79,7 @@ class MainActivity : Activity() {
         super.onResume()
         app.onImported = { runOnUiThread { refresh() } }
         status.text = "Opening the vault…"
+        showModelStatus()
         app.requestImport()
     }
 
@@ -71,17 +88,45 @@ class MainActivity : Activity() {
         // Vault content must not stay on screen or in memory after leaving the app.
         shown = emptyList()
         adapter.clear()
+        app.releaseModels()
         super.onPause()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (requestCode != REQUEST_IMPORT_MODEL || resultCode != RESULT_OK || uri == null) return
+        modelStatus.text = "Checking the model file…"
+        app.background({
+            contentResolver.openInputStream(uri)?.let { app.models.import(it) }
+        }) { result ->
+            runOnUiThread {
+                val model = result.getOrNull()
+                modelStatus.text = if (model != null) "Imported: ${model.description}" else "That file is not a known model"
+                if (model != null) {
+                    importButton.visibility = android.view.View.GONE
+                    // Adds vectors to the captures stored before the model was imported.
+                    app.requestImport()
+                }
+            }
+        }
+    }
+
+    private fun showModelStatus() {
+        val available = app.embedder.isAvailable
+        modelStatus.text = if (available) "Semantic search: on" else "Semantic search: off (no embedding model)"
+        importButton.visibility = if (available) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun refresh() {
         val query = search.text.toString().trim()
-        app.readVault({ db ->
+        app.search(query, { db, vector ->
             val store = CaptureStore(db)
             val captures = if (query.isEmpty()) {
                 store.recent(LIMIT)
             } else {
-                HybridSearch(db).search(query, null, LIMIT).mapNotNull { store.summaryOf(it.captureId) }.distinctBy { it.id }
+                HybridSearch(db).search(query, vector, LIMIT).mapNotNull { store.summaryOf(it.captureId) }.distinctBy { it.id }
             }
             store.count() to captures
         }) { result ->
@@ -116,6 +161,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val LIMIT = 50
+        const val REQUEST_IMPORT_MODEL = 1
         const val PREVIEW = 140
         val FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM HH:mm")
     }

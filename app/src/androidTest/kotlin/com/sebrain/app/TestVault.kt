@@ -24,9 +24,11 @@ class TestVault(context: Context, name: String) {
     private val dedupKey = DedupKey("test_dedup_$name")
     private val wrapKey = WrapKey("test_wrap_$name")
     val session = VaultSession(context, databaseFile, WrappedDekStore(File(dir, "dek.wrapped"), wrapKey))
-    val importer = InboxImporter(inbox, session) { keyId, peer ->
-        (if (keyId == strict.keyId) strict else balanced).agree(peer)
-    }
+    val importer = InboxImporter(
+        inbox,
+        session,
+        agree = { keyId, peer -> (if (keyId == strict.keyId) strict else balanced).agree(peer) },
+    )
 
     /** A new instance each time, like a process restart. */
     fun ingestor(key: InboxKey = balanced) =

@@ -22,6 +22,11 @@ android {
         }
     }
 
+    // The Tensor NPU dispatch library is loaded from nativeLibraryDir, so the .so files must be extracted.
+    packaging {
+        jniLibs.useLegacyPackaging = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -31,6 +36,7 @@ android {
 dependencies {
     implementation(project(":core:crypto"))
     implementation(project(":core:vault"))
+    implementation(project(":core:ml"))
     implementation(project(":ingest"))
     implementation(project(":cognition"))
 

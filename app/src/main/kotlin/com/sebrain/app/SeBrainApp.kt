@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import com.sebrain.cognition.InboxImporter
 import com.sebrain.core.crypto.WrappedDekStore
+import com.sebrain.core.ml.ModelFiles
+import com.sebrain.core.ml.TextEmbedder
 import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.VaultSession
 import com.sebrain.ingest.ShareActivity
@@ -11,7 +13,7 @@ import java.io.File
 import java.util.concurrent.Executors
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
-/** Wires ingestion to the vault: a stored segment triggers an import of the inbox. */
+/** Wires ingestion, the vault and the embedding model. All vault and model work runs on one thread. */
 class SeBrainApp : Application() {
     /** What the last import did. It contains counts only, never content. */
     data class Status(val pending: Int, val captures: Long?, val problem: String?)
@@ -23,7 +25,14 @@ class SeBrainApp : Application() {
         VaultSession(this, File(dir, "vault.db"), WrappedDekStore(File(dir, "dek.wrapped")))
     }
 
-    private val importer by lazy { InboxImporter(ShareActivity.inboxDir(this), session) }
+    val models by lazy { ModelFiles(File(filesDir, "models")) }
+    val embedder by lazy { TextEmbedder(this, models) }
+
+    private val importer by lazy {
+        InboxImporter(ShareActivity.inboxDir(this), session) { texts ->
+            if (embedder.isAvailable) embedder.embedDocuments(texts) else null
+        }
+    }
 
     /** Called on a background thread after each import, for example to refresh a screen. */
     @Volatile
@@ -57,9 +66,29 @@ class SeBrainApp : Application() {
         }
     }
 
-    /** Runs [block] with the vault on the background thread and delivers the outcome to [onResult]. */
-    fun <T> readVault(block: (SQLiteDatabase) -> T, onResult: (Result<T>) -> Unit) {
-        executor.execute { onResult(runCatching { session.withDatabase(block) }) }
+    /**
+     * Runs a search on the background thread. [block] receives the database and the query
+     * vector, which is null if no embedding model is installed or it failed to load.
+     */
+    fun <T> search(query: String, block: (SQLiteDatabase, FloatArray?) -> T, onResult: (Result<T>) -> Unit) {
+        executor.execute {
+            val vector = if (query.isNotEmpty() && embedder.isAvailable) {
+                runCatching { embedder.embedQuery(query) }.getOrNull()
+            } else {
+                null
+            }
+            onResult(runCatching { session.withDatabase { block(it, vector) } })
+        }
+    }
+
+    /** Runs model or file work on the background thread. */
+    fun <T> background(block: () -> T, onResult: (Result<T>) -> Unit) {
+        executor.execute { onResult(runCatching(block)) }
+    }
+
+    /** Frees the embedding model's memory once queued work is done. */
+    fun releaseModels() {
+        executor.execute { embedder.close() }
     }
 
     private companion object {

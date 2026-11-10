@@ -22,6 +22,11 @@ class InboxImporter(
     private val inboxDir: File,
     private val session: VaultSession,
     private val agree: (Byte, PublicKey) -> ByteArray = InboxKey::agree,
+    /**
+     * Embeds chunk texts, or returns null if no embedding model is available. Captures are then
+     * stored with full text only, and their vectors are added on a later run.
+     */
+    private val embed: (List<String>) -> List<FloatArray>? = { null },
 ) {
     data class Result(
         val imported: Int,
@@ -89,7 +94,10 @@ class InboxImporter(
         db.beginTransaction()
         try {
             val id = CaptureStore(db).insertReturningId(record)
-            if (id != null) ChunkStore(db).index(id, Chunker.chunk(record.text), null)
+            if (id != null) {
+                val chunks = Chunker.chunk(record.text)
+                ChunkStore(db).index(id, chunks, embedOrNull(chunks.map { it.text }))
+            }
             db.setTransactionSuccessful()
             return id != null
         } finally {
@@ -97,14 +105,22 @@ class InboxImporter(
         }
     }
 
-    /** Indexes captures stored before the search index existed. */
+    /** Indexes captures stored before the search index existed, and adds missing vectors. */
     private fun indexPending() {
         session.withDatabase { db ->
+            val store = ChunkStore(db)
             for ((id, text) in CaptureStore(db).withoutIndex(INDEX_BATCH)) {
-                ChunkStore(db).index(id, Chunker.chunk(text), null)
+                store.index(id, Chunker.chunk(text), null)
             }
+            val missing = store.chunksWithoutVector(INDEX_BATCH)
+            val vectors = if (missing.isEmpty()) null else embedOrNull(missing.map { it.text })
+            if (vectors != null) missing.forEachIndexed { i, chunk -> store.addVector(chunk, vectors[i]) }
         }
     }
+
+    /** A failing model must not block the import: the text is still stored and searchable. */
+    private fun embedOrNull(texts: List<String>): List<FloatArray>? =
+        if (texts.isEmpty()) emptyList() else runCatching { embed(texts) }.getOrNull()?.takeIf { it.size == texts.size }
 
     private fun pending(): List<File> =
         inboxDir.listFiles { f -> f.name.endsWith(".seg") }.orEmpty().sortedWith(compareBy({ it.lastModified() }, { it.name }))
