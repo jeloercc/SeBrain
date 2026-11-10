@@ -633,3 +633,30 @@ A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler def
 
 - The output was invalid JSON because it hit the 512-token limit. The spike Worker still uses the old schema (title first, flexible whitespace), which loops on some inputs; the minimal schema decided in `docs/design-cognition-worker.md` is not applied to it. This does not affect what (e) checks.
 - It is a single segment, so the timings are one sample. The engine load was much slower than in earlier background runs (5–16 s); the cause was not measured.
+
+## Phase 1 MVP: phone test session, 2026-11-09
+
+`scripts/run-phone-tests.sh` on the Pixel 10, one session: unlocked tests, one lock by the script, one unlock by the user. Every step passed.
+
+| Step | Result | Detail |
+| --- | --- | --- |
+| `:core:crypto` instrumented tests | PASS | 4 tests. Both `K_inbox` keys and `K_dedup` are StrongBox; segments decrypt with the Keystore keys |
+| `:core:vault` instrumented tests | PASS | 28 tests, 5 skipped by design (emulator page size check and phase tests) |
+| `:app` pipeline tests | PASS | 9 tests, 3 skipped by design (phase tests). Share text to vault with real keys; nothing on disk in plaintext |
+| Share intent, first share | PASS | `ACTION_SEND` sent from adb to `ShareActivity`: stored, then `imported=1`, `remaining=0` |
+| Share intent, same text again | PASS | Reported as a duplicate; the vault still has 1 capture |
+| Vault: reopen after a process kill | PASS | Same wrapped DEK |
+| Vault: closes on lock and refuses while locked | PASS | Key zeroed; Keystore itself refuses to unwrap |
+| Ingestion and deduplication while locked | PASS | `K_inbox` public key and `K_dedup` work with the keyguard locked |
+| Balanced `K_inbox` decrypts while locked | PASS | |
+| Strict `K_inbox` refuses while locked | PASS | `DeviceLocked` |
+| Import while locked | PASS (refused) | Stopped by `DeviceLocked`; the 2 segments stayed in the inbox |
+| Import after unlock | PASS | The 2 captures made while locked were imported |
+| Spike Worker with the minimal schema | INFO | 5 of 5 valid JSON, 0 empty titles, 5.9–9.5 s per segment in the foreground |
+
+**Notes:**
+
+- The share intent came from the adb shell, not from another app's share sheet. The share sheet itself was not exercised.
+- The share test left one capture ("Phone test capture …") in the real app vault on the phone.
+- The spike result is 5 segments, one run. With the old schema, segment 0 looped to the token limit in the earlier locked run.
+- The gap between screen-off and the keyguard locking was not exercised: this Pixel locks at once when the script turns the screen off.
