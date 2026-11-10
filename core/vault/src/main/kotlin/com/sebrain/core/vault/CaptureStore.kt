@@ -13,13 +13,18 @@ data class CaptureRecord(
     val text: String,
 )
 
+data class CaptureSummary(val id: Long, val capturedAt: String, val source: String, val text: String)
+
 /** Reads and writes captures. Use it inside [VaultSession.withDatabase]. */
 class CaptureStore(private val db: SQLiteDatabase) {
     /**
      * Inserts the capture. Returns false, without changing anything, if the segment was already
      * imported or the same content already exists.
      */
-    fun insert(record: CaptureRecord): Boolean =
+    fun insert(record: CaptureRecord): Boolean = insertReturningId(record) != null
+
+    /** Like [insert], returning the new row id, or null if nothing was inserted. */
+    fun insertReturningId(record: CaptureRecord): Long? =
         db.compileStatement(
             "INSERT OR IGNORE INTO capture" +
                 "(segment_id, content_sha256, captured_at, time_zone, source, subject, text) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -31,8 +36,28 @@ class CaptureStore(private val db: SQLiteDatabase) {
             statement.bindString(5, record.source)
             if (record.subject == null) statement.bindNull(6) else statement.bindString(6, record.subject)
             statement.bindString(7, record.text)
-            statement.executeInsert() != -1L
+            statement.executeInsert().takeIf { it != -1L }
         }
+
+    /** Captures that have no search index yet, oldest first. */
+    fun withoutIndex(limit: Int): List<Pair<Long, String>> = db.rawQuery(
+        "SELECT id, text FROM capture WHERE index_status = 'pending' ORDER BY id LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) c.getLong(0) to c.getString(1) else null }.toList() }
+
+    /** The newest captures, for display. */
+    fun recent(limit: Int): List<CaptureSummary> = db.rawQuery(
+        "SELECT id, captured_at, source, text FROM capture ORDER BY captured_at DESC, id DESC LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c ->
+        generateSequence {
+            if (c.moveToNext()) CaptureSummary(c.getLong(0), c.getString(1), c.getString(2), c.getString(3)) else null
+        }.toList()
+    }
+
+    fun summaryOf(captureId: Long): CaptureSummary? = db.rawQuery(
+        "SELECT id, captured_at, source, text FROM capture WHERE id = ?", captureId as Any,
+    ).use { c -> if (c.moveToFirst()) CaptureSummary(c.getLong(0), c.getString(1), c.getString(2), c.getString(3)) else null }
 
     fun count(): Long = db.rawQuery("SELECT count(*) FROM capture", emptyArray<String>()).use { c ->
         c.moveToFirst()

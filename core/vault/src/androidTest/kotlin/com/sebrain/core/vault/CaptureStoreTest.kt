@@ -44,10 +44,10 @@ class CaptureStoreTest {
         val version = { session.withDatabase { db ->
             db.rawQuery("PRAGMA user_version", emptyArray<String>()).use { c -> c.moveToFirst(); c.getInt(0) }
         } }
-        assertEquals(1, version())
+        assertEquals(2, version())
         session.withDatabase { CaptureStore(it).insert(record("kept")) }
         session.close()
-        assertEquals(1, version())
+        assertEquals(2, version())
         assertEquals(1L, session.withDatabase { CaptureStore(it).count() })
     }
 

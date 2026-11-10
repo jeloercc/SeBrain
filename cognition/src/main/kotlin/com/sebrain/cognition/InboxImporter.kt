@@ -6,11 +6,13 @@ import com.sebrain.core.crypto.InboxSegmentCodec
 import com.sebrain.core.crypto.VaultKeyException
 import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.vault.CaptureStore
+import com.sebrain.core.vault.ChunkStore
 import com.sebrain.core.vault.VaultSession
 import com.sebrain.core.vault.VaultSessionClosingException
 import java.io.File
 import java.security.GeneralSecurityException
 import java.security.PublicKey
+import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /**
  * Moves inbox segments into the vault, without AI. A segment is deleted only after its capture
@@ -34,7 +36,17 @@ class InboxImporter(
     fun run(): Result {
         inboxDir.listFiles { f -> f.name.endsWith(".tmp") }?.forEach { it.delete() }
         val pending = pending()
-        if (pending.isEmpty()) return Result(0, 0, 0, 0, null)
+        if (pending.isEmpty()) {
+            val problem = try {
+                indexPending()
+                null
+            } catch (e: VaultKeyException) {
+                e
+            } catch (e: VaultSessionClosingException) {
+                e
+            }
+            return Result(0, 0, 0, 0, problem)
+        }
 
         var imported = 0
         var duplicates = 0
@@ -60,15 +72,38 @@ class InboxImporter(
                     quarantined++
                     continue
                 }
-                if (session.withDatabase { CaptureStore(it).insert(record) }) imported++ else duplicates++
+                if (session.withDatabase { db -> store(db, record) }) imported++ else duplicates++
                 file.delete()
             }
+            indexPending()
         } catch (e: VaultKeyException) {
             stoppedBy = e
         } catch (e: VaultSessionClosingException) {
             stoppedBy = e
         }
         return Result(imported, duplicates, quarantined, pending().size, stoppedBy)
+    }
+
+    /** Inserts the capture and its full-text index in one transaction. Vectors are added later. */
+    private fun store(db: SQLiteDatabase, record: CaptureRecord): Boolean {
+        db.beginTransaction()
+        try {
+            val id = CaptureStore(db).insertReturningId(record)
+            if (id != null) ChunkStore(db).index(id, Chunker.chunk(record.text), null)
+            db.setTransactionSuccessful()
+            return id != null
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Indexes captures stored before the search index existed. */
+    private fun indexPending() {
+        session.withDatabase { db ->
+            for ((id, text) in CaptureStore(db).withoutIndex(INDEX_BATCH)) {
+                ChunkStore(db).index(id, Chunker.chunk(text), null)
+            }
+        }
     }
 
     private fun pending(): List<File> =
@@ -96,5 +131,9 @@ class InboxImporter(
     private fun quarantine(file: File) {
         val dir = File(inboxDir, "quarantine").apply { mkdirs() }
         if (!file.renameTo(File(dir, file.name))) file.delete()
+    }
+
+    private companion object {
+        const val INDEX_BATCH = 200
     }
 }

@@ -70,7 +70,7 @@ dependencies {
     api(project(":core:crypto"))
 
     // Required by the upstream Java layer (SupportSQLite interfaces).
-    implementation("androidx.sqlite:sqlite:2.7.0")
+    api("androidx.sqlite:sqlite:2.7.0")
 
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

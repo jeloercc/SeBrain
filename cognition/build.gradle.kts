@@ -23,4 +23,6 @@ android {
 dependencies {
     implementation(project(":core:crypto"))
     implementation(project(":core:vault"))
+
+    testImplementation("junit:junit:4.13.2")
 }

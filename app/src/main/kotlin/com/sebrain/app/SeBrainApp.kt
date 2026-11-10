@@ -9,6 +9,7 @@ import com.sebrain.core.vault.VaultSession
 import com.sebrain.ingest.ShareActivity
 import java.io.File
 import java.util.concurrent.Executors
+import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** Wires ingestion to the vault: a stored segment triggers an import of the inbox. */
 class SeBrainApp : Application() {
@@ -23,6 +24,10 @@ class SeBrainApp : Application() {
     }
 
     private val importer by lazy { InboxImporter(ShareActivity.inboxDir(this), session) }
+
+    /** Called on a background thread after each import, for example to refresh a screen. */
+    @Volatile
+    var onImported: ((Status) -> Unit)? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -48,7 +53,13 @@ class SeBrainApp : Application() {
             }
             Log.i(TAG, "status pending=${status.pending} captures=${status.captures} problem=${status.problem}")
             onDone(status)
+            onImported?.invoke(status)
         }
+    }
+
+    /** Runs [block] with the vault on the background thread and delivers the outcome to [onResult]. */
+    fun <T> readVault(block: (SQLiteDatabase) -> T, onResult: (Result<T>) -> Unit) {
+        executor.execute { onResult(runCatching { session.withDatabase(block) }) }
     }
 
     private companion object {
