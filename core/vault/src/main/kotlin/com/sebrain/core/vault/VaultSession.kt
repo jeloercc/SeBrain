@@ -117,7 +117,14 @@ class VaultSession(
         }
         val db = try {
             databaseFile.parentFile?.mkdirs()
-            SQLiteDatabase.openOrCreateDatabase(databaseFile, key, null, null)
+            SQLiteDatabase.openOrCreateDatabase(databaseFile, key, null, null).also { opened ->
+                try {
+                    VaultSchema.migrate(opened)
+                } catch (e: Throwable) {
+                    opened.close()
+                    throw e
+                }
+            }
         } catch (e: SQLiteNotADatabaseException) {
             key.fill(0)
             throw VaultKeyException.KeyMismatch(e)
