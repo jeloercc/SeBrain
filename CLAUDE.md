@@ -1,7 +1,8 @@
 # SeBrain — context for Claude Code
 
 Native Android app (Kotlin + C/JNI) that acts as a 100% local second brain on a Google Pixel 10 (Tensor G5).
-It ingests data from other apps, processes it with on-device AI and stores it encrypted.
+It is a unifying app: an Obsidian-style vault of notes, tags and links, stored encrypted, connected to the user's other apps, with a local uncensored AI that answers questions and acts on the notes.
+**Current plan and product decisions: `docs/roadmap.md` (2026-11-10). It takes precedence over the phase order below and in the research document.**
 Full research document (the reason behind each decision): https://claude.ai/artifact/VzkdPNuHAbtrMDV83R2HSJ
 
 ## Hard rules (non-negotiable)
