@@ -200,7 +200,7 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
 
     private fun newConversation(engine: Engine) = engine.createConversation(
         ConversationConfig(
-            systemInstruction = Contents.of(SYSTEM),
+            systemInstruction = Contents.of(EXTRACTION_SYSTEM),
             maxOutputToken = MAX_OUTPUT_TOKENS,
             thinkingConfig = ThinkingConfig(false),
             enableResponseFormat = true,
@@ -352,21 +352,30 @@ class CognitionBenchWorker(context: Context, params: WorkerParameters) :
         const val MODEL_FILE = "gemma-4-E2B-it_Google_Tensor_G5.litertlm"
         const val MODEL_SHA256 = "62faebcfd101acb841c33249530430397e031eb17d4dd3d2a71193d135705f27"
 
+        /** Title-first prompt, kept as the baseline of SchemaProbe and WhitespaceProbe. */
         const val SYSTEM =
             "Extract structured information from the user's text. Respond only with valid JSON " +
                 "that follows the schema: title (short phrase), people, dates (ISO 8601 if possible), " +
                 "topics and pending tasks. Use empty lists if there is no data. " +
                 "Keep values in the original language of the text."
 
+/** Minimal schema decided in docs/design-cognition-worker.md: title last, compact JSON. */
         private val SCHEMA = """
-            {"type":"object","properties":{
-              "title":{"type":"string"},
+            {"type":"object","x-guidance":{"whitespace_flexible":false},"properties":{
               "people":{"type":"array","items":{"type":"string"}},
               "dates":{"type":"array","items":{"type":"string"}},
               "topics":{"type":"array","items":{"type":"string"}},
-              "tasks":{"type":"array","items":{"type":"string"}}},
-             "required":["title","people","dates","topics","tasks"]}
+              "tasks":{"type":"array","items":{"type":"string"}},
+              "title":{"type":"string"}},
+             "required":["people","dates","topics","tasks","title"]}
         """.trimIndent()
+
+        /** Lists the fields in the schema order. */
+        private const val EXTRACTION_SYSTEM =
+            "Extract structured information from the user's text. Respond only with valid JSON " +
+                "that follows the schema: people, dates (ISO 8601 if possible), topics, pending tasks " +
+                "and title (short phrase). Use empty lists if there is no data. " +
+                "Keep values in the original language of the text."
 
         /** Synthetic notification-like or shared-content texts, in Spanish on purpose. `%d` varies per segment. */
         private val SAMPLES = listOf(
