@@ -5,6 +5,7 @@ import android.util.Log
 import com.sebrain.cognition.InboxImporter
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.crypto.WrappedDekStore
+import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.ml.ModelFiles
 import com.sebrain.core.ml.TextEmbedder
 import com.sebrain.core.vault.CaptureStore
@@ -28,6 +29,9 @@ class SeBrainApp : Application() {
 
     val models by lazy { ModelFiles(File(filesDir, "models")) }
     val embedder by lazy { TextEmbedder(this, models) }
+
+    /** The language model. It is used only from the chat screen's own thread. */
+    val chat by lazy { ChatEngine(this, models) }
 
     val indexer by lazy {
         NoteIndexer { texts -> if (embedder.isAvailable) embedder.embedDocuments(texts) else null }

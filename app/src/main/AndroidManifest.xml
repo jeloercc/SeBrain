@@ -19,6 +19,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".ModelsActivity" android:exported="false" />
+        <activity android:name=".ChatActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <!-- GPU libraries of LiteRT; the NPU ones are merged from the Tensor runtime. -->
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />

@@ -22,7 +22,7 @@ android {
 
 dependencies {
     // Pinned: 0.19.1 fails with the Tensor NPU runtime 2.3.2. Do not upgrade without retesting the NPU.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
+    api("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation("com.google.ai.edge.litert:litert-npu-runtime-google-tensor:2.3.2")
 
     testImplementation("junit:junit:4.13.2")

@@ -85,6 +85,12 @@ class MainActivity : Activity() {
                 addView(newNote)
                 addView(
                     Button(this@MainActivity).apply {
+                        text = "Ask SeBrain"
+                        setOnClickListener { startActivity(Intent(this@MainActivity, ChatActivity::class.java)) }
+                    },
+                )
+                addView(
+                    Button(this@MainActivity).apply {
                         text = "Models"
                         setOnClickListener { startActivity(Intent(this@MainActivity, ModelsActivity::class.java)) }
                     },

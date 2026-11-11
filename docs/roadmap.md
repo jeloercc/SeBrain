@@ -26,13 +26,13 @@ Updated 2026-11-10. "Built" means it compiles and its local tests pass; "verifie
 | 1 | Notes like Obsidian: writing, `#tags`, `[[links]]`, backlinks, tag filter, edit, delete, share out | Built, not verified |
 | 1b | Search by words and by meaning (EmbeddingGemma on the NPU) | Built, not verified inside the app |
 | 1c | Internet access and the Hugging Face model browser | Built, not verified |
-| 2 | **Local AI chat:** questions answered from the notes with citations, using the uncensored model; actions on notes | Next |
-| 3 | Link cleaning: strip tracking parameters from links that enter | Pending |
+| 2 | Local AI chat: questions answered from the notes with citations, using the uncensored model; actions on notes (create, tag, link, search) | Built, not verified |
+| 3 | Link cleaning: strip tracking parameters from links that enter | Next |
 | 4 | Notification capture with a per-app allowlist | Pending |
 | 5 | Obsidian import and export (Markdown) | Pending |
 | 6 | Hardening: encrypted backup, post-quantum layer, privacy checks, threat model review | Pending |
 
-**One verification session** on the Pixel covers steps 1, 1b and 1c together, once step 2 is built.
+**One verification session** on the Pixel covers steps 1, 1b, 1c and 2 together.
 
 Open criteria from the research document, measured in step 6: search over 10,000 notes in under 100 ms, and the right chunk in the top 8 for at least 80% of 50 real questions.
 

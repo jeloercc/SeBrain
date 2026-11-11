@@ -99,7 +99,21 @@ class ModelFiles(private val dir: File) {
             "2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb",
             "EmbeddingGemma 2 Text 270M for CPU",
         )
-        val ALL = listOf(EMBEDDING_NPU, EMBEDDING_CPU)
+
+        // Community builds without refusal training, chosen by the user. Hashes checked on 2026-11-10.
+        val LLM_E4B_ABLITERATED = KnownModel(
+            "gemma-4-E4B-it-abliterated.litertlm",
+            "f5a6625e0368e853743c91b39fa6ac6a8add1fc4825b18f98f518966610f2a88",
+            "Gemma 4 E4B abliterated",
+            "olekk/gemma-4-E4B-it-abliterated-litert-lm",
+        )
+        val LLM_E2B_UNCENSORED = KnownModel(
+            "gemma-4-E2B-it-Uncensored-MAX.litertlm",
+            "34738f7eb50d04ee123d23dcea0df0b49e074b555134101251685f9416f39bb9",
+            "Gemma 4 E2B Uncensored MAX",
+            "PeppX/gemma-4-e2b-uncensored-litertlm",
+        )
+        val ALL = listOf(EMBEDDING_NPU, EMBEDDING_CPU, LLM_E4B_ABLITERATED, LLM_E2B_UNCENSORED)
 
         fun sha256(input: InputStream): String {
             val digest = MessageDigest.getInstance("SHA-256")
