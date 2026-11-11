@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway, which only uses the Tailscale tunnel. -->
+    <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway (HTTPS only). -->
 
     <application
         android:name=".SeBrainApp"

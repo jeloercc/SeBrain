@@ -14,7 +14,7 @@ data class HubFile(val repo: String, val path: String, val sizeBytes: Long, val 
     val fileName: String get() = path.substringAfterLast('/')
 }
 
-/** Searches and downloads LiteRT-LM models from Hugging Face, through the Tailscale tunnel only. */
+/** Searches and downloads LiteRT-LM models from Hugging Face. */
 class HuggingFaceClient(private val gateway: TailnetGateway) {
     fun search(words: String): List<HubModel> {
         val query = URLEncoder.encode("$words litertlm".trim(), "UTF-8")

@@ -10,11 +10,10 @@ SeBrain is a unifying personal app on the Pixel 10: an Obsidian-style second bra
 
 - **Local AI:** an uncensored model running on the device is a core feature. Current choice: Gemma 4 E4B abliterated (`olekk/gemma-4-E4B-it-abliterated-litert-lm`), GPU or CPU, because third-party models cannot use the Tensor NPU. It is a community build, pinned by SHA-256.
 - **AI actions:** the AI acts on notes only: create, tag, link, search and summarize. It does not launch other apps and does not run code.
-- **Network:** SeBrain may use the internet, but only through the user's Tailscale tunnel. `TailnetGateway` is the single exit: it binds connections to the Tailscale VPN network, allows HTTPS only and has no fallback to Wi-Fi or mobile data. Tailnet devices are always reachable; public sites need a Tailscale exit node. Note content never leaves in plaintext; that still holds.
-- **Models from Hugging Face:** the app searches and downloads LiteRT-LM models through the tunnel, checks each file against the SHA-256 Hugging Face publishes, and the user confirms each model before it is trusted.
+- **Network:** SeBrain has internet access. `TailnetGateway` is the single exit: HTTPS only, over the device's normal connection, which goes through Tailscale when the user has it on. A connection can be made to require Tailscale, for example to reach the user's own machines. Note content never leaves in plaintext; that still holds.
+- **Models from Hugging Face:** the app searches and downloads LiteRT-LM models, checks each file against the SHA-256 Hugging Face publishes, and the user confirms each model before it is trusted.
 - **Trackers:** SeBrain has no telemetry and no third-party network code, and it removes tracking parameters from links that enter it. It does not filter the traffic of other apps.
 - **Integration:** share into and out of SeBrain, capture notifications from chosen apps, and import or export Markdown compatible with Obsidian. Exported files are outside the vault and unencrypted; that is the user's explicit choice per export.
-- **Production:** the gateway is the one place to change if a release must support users without Tailscale.
 - **Cryptography:** widely used modern algorithms now (AES-256-GCM, ECDH P-256 in StrongBox, HKDF-SHA256, HMAC-SHA256). Post-quantum protection is added when data leaves the device or is stored for the long term; see below.
 
 ## Order of work

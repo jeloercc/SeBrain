@@ -19,7 +19,7 @@ import kotlin.concurrent.thread
 
 /**
  * Finds LiteRT-LM models on Hugging Face and installs the ones the user confirms.
- * Everything here goes through the Tailscale tunnel; with Tailscale off, nothing connects.
+ * It uses the device's connection, through Tailscale when Tailscale is on.
  */
 class ModelsActivity : Activity() {
     private lateinit var status: TextView
@@ -68,7 +68,11 @@ class ModelsActivity : Activity() {
 
     private fun showInstalled() {
         val installed = app.models.installed()
-        status.text = if (gateway.isAvailable) "Tailscale: connected" else "Tailscale: off — searching and downloading are disabled"
+        status.text = when {
+            !gateway.isAvailable -> "No internet connection"
+            gateway.isTailscaleUp -> "Internet: on, with Tailscale active"
+            else -> "Internet: on"
+        }
         show(installed.map { "${it.description}\n${it.fileName}" }) { position ->
             val model = installed[position]
             AlertDialog.Builder(this)

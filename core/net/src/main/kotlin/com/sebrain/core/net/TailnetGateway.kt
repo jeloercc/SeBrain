@@ -12,34 +12,41 @@ import javax.net.ssl.HttpsURLConnection
 class TailnetUnavailableException(message: String) : IOException(message)
 
 /**
- * The only place in the app that opens network connections.
+ * The only place in the app that opens network connections. Only HTTPS is allowed.
  *
- * Every connection is bound to the Tailscale VPN network. If Tailscale is off, nothing connects:
- * there is no fallback to Wi-Fi or mobile data. Hosts on the tailnet are always reachable; the
- * public internet is reachable only while a Tailscale exit node is in use, because only then
- * does the tunnel route it. Only HTTPS is allowed.
+ * By default it uses the device's normal connection; when Tailscale is on, Android routes that
+ * through the tunnel as Tailscale is configured. With [requireTailscale], every connection is
+ * bound to the Tailscale VPN network instead and nothing connects while Tailscale is off.
  */
-class TailnetGateway(context: Context) {
+class TailnetGateway(context: Context, private val requireTailscale: Boolean = false) {
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
     /** Whether the Tailscale tunnel is up. */
-    val isAvailable: Boolean get() = tailnetNetwork() != null
+    val isTailscaleUp: Boolean get() = tailnetNetwork() != null
+
+    /** Whether a connection can be attempted. */
+    val isAvailable: Boolean get() = if (requireTailscale) isTailscaleUp else connectivity.activeNetwork != null
 
     /** Opens an HTTPS connection through the tunnel. The caller connects, reads and disconnects. */
     fun open(url: URL): HttpsURLConnection {
         if (url.protocol != "https") throw IOException("Only HTTPS is allowed")
-        val network = tailnetNetwork()
-            ?: throw TailnetUnavailableException("Tailscale is not connected; SeBrain does not use any other network")
-        return (network.openConnection(url) as HttpsURLConnection).apply {
+        val connection = if (requireTailscale) {
+            val network = tailnetNetwork()
+                ?: throw TailnetUnavailableException("Tailscale is not connected and this connection requires it")
+            network.openConnection(url)
+        } else {
+            url.openConnection()
+        }
+        return (connection as HttpsURLConnection).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
-            // Redirects are followed by hand, so every hop is checked and bound to the tunnel.
+            // Redirects are followed by hand, so every hop is checked to be HTTPS.
             instanceFollowRedirects = false
             setRequestProperty("User-Agent", "SeBrain")
         }
     }
 
-    /** Opens [url] following redirects, each one through the tunnel and over HTTPS. */
+    /** Opens [url] following redirects, each one over HTTPS. */
     fun openFollowingRedirects(url: URL, headers: Map<String, String> = emptyMap()): HttpsURLConnection {
         var current = url
         repeat(MAX_REDIRECTS) {
