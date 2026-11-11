@@ -7,12 +7,12 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ## Hard rules (non-negotiable)
 
-- The app does NOT declare `android.permission.INTERNET`. If a dependency merges it, remove it with `tools:node="remove"`.
+- Network access is allowed **only through the user's Tailscale tunnel** (decided 2026-11-10). `TailnetGateway` in `:core:net` is the only code that opens connections: it binds every connection to the Tailscale VPN network, allows HTTPS only, and connects to nothing if Tailscale is off. No other module may open sockets, and no dependency may use the network on its own.
 - Zero analytics, telemetry or crash reporting SDKs (Firebase, Crashlytics, etc.).
   - **Exception pending confirmation:** ML Kit GenAI (`com.google.mlkit:genai-prompt`, optional behind a setting) pulls in `transport-backend-cct`, `transport-runtime` and `firebase-*` libraries. Result in `docs/benchmarks.md`.
 - No plaintext data leaves the process. Nothing is written to disk unencrypted, except model binaries.
 - `allowBackup="false"`, `dataExtractionRules` that exclude everything, `FLAG_SECURE` on screens with vault content.
-- Models are imported locally (SAF / `adb push`) and verified with a SHA-256 pinned in code. The app downloads nothing.
+- Models are verified by SHA-256 before use: pinned in code, or published by Hugging Face for a model the user chose and confirmed. Models may be downloaded through the Tailscale tunnel or imported locally (SAF / `adb push`).
 - Every native library aligned to 16 KB pages (`-Wl,-z,max-page-size=16384`, NDK r27+).
 - Language: code, comments, identifiers, repo docs, commit messages, system prompts and JSON keys are in English. Extracted values keep the source language of the captured text (do not translate user data). Conversation with the user stays in Spanish.
 

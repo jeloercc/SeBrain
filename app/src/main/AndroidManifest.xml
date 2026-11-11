@@ -2,14 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- CLAUDE.md hard rule: if a dependency merges INTERNET, it is removed. -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway, which only uses the Tailscale tunnel. -->
 
     <application
         android:name=".SeBrainApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:label="SeBrain">
+        android:label="SeBrain"
+        android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:exported="true">

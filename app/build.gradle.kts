@@ -37,6 +37,7 @@ dependencies {
     implementation(project(":core:crypto"))
     implementation(project(":core:vault"))
     implementation(project(":core:ml"))
+    implementation(project(":core:net"))
     implementation(project(":ingest"))
     implementation(project(":cognition"))
 
