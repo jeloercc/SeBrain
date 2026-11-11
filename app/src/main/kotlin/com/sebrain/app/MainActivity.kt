@@ -83,6 +83,12 @@ class MainActivity : Activity() {
                 addView(modelStatus)
                 addView(importButton)
                 addView(newNote)
+                addView(
+                    Button(this@MainActivity).apply {
+                        text = "Models"
+                        setOnClickListener { startActivity(Intent(this@MainActivity, ModelsActivity::class.java)) }
+                    },
+                )
                 addView(search)
                 addView(HorizontalScrollView(this@MainActivity).apply { addView(tagBar) })
                 addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))

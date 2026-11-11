@@ -26,4 +26,6 @@ dependencies {
     implementation("com.google.ai.edge.litert:litert-npu-runtime-google-tensor:2.3.2")
 
     testImplementation("junit:junit:4.13.2")
+    // android.jar only has stubs of org.json.
+    testImplementation("org.json:json:20240303")
 }

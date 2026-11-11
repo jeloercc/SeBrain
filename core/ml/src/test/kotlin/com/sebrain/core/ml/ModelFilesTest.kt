@@ -5,6 +5,7 @@ import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ModelFilesTest {
@@ -23,6 +24,30 @@ class ModelFilesTest {
         dir.mkdirs()
         models.file(ModelFiles.EMBEDDING_CPU).writeText("tampered")
         assertFalse(models.verify(ModelFiles.EMBEDDING_CPU))
+    }
+
+    @Test
+    fun aModelTheUserTrustsIsAcceptedAndCanBeRemoved() {
+        dir.mkdirs()
+        val file = File(dir, "custom.litertlm").apply { writeText("weights") }
+        val model = KnownModel("custom.litertlm", ModelFiles.sha256(file.inputStream()), "Custom", "someone/custom")
+        models.trust(model)
+        assertEquals(listOf(model), ModelFiles(dir).trusted())
+        assertEquals(listOf(model), models.installed())
+        assertEquals(model, models.import("weights".byteInputStream()))
+
+        models.remove(model)
+        assertEquals(emptyList<KnownModel>(), models.trusted())
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun trustRequiresTheFileToMatchItsHash() {
+        dir.mkdirs()
+        File(dir, "custom.litertlm").writeText("weights")
+        assertThrows(IllegalArgumentException::class.java) {
+            models.trust(KnownModel("custom.litertlm", "0".repeat(64), "Custom"))
+        }
     }
 
     @Test

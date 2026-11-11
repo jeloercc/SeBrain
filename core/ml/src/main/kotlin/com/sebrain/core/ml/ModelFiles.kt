@@ -3,9 +3,11 @@ package com.sebrain.core.ml
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** A model file the app accepts, identified by its pinned SHA-256. The app downloads nothing. */
-data class KnownModel(val fileName: String, val sha256: String, val description: String)
+data class KnownModel(val fileName: String, val sha256: String, val description: String, val repo: String? = null)
 
 /** Model files imported by the user. A file is only accepted if its hash is pinned here. */
 class ModelFiles(private val dir: File) {
@@ -36,13 +38,54 @@ class ModelFiles(private val dir: File) {
             }
         }
         val hash = digest.digest().joinToString("") { "%02x".format(it) }
-        val model = ALL.firstOrNull { it.sha256 == hash }
+        val model = all().firstOrNull { it.sha256 == hash }
         if (model == null || !temporary.renameTo(file(model))) {
             temporary.delete()
             return null
         }
         return model
     }
+
+    /** Models the user chose and confirmed, in addition to the ones pinned in code. */
+    fun trusted(): List<KnownModel> {
+        if (!registry.exists()) return emptyList()
+        return runCatching {
+            val array = JSONArray(registry.readText())
+            (0 until array.length()).map { array.getJSONObject(it) }.map { m ->
+                KnownModel(m.getString("file"), m.getString("sha256"), m.getString("description"), m.optString("repo").ifEmpty { null })
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Records that the user trusts [model]. Its file must already be installed and match its hash. */
+    fun trust(model: KnownModel) {
+        require(verify(model)) { "The file does not match the model's SHA-256" }
+        val models = (trusted().filterNot { it.fileName == model.fileName } + model)
+        val array = JSONArray()
+        for (m in models) {
+            array.put(JSONObject().put("file", m.fileName).put("sha256", m.sha256).put("description", m.description).put("repo", m.repo ?: ""))
+        }
+        dir.mkdirs()
+        val temporary = File(dir, "trusted.json.tmp")
+        temporary.writeText(array.toString())
+        check(temporary.renameTo(registry)) { "Could not store the model registry" }
+    }
+
+    /** Removes a model file and the user's trust in it. */
+    fun remove(model: KnownModel) {
+        file(model).delete()
+        val array = JSONArray()
+        for (m in trusted().filterNot { it.fileName == model.fileName }) {
+            array.put(JSONObject().put("file", m.fileName).put("sha256", m.sha256).put("description", m.description).put("repo", m.repo ?: ""))
+        }
+        registry.writeText(array.toString())
+    }
+
+    fun all(): List<KnownModel> = ALL + trusted().filterNot { t -> ALL.any { it.fileName == t.fileName } }
+
+    fun installed(): List<KnownModel> = all().filter { isInstalled(it) }
+
+    private val registry: File get() = File(dir, "trusted.json")
 
     companion object {
         // litert-community/embeddinggemma-2-text-270m-litert-lm at revision 9be6e8b9 (Apache-2.0).
