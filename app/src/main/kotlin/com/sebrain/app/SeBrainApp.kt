@@ -3,6 +3,7 @@ package com.sebrain.app
 import android.app.Application
 import android.util.Log
 import com.sebrain.cognition.InboxImporter
+import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.crypto.WrappedDekStore
 import com.sebrain.core.ml.ModelFiles
 import com.sebrain.core.ml.TextEmbedder
@@ -28,11 +29,11 @@ class SeBrainApp : Application() {
     val models by lazy { ModelFiles(File(filesDir, "models")) }
     val embedder by lazy { TextEmbedder(this, models) }
 
-    private val importer by lazy {
-        InboxImporter(ShareActivity.inboxDir(this), session) { texts ->
-            if (embedder.isAvailable) embedder.embedDocuments(texts) else null
-        }
+    val indexer by lazy {
+        NoteIndexer { texts -> if (embedder.isAvailable) embedder.embedDocuments(texts) else null }
     }
+
+    private val importer by lazy { InboxImporter(ShareActivity.inboxDir(this), session, indexer = indexer) }
 
     /** Called on a background thread after each import, for example to refresh a screen. */
     @Volatile
@@ -79,6 +80,11 @@ class SeBrainApp : Application() {
             }
             onResult(runCatching { session.withDatabase { block(it, vector) } })
         }
+    }
+
+    /** Runs [block] with the vault on the background thread, for reads and writes. */
+    fun <T> vault(block: (SQLiteDatabase) -> T, onResult: (Result<T>) -> Unit = {}) {
+        executor.execute { onResult(runCatching { session.withDatabase(block) }) }
     }
 
     /** Runs model or file work on the background thread. */

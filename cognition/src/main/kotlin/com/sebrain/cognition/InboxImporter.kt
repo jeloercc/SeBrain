@@ -22,11 +22,7 @@ class InboxImporter(
     private val inboxDir: File,
     private val session: VaultSession,
     private val agree: (Byte, PublicKey) -> ByteArray = InboxKey::agree,
-    /**
-     * Embeds chunk texts, or returns null if no embedding model is available. Captures are then
-     * stored with full text only, and their vectors are added on a later run.
-     */
-    private val embed: (List<String>) -> List<FloatArray>? = { null },
+    private val indexer: NoteIndexer = NoteIndexer(),
 ) {
     data class Result(
         val imported: Int,
@@ -94,10 +90,7 @@ class InboxImporter(
         db.beginTransaction()
         try {
             val id = CaptureStore(db).insertReturningId(record)
-            if (id != null) {
-                val chunks = Chunker.chunk(record.text)
-                ChunkStore(db).index(id, chunks, embedOrNull(chunks.map { it.text }))
-            }
+            if (id != null) indexer.index(db, id, record.text, record.subject)
             db.setTransactionSuccessful()
             return id != null
         } finally {
@@ -105,22 +98,18 @@ class InboxImporter(
         }
     }
 
-    /** Indexes captures stored before the search index existed, and adds missing vectors. */
+    /** Brings older notes up to date: search index, missing vectors, and title, tags and links. */
     private fun indexPending() {
         session.withDatabase { db ->
-            val store = ChunkStore(db)
-            for ((id, text) in CaptureStore(db).withoutIndex(INDEX_BATCH)) {
-                store.index(id, Chunker.chunk(text), null)
-            }
-            val missing = store.chunksWithoutVector(INDEX_BATCH)
-            val vectors = if (missing.isEmpty()) null else embedOrNull(missing.map { it.text })
-            if (vectors != null) missing.forEachIndexed { i, chunk -> store.addVector(chunk, vectors[i]) }
+            val captures = CaptureStore(db)
+            val chunks = ChunkStore(db)
+            for ((id, text) in captures.withoutIndex(INDEX_BATCH)) indexer.index(db, id, text)
+            for ((id, text) in captures.withoutTitle(INDEX_BATCH)) indexer.markup(db, id, text)
+            val missing = chunks.chunksWithoutVector(INDEX_BATCH)
+            val vectors = if (missing.isEmpty()) null else indexer.embedOrNull(missing.map { it.text })
+            if (vectors != null) missing.forEachIndexed { i, chunk -> chunks.addVector(chunk, vectors[i]) }
         }
     }
-
-    /** A failing model must not block the import: the text is still stored and searchable. */
-    private fun embedOrNull(texts: List<String>): List<FloatArray>? =
-        if (texts.isEmpty()) emptyList() else runCatching { embed(texts) }.getOrNull()?.takeIf { it.size == texts.size }
 
     private fun pending(): List<File> =
         inboxDir.listFiles { f -> f.name.endsWith(".seg") }.orEmpty().sortedWith(compareBy({ it.lastModified() }, { it.name }))

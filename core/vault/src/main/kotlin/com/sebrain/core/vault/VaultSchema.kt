@@ -4,7 +4,7 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** Creates and upgrades the vault schema. The version is stored in `PRAGMA user_version`. */
 internal object VaultSchema {
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** Dimensions of the stored embeddings (EmbeddingGemma, Matryoshka at 256). */
     const val EMBEDDING_DIMENSIONS = 256
@@ -20,6 +20,7 @@ internal object VaultSchema {
         try {
             if (current < 1) createV1(db)
             if (current < 2) upgradeToV2(db)
+            if (current < 3) upgradeToV3(db)
             db.execSQL("PRAGMA user_version = $VERSION")
             db.setTransactionSuccessful()
         } finally {
@@ -68,5 +69,22 @@ internal object VaultSchema {
                 "text, content='chunk', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
         )
         db.execSQL("CREATE VIRTUAL TABLE chunk_vec USING vec0(embedding float[$EMBEDDING_DIMENSIONS])")
+    }
+
+    /** Notes like Obsidian: every capture is a note with a title, tags and links to other notes. */
+    private fun upgradeToV3(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE capture ADD COLUMN title TEXT")
+        db.execSQL("ALTER TABLE capture ADD COLUMN updated_at TEXT")
+        db.execSQL("CREATE TABLE tag(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE)")
+        db.execSQL(
+            "CREATE TABLE capture_tag(capture_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY(capture_id, tag_id))",
+        )
+        db.execSQL("CREATE INDEX capture_tag_by_tag ON capture_tag(tag_id)")
+        // A link points to a title, like [[Title]] in Obsidian, so it can exist before its target does.
+        db.execSQL(
+            "CREATE TABLE link(source_id INTEGER NOT NULL, target_title TEXT NOT NULL COLLATE NOCASE, " +
+                "PRIMARY KEY(source_id, target_title))",
+        )
+        db.execSQL("CREATE INDEX link_by_target ON link(target_title)")
     }
 }
