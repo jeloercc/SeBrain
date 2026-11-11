@@ -16,16 +16,27 @@ SeBrain is a unifying personal app on the Pixel 10: an Obsidian-style second bra
 - **Integration:** share into and out of SeBrain, capture notifications from chosen apps, and import or export Markdown compatible with Obsidian. Exported files are outside the vault and unencrypted; that is the user's explicit choice per export.
 - **Cryptography:** widely used modern algorithms now (AES-256-GCM, ECDH P-256 in StrongBox, HKDF-SHA256, HMAC-SHA256). Post-quantum protection is added when data leaves the device or is stored for the long term; see below.
 
-## Order of work
+## Plan and status
 
-1. **Notes like Obsidian.** Notes written in the app, `#tags`, `[[links]]`, backlinks, tag filter. Captures are notes too.
-2. **Local AI chat.** Questions answered from the notes with citations, using the uncensored model, and actions on notes.
-3. **Share out and link cleaning.** Send a note to another app; strip tracking parameters on the way in.
-4. **Notification capture.** Listener with a per-app allowlist.
-5. **Obsidian import and export.**
-6. **Hardening.** Encrypted backup, post-quantum layer, privacy checks, threat model review.
+Updated 2026-11-10. "Built" means it compiles and its local tests pass; "verified" means it also ran on the Pixel.
 
-Open criteria inherited from the research document, to be measured when their feature is stable: search over 10,000 notes in under 100 ms, and the right chunk in the top 8 for at least 80% of 50 real questions.
+| Step | Contents | Status |
+| --- | --- | --- |
+| 0 | Foundations: encrypted vault (SQLCipher, sqlite-vec, FTS5), Keystore keys, Share into the app | Verified on the Pixel |
+| 1 | Notes like Obsidian: writing, `#tags`, `[[links]]`, backlinks, tag filter, edit, delete, share out | Built, not verified |
+| 1b | Search by words and by meaning (EmbeddingGemma on the NPU) | Built, not verified inside the app |
+| 1c | Internet access and the Hugging Face model browser | Built, not verified |
+| 2 | **Local AI chat:** questions answered from the notes with citations, using the uncensored model; actions on notes | Next |
+| 3 | Link cleaning: strip tracking parameters from links that enter | Pending |
+| 4 | Notification capture with a per-app allowlist | Pending |
+| 5 | Obsidian import and export (Markdown) | Pending |
+| 6 | Hardening: encrypted backup, post-quantum layer, privacy checks, threat model review | Pending |
+
+**One verification session** on the Pixel covers steps 1, 1b and 1c together, once step 2 is built.
+
+Open criteria from the research document, measured in step 6: search over 10,000 notes in under 100 ms, and the right chunk in the top 8 for at least 80% of 50 real questions.
+
+Designed but not built: processing with the phone locked (encrypted outbox, `docs/design-vault-session.md`), and a background `CognitionWorker` with automatic extraction (`docs/design-cognition-worker.md`). Both are lower priority under the current product direction.
 
 ## Post-quantum cryptography
 
