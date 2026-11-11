@@ -25,7 +25,6 @@ import java.util.concurrent.CountDownLatch
  */
 class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseable {
     private val appContext = context.applicationContext
-    private val verified = HashSet<String>()
     private var engine: Engine? = null
     private var conversation: Conversation? = null
 
@@ -42,17 +41,12 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
             .getOrElse { !model.fileName.contains("embedding", ignoreCase = true) }
     }
 
-    /** Loads [model], releasing any other. The first load of a file checks its SHA-256. */
+    /** Loads [model], releasing any other. A file is hashed the first time it is loaded. */
     fun load(model: KnownModel) {
         if (loaded == model && engine != null) return
         close()
         val path = models.file(model).path
-        if (verified.add(model.fileName)) {
-            check(models.verify(model)) {
-                verified.remove(model.fileName)
-                "SHA-256 mismatch for ${model.fileName}"
-            }
-        }
+        check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
         supportsTools = runCatching {
             ModelInfo.from(path).use { (it as? ModelInfo.Llm)?.supportsFunctionCalling() == true }
         }.getOrDefault(false)

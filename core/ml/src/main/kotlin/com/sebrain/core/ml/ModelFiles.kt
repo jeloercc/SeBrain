@@ -19,6 +19,21 @@ class ModelFiles(private val dir: File) {
     fun verify(model: KnownModel): Boolean = file(model).let { it.exists() && sha256(it.inputStream()) == model.sha256 }
 
     /**
+     * Like [verify], but hashes a file only once: the result is remembered for the file's exact
+     * size and modification time, so loading a multi-gigabyte model does not hash it every time.
+     */
+    fun verifyOnce(model: KnownModel): Boolean {
+        val file = file(model)
+        if (!file.exists()) return false
+        val marker = File(dir, "${model.fileName}.verified")
+        val stamp = "${model.sha256}:${file.length()}:${file.lastModified()}"
+        if (marker.exists() && marker.readText() == stamp) return true
+        if (!verify(model)) return false
+        marker.writeText(stamp)
+        return true
+    }
+
+    /**
      * Copies [input] into the models directory if its hash matches a known model.
      * Returns the model, or null if the content is not a known model; nothing is kept then.
      */
@@ -74,6 +89,7 @@ class ModelFiles(private val dir: File) {
     /** Removes a model file and the user's trust in it. */
     fun remove(model: KnownModel) {
         file(model).delete()
+        File(dir, "${model.fileName}.verified").delete()
         val array = JSONArray()
         for (m in trusted().filterNot { it.fileName == model.fileName }) {
             array.put(JSONObject().put("file", m.fileName).put("sha256", m.sha256).put("description", m.description).put("repo", m.repo ?: ""))

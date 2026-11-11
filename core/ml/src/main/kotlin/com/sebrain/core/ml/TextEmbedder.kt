@@ -57,7 +57,7 @@ class TextEmbedder(context: Context, private val models: ModelFiles) : AutoClose
         for ((name, model, backendFactory) in candidates) {
             if (!models.isInstalled(model)) continue
             try {
-                check(models.verify(model)) { "SHA-256 mismatch for ${model.fileName}" }
+                check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
                 val loaded = EmbeddingEngine(
                     EmbeddingEngineConfig(
                         modelPath = models.file(model).path,

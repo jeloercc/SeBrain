@@ -47,3 +47,12 @@ Decided 2026-11-10: SeBrain uses native post-quantum cryptography instead of the
 - **Where:** encrypted backups and any data sent over the network. Tailscale's WireGuard is not post-quantum, so data that must stay secret for years gets this layer on top.
 
 This changes the key hierarchy, so it is proposed and approved before it is implemented.
+
+## Interface (2026-11-11)
+
+The app is one Compose activity (`MainActivity`, Material 3, dark and light) with three tabs:
+Notes (search, tag chips, note cards, full-screen viewer and editor), Ask (chat with the local
+model, streaming replies, model picker) and Models (Hugging Face search, download, import,
+remove). Screen state lives in `ui/AppState`; vault content is cleared from it in `onStop`.
+A model file is hashed once and the result is remembered for its exact size and modification
+time (`ModelFiles.verifyOnce`), so a multi-gigabyte model is not hashed on every load.
