@@ -170,7 +170,14 @@ thread. It is stored in `conversation.summary` and replaces those messages in th
 new message from the user cancels a summary in progress; it is tried again after the next
 reply. Measured on the Pixel: 19 s to write, and the facts were recalled from it.
 
-Not built: suggested facts about the user. The plan is in `docs/plan-memory.md`.
+Suggested facts: the "Suggest memories" button under the last reply asks the model for at most
+3 lasting facts the user stated in the conversation. They appear as "Remember this?" rows;
+"Save" turns one into a `#memory` note, dismissing one hides it for that conversation. The
+assistant never writes to standing memory on its own. Measured on the Pixel: 9 s, three
+correct facts, the known one not repeated.
+
+Left in `docs/plan-memory.md`: a memory size warning, conversations in the backup (needs
+approval of backup format v2), and the 20-conversation evaluation.
 
 ## Post-quantum cryptography
 

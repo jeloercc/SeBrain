@@ -756,3 +756,11 @@ reply tokens, 94 words). The summary kept the server name, the three services, t
 path and the pending decision. Asked afterwards with only the summary as memory, the model
 answered all three facts correctly in 10.3 s. It also cited "[1]" although no note was given;
 the prompt now says when no note matches. That fix was not rerun on the phone.
+
+### Suggested facts about the user (2026-11-12)
+
+`AssistantPhoneTest#facts`, same phone and model, one run. From the five user messages of the
+home-server script, with "Prefiere Docker a Podman" given as already remembered, the model
+proposed three facts in 9.2 s (226 prompt tokens, 59 reply tokens): the server name and system,
+the three services, and the data disk and its path. All three were stated by the user, and the
+known fact was not repeated.

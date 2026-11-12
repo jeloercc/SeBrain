@@ -171,4 +171,25 @@ class AssistantTest {
         val request = Assistant.summaryRequest("They listed kernel types.", listOf(Assistant.Line(true, "now the\nexokernel"), Assistant.Line(false, "# Exokernel\n\nIt exposes hardware.")))
         assertTrue(request.contains("Summary so far:\nThey listed kernel types.\n\nWhat came next:\nUser: now the exokernel\nAssistant: # Exokernel It exposes hardware.\n"))
     }
+
+    @Test
+    fun suggestedFactsAreParsedAndKnownOnesAreLeftOut() {
+        val reply = "Here are the facts:\n- Su servidor se llama atlas.\n* Prefiere Docker a Podman\n1. ok\n- su servidor se llama Atlas\n- NONE\n- Usa Debian 12 en atlas\n- A fourth fact that is long enough"
+        assertEquals(
+            listOf("Su servidor se llama atlas.", "Usa Debian 12 en atlas", "A fourth fact that is long enough"),
+            Assistant.parseFacts(reply, exclude = listOf("prefiere docker a podman")),
+        )
+        assertTrue(Assistant.parseFacts("NONE", emptyList()).isEmpty())
+    }
+
+    @Test
+    fun theFactsRequestUsesOnlyWhatTheUserWrote() {
+        val request = Assistant.factsRequest(
+            listOf(Assistant.Line(true, "mi servidor se llama atlas"), Assistant.Line(false, "Perfecto, atlas.")),
+            known = listOf("Prefiere respuestas cortas"),
+        )
+        assertTrue(request.contains("Already remembered, do not repeat:\n- Prefiere respuestas cortas\n"))
+        assertTrue(request.endsWith("Messages:\n- mi servidor se llama atlas\n"))
+        assertFalse(request.contains("Perfecto"))
+    }
 }

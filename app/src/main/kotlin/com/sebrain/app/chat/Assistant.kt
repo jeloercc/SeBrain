@@ -47,6 +47,12 @@ object Assistant {
     const val MEMORY_CHARS = 300
     const val PAST_CHARS = 260
 
+    /** Suggested facts about the user, proposed only when the user asks. */
+    const val FACTS_MAX = 3
+    const val FACTS_MESSAGES = 12
+    private const val FACT_MIN_CHARS = 8
+    private const val FACT_MAX_CHARS = 200
+
     /** The model-written summary of the oldest part of a long conversation. */
     const val SUMMARY_TRIGGER = 8
     const val SUMMARY_WORDS = 120
@@ -85,6 +91,7 @@ object Assistant {
         "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     )
+    private val FACT_LINE = Regex("^(?:[-*•]|\\d+[.)])\\s+(.+)$")
     private val WHITESPACE = Regex("\\s+")
     private val WIKILINK = Regex("\\[\\[([^\\[\\]|]+)(?:\\|[^\\[\\]]*)?]]")
 
@@ -183,6 +190,44 @@ object Assistant {
         if ('?' in message) return null
         return REMEMBER.find(message.trim())?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 3 }
     }
+
+    const val FACTS_SYSTEM = "You extract lasting facts about a user from what the user wrote. You never invent facts."
+
+    /**
+     * Asks which lasting facts about the user are worth keeping, from the user's own messages.
+     * [known] are the facts already in standing memory, which must not be proposed again.
+     */
+    fun factsRequest(lines: List<Line>, known: List<String>): String = buildString {
+        append("Below are messages a user wrote to their assistant. List at most $FACTS_MAX lasting facts about the user ")
+        append("that would help in future conversations: preferences, the names of their things, ongoing projects, ")
+        append("constraints. Use only what the user stated. Leave out questions, one-off requests and anything the ")
+        append("assistant said. Write one fact per line, starting with \"- \", as a short sentence that stands on its ")
+        append("own, in the user's language. If there is nothing worth keeping, write only NONE.\n")
+        if (known.isNotEmpty()) {
+            append("\nAlready remembered, do not repeat:\n")
+            known.forEach { append("- ").append(shorten(it.replace(WHITESPACE, " "), MEMORY_CHARS)).append('\n') }
+        }
+        append("\nMessages:\n")
+        var budget = SUMMARY_INPUT_CHARS
+        for (line in lines.filter { it.fromUser }.takeLast(FACTS_MESSAGES)) {
+            val text = shorten(line.text.trim().replace(WHITESPACE, " "), SUMMARY_LINE_CHARS)
+            if (text.length > budget) break
+            budget -= text.length
+            append("- ").append(text).append('\n')
+        }
+    }
+
+    /** The facts in a reply to [factsRequest], without the ones in [exclude] (known or rejected). */
+    fun parseFacts(reply: String, exclude: Collection<String>): List<String> {
+        val seen = exclude.map { normalize(it) }.toMutableSet()
+        return reply.lines()
+            .mapNotNull { FACT_LINE.find(it.trim())?.groupValues?.get(1)?.trim()?.trim('*')?.trim() }
+            .filter { it.length in FACT_MIN_CHARS..FACT_MAX_CHARS && !it.equals("NONE", ignoreCase = true) }
+            .filter { seen.add(normalize(it)) }
+            .take(FACTS_MAX)
+    }
+
+    private fun normalize(text: String) = text.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
     /** The user message the model sees: its memory, the vault notes as a small graph, then the request. */
     fun prompt(

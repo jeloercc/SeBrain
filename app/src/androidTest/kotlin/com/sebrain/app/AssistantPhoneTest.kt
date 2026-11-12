@@ -95,10 +95,18 @@ class AssistantPhoneTest {
         }
     }
 
-    /** Writes a summary of a scripted conversation, then asks for something only the summary holds. */
+    /** Asks for facts worth remembering from the scripted conversation, with one already known. */
     @Test
-    fun summary() {
-        val script = listOf(
+    fun facts() {
+        val request = Assistant.factsRequest(script, known = listOf("Prefiere Docker a Podman"))
+        val start = System.nanoTime()
+        val reply = chat.reply(Assistant.FACTS_SYSTEM, emptyList(), request) {}
+        log("facts seconds=%.1f stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))
+        log("facts raw=${reply.replace('\n', ' ')}")
+        log("facts parsed=${Assistant.parseFacts(reply, emptyList())}")
+    }
+
+    private val script = listOf(
             true to "Estoy montando un servidor casero que se llama atlas, con Debian 12",
             false to "Perfecto. Para atlas con Debian 12 te recomiendo empezar por actualizar el sistema y crear un usuario sin privilegios.",
             true to "quiero usar docker y no podman",
@@ -109,7 +117,11 @@ class AssistantPhoneTest {
             false to "Entonces los volúmenes de Jellyfin y Nextcloud deben apuntar a /srv/datos.",
             true to "falta decidir como hacer las copias de seguridad",
             false to "Pendiente: copias de seguridad. Opciones: restic a un disco externo o a otro equipo por Tailscale.",
-        ).map { Assistant.Line(it.first, it.second) }
+    ).map { Assistant.Line(it.first, it.second) }
+
+    /** Writes a summary of a scripted conversation, then asks for something only the summary holds. */
+    @Test
+    fun summary() {
         var start = System.nanoTime()
         val summary = chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), Assistant.summaryRequest(null, script)) {}.trim()
         log("summary seconds=%.1f words=${summary.split(Regex("\\s+")).size} stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))

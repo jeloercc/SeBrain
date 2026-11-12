@@ -1,9 +1,9 @@
 # Plan: finish the assistant's memory
 
-**Status (2026-11-12):** steps 1, 2 and 3 are done and on the Pixel (schema v5 applied to the
-real vault; `ConversationStoreTest` 5 of 5 on the phone; summary measured, see
-`docs/benchmarks.md`). Step 0 item 1 is done; items 2 to 5 need the user. Step 4 is next and
-waits for one decision: how often fact suggestions run.
+**Status (2026-11-12):** steps 1 to 4 are done and on the Pixel; results in
+`docs/benchmarks.md`. Step 4 was built as "only on demand" (the "Suggest memories" button).
+Step 0 item 1 is done; items 2 to 5 need the user, as do the in-app checks of steps 2 to 4.
+Step 5 is next; its backup part waits for approval of backup format v2.
 
 ## Step 0 — Check what is already built (no code)
 

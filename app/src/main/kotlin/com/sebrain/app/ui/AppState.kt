@@ -578,6 +578,7 @@ class AppState(private val app: SeBrainApp) {
         }) { result ->
             onMain {
                 result.onSuccess { (stored, saved) ->
+                    if (id != conversationId) clearSuggestions()
                     storedConversation = id
                     conversationId = id
                     summary = saved?.first
@@ -632,6 +633,7 @@ class AppState(private val app: SeBrainApp) {
         conversationId = null
         summary = null
         summarized = 0
+        clearSuggestions()
         messages.clear()
     }
 
@@ -688,6 +690,67 @@ class AppState(private val app: SeBrainApp) {
                 refreshNotes()
             }
         }
+    }
+
+    /** Facts the model proposes to remember. Nothing is saved until the user accepts one. */
+    var memorySuggestions by mutableStateOf(emptyList<String>())
+        private set
+    var memoryNotice by mutableStateOf<String?>(null)
+        private set
+    private val rejectedFacts = mutableSetOf<String>()
+
+    /** Asks the model which facts about the user in this conversation are worth keeping. */
+    fun suggestMemories() {
+        if (generating || currentModel == null) return
+        val lines = lines()
+        if (lines.none { it.fromUser }) return
+        if (summarizing) {
+            summarizing = false
+            app.chat.cancel()
+        }
+        markGenerating(true)
+        stopRequested = false
+        memoryNotice = null
+        app.vault({ db -> NoteStore(db).withTag(VaultContext.MEMORY_TAG, 50).map { it.text } }) { stored ->
+            val known = stored.getOrDefault(emptyList())
+            chatWorker.execute {
+                val reply = runCatching {
+                    if (stopRequested) "" else app.chat.reply(Assistant.FACTS_SYSTEM, emptyList(), Assistant.factsRequest(lines, known)) {}
+                }.getOrDefault("")
+                // A fact already inside a stored memory note is not proposed again.
+                val facts = Assistant.parseFacts(reply, rejectedFacts)
+                    .filterNot { fact -> known.any { it.contains(fact, ignoreCase = true) } }
+                onMain {
+                    markGenerating(false)
+                    if (stopRequested) return@onMain
+                    memorySuggestions = facts
+                    memoryNotice = if (facts.isEmpty()) "Nothing new to remember in this chat." else null
+                }
+            }
+        }
+    }
+
+    /** Saves a suggested fact as a #memory note, like "remember that…". */
+    fun acceptSuggestion(fact: String) {
+        memorySuggestions = memorySuggestions - fact
+        chatWorker.execute {
+            runCatching {
+                tools.createNote("Memory: " + Assistant.shorten(fact, 40), fact, listOf(VaultContext.MEMORY_TAG))
+            }
+            onMain { refreshNotes() }
+        }
+    }
+
+    /** Drops a suggestion; it is not proposed again in this conversation. */
+    fun dismissSuggestion(fact: String) {
+        rejectedFacts += fact
+        memorySuggestions = memorySuggestions - fact
+    }
+
+    private fun clearSuggestions() {
+        memorySuggestions = emptyList()
+        memoryNotice = null
+        rejectedFacts.clear()
     }
 
     /** Stores a message in the open conversation, creating the conversation on its first message. */
