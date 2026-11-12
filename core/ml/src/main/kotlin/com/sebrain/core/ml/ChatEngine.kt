@@ -9,6 +9,8 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
@@ -22,7 +24,13 @@ import java.util.concurrent.TimeUnit
  * `Backend` does not fall back by itself, so the chain is explicit. Not thread-safe: use it
  * from one thread.
  */
-class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseable {
+@OptIn(ExperimentalApi::class)
+class ChatEngine(
+    context: Context,
+    private val models: ModelFiles,
+    /** Collects speed figures for [lastStats]. Off in the app; on for measurements. */
+    private val benchmark: Boolean = false,
+) : AutoCloseable {
     private val appContext = context.applicationContext
     private var engine: Engine? = null
 
@@ -43,6 +51,7 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
         close()
         val path = models.file(model).path
         check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
+        if (benchmark) ExperimentalFlags.enableBenchmark = true
         var lastError: Throwable? = null
         for ((name, factory) in listOf<Pair<String, () -> Backend>>("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })) {
             try {
@@ -62,6 +71,27 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
 
     @Volatile private var active: Conversation? = null
     @Volatile private var cancelled = false
+
+    /**
+     * What the last reply cost. [contextTokens] is everything in the conversation when it ended:
+     * system instruction, history, prompt and reply. A field the engine did not report is zero.
+     */
+    class Stats(
+        val contextTokens: Int,
+        val promptTokens: Int,
+        val replyTokens: Int,
+        val promptTokensPerSecond: Double,
+        val replyTokensPerSecond: Double,
+        val firstTokenSeconds: Double,
+    ) {
+        override fun toString() =
+            "context=$contextTokens prompt=$promptTokens reply=$replyTokens " +
+                "prefill=%.0f tok/s decode=%.1f tok/s first=%.2f s".format(promptTokensPerSecond, replyTokensPerSecond, firstTokenSeconds)
+    }
+
+    /** Statistics of the last finished reply, or null if they could not be read. */
+    @Volatile var lastStats: Stats? = null
+        private set
 
     /** One earlier message of the conversation, given back to the model as history. */
     class Turn(val fromUser: Boolean, val text: String)
@@ -116,11 +146,26 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
             }
         } finally {
             active = null
+            lastStats = if (cancelled) null else readStats(conversation)
+            lastStats?.let { Log.i(TAG, "reply $it") }
             runCatching { conversation.close() }
         }
         if (!cancelled) failure?.let { throw it }
         return synchronized(reply) { reply.toString() }
     }
+
+    private fun readStats(conversation: Conversation): Stats? = runCatching {
+        val tokens = runCatching { conversation.getTokenCount() }.getOrDefault(0)
+        val info = if (benchmark) runCatching { conversation.getBenchmarkInfo() }.getOrNull() else null
+        Stats(
+            contextTokens = tokens,
+            promptTokens = info?.lastPrefillTokenCount ?: 0,
+            replyTokens = info?.lastDecodeTokenCount ?: 0,
+            promptTokensPerSecond = info?.lastPrefillTokensPerSecond ?: 0.0,
+            replyTokensPerSecond = info?.lastDecodeTokensPerSecond ?: 0.0,
+            firstTokenSeconds = info?.timeToFirstTokenInSecond ?: 0.0,
+        )
+    }.getOrNull()
 
     /** Stops the reply being written, if any. Safe to call from another thread. */
     fun cancel() {

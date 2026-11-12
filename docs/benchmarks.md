@@ -723,3 +723,27 @@ A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler def
 - Tokens per second are not reported: LiteRT-LM 0.18.1 does not expose token counts for embeddings.
 - Foreground only. Embedding from a background Worker, limited to CPUs 0–2, was not measured.
 - LiteRT-LM 0.18.1 loads this model: verified first on the emulator CPU (256 dimensions, norm 1.0, related text 0.88 versus unrelated 0.70 cosine).
+
+## Assistant on the phone: context limit and speed (2026-11-12)
+
+Measured with `AssistantPhoneTest` (run with `am instrument`, never `connectedAndroidTest`),
+Pixel 10, Gemma 4 E4B abliterated (`gemma-4-E4B-it-abliterated.litertlm`), GPU, app on screen,
+one run each.
+
+| Measure | Result |
+| --- | --- |
+| Context limit, input and reply together | 4096 tokens. A 6917-token input fails with `Input token ids are too long` |
+| Characters per token | 4.5 to 4.6 for English filler text |
+| Reading the prompt (prefill) | 118 to 327 tokens/s; slower for short prompts |
+| Writing the reply (decode) | 5.8 to 8.2 tokens/s |
+| Time to first token | 2.3 to 3.1 s for prompts under 900 tokens; 5.9 s at 1751; 12.1 s at 3473 |
+| Model load in a fresh process | 36 s and 42 s (23 s was seen once in the app) |
+
+Kernel conversation (list the kernel types, then three "make a note of the next one", then
+"which one is missing?"), with the vault simulated in memory: three different notes
+(Monolítico, Microkernel, Híbrido), all in Spanish, and the last answer named the Exokernel
+from the first list. The whole conversation used 961 tokens of context at its last turn.
+
+Not measured: speed while the app is behind `GenerationService`, and Spanish characters per
+token. Running the test while the app is open on the phone loads the model twice in one
+process and runs out of memory.

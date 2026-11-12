@@ -39,13 +39,28 @@ object Assistant {
     const val HISTORY_BUDGET = 3000
 
     /** Older messages are kept only as one outline line each. */
-    const val OUTLINE_CHARS = 100
-    const val OUTLINE_LINES = 20
+    const val OUTLINE_CHARS = 200
+    const val OUTLINE_LINES = 12
     const val MEMORY_CHARS = 300
 
     /** Context budget, so the prompt stays well inside the model's context window. */
     const val NOTE_CHARS = 900
     const val CONNECTED_CHARS = 280
+
+    /**
+     * System instruction + history + prompt, in characters. Measured on the Pixel 10 with Gemma 4
+     * E4B (2026-11-12): the limit is 4096 tokens for input and reply together, and text runs at
+     * 3.5 to 4.6 characters per token. 9000 characters is at most about 2600 tokens, which
+     * leaves about 1500 for the reply.
+     */
+    const val INPUT_CHARS = 9000
+    private val LEVELS = listOf(
+        Triple(NOTE_CHARS, true, true),
+        Triple(NOTE_CHARS, false, true),
+        Triple(NOTE_CHARS / 2, false, true),
+        Triple(NOTE_CHARS / 2, false, false),
+        Triple(NOTE_CHARS / 4, false, false),
+    )
 
     private val NOTE_WORD = Regex("\\b(notas?|notes?)\\b", RegexOption.IGNORE_CASE)
     private val SAVE_WORD = Regex(
@@ -59,6 +74,7 @@ object Assistant {
         "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     )
+    private val WHITESPACE = Regex("\\s+")
     private val WIKILINK = Regex("\\[\\[([^\\[\\]|]+)(?:\\|[^\\[\\]]*)?]]")
 
     /** True when the user asks for the answer to be stored as a note. */
@@ -98,8 +114,9 @@ object Assistant {
         val older = earlier.dropLast(recent.size)
         val outline = older.takeLast(OUTLINE_LINES).map { line ->
             val gist = if (line.fromUser) line.text else heading(line.text) ?: line.text
+            // The whole message on one line: a list answered earlier must survive in the outline.
             (if (line.fromUser) "- User asked: " else "- You answered: ") +
-                shorten(gist.trim().lineSequence().firstOrNull().orEmpty(), OUTLINE_CHARS)
+                shorten(gist.trim().replace(WHITESPACE, " "), OUTLINE_CHARS)
         }
         val covered = earlier.filter { !it.fromUser }.mapNotNull { heading(it.text) }.distinctBy { it.lowercase() }
         return Memory(recent.toList(), outline, covered)
@@ -125,13 +142,36 @@ object Assistant {
         tags: List<String>,
         memory: Memory = Memory(emptyList(), emptyList(), emptyList()),
         facts: List<String> = emptyList(),
+    ): String {
+        // The model takes 4096 tokens, reply included (measured). The context is cut in order of
+        // least value until the input fits: connected notes first, then note length, then the outline.
+        val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
+        var built = ""
+        for ((noteChars, withConnected, withOutline) in LEVELS) {
+            built = compose(message, notes, asNote, tags, memory, facts, noteChars, withConnected, withOutline)
+            if (fixed + built.length <= INPUT_CHARS) break
+        }
+        return built
+    }
+
+    private fun compose(
+        message: String,
+        allNotes: List<ContextNote>,
+        asNote: Boolean,
+        tags: List<String>,
+        memory: Memory,
+        facts: List<String>,
+        noteChars: Int,
+        withConnected: Boolean,
+        withOutline: Boolean,
     ): String = buildString {
+        val notes = if (withConnected) allNotes else allNotes.filter { it.via == null }
         if (facts.isNotEmpty()) {
             append("What the user asked you to always remember:\n")
             facts.forEach { append("- ").append(shorten(it.replace('\n', ' '), MEMORY_CHARS)).append('\n') }
             append('\n')
         }
-        if (memory.outline.isNotEmpty()) {
+        if (withOutline && memory.outline.isNotEmpty()) {
             append("Earlier in this conversation:\n").append(memory.outline.joinToString("\n")).append("\n\n")
         }
         if (memory.covered.isNotEmpty()) {
@@ -143,7 +183,7 @@ object Assistant {
         val connected = notes.filter { it.via != null }
         if (found.isNotEmpty()) {
             append("Notes from the vault that match the message:\n\n")
-            found.forEach { append(render(it, NOTE_CHARS)).append("\n\n") }
+            found.forEach { append(render(it, noteChars)).append("\n\n") }
         }
         if (connected.isNotEmpty()) {
             append("Connected notes, reached through links or shared tags:\n\n")

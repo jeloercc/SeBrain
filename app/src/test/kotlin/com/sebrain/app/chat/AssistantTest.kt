@@ -115,4 +115,26 @@ class AssistantTest {
         val prompt = Assistant.prompt("hola", emptyList(), asNote = false, tags = emptyList(), facts = listOf("Answer briefly."))
         assertTrue(prompt.startsWith("What the user asked you to always remember:\n- Answer briefly.\n\nMessage: hola"))
     }
+
+    @Test
+    fun anOversizedContextIsCutToFitTheModel() {
+        val text = "word ".repeat(400)
+        val matched = (1..4).map { ContextNote(it, it.toLong(), "Note $it", emptyList(), emptyList(), emptyList(), text) }
+        val connected = (5..8).map { ContextNote(it, it.toLong(), "Note $it", emptyList(), emptyList(), emptyList(), text, via = "linked from [1]") }
+        val history = (1..4).map { Assistant.Line(it % 2 == 1, "h".repeat(700)) }
+        val memory = Assistant.Memory(history, (1..12).map { "- User asked: " + "o".repeat(180) }, emptyList())
+        val prompt = Assistant.prompt("question", matched + connected, asNote = false, tags = emptyList(), memory = memory)
+        assertTrue(Assistant.SYSTEM.length + history.sumOf { it.text.length } + prompt.length <= Assistant.INPUT_CHARS)
+        // The matching notes survive, shortened; the connected ones are dropped first.
+        assertTrue(prompt.contains("[4] Note 4"))
+        assertFalse(prompt.contains("Connected notes"))
+        assertTrue(prompt.contains("Message: question"))
+    }
+
+    @Test
+    fun theOutlineKeepsAListAnsweredEarlier() {
+        val earlier = listOf(Assistant.Line(true, "List them"), Assistant.Line(false, "They are:\n* Monolithic\n* Exokernel")) +
+            (1..6).map { Assistant.Line(it % 2 == 1, "m".repeat(1000)) }
+        assertTrue(Assistant.remember(earlier).outline.contains("- You answered: They are: * Monolithic * Exokernel"))
+    }
 }
