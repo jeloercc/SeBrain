@@ -572,13 +572,55 @@ class AppState(private val app: SeBrainApp) {
     /** Shows a saved conversation; the next message continues it. */
     fun openConversation(id: Long) {
         if (generating) return
-        app.vault({ db -> ConversationStore(db).messages(id) }) { result ->
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            store.messages(id) to store.summary(id)
+        }) { result ->
             onMain {
-                result.onSuccess { stored ->
+                result.onSuccess { (stored, saved) ->
                     storedConversation = id
                     conversationId = id
+                    summary = saved?.first
+                    summarized = saved?.second ?: 0
                     messages.clear()
                     messages += stored.map { ChatMessage(it.fromUser, it.text) }
+                }
+            }
+        }
+    }
+
+    /** The model's summary of the first [summarized] messages of the open conversation. */
+    private var summary: String? = null
+    private var summarized = 0
+    @Volatile private var summarizing = false
+
+    /** The stored messages of the open conversation, as the model's memory sees them. */
+    private fun lines(): List<Assistant.Line> =
+        messages.filter { !it.isAction && it.text.isNotBlank() }.map { Assistant.Line(it.fromUser, it.text) }
+
+    /**
+     * Summarizes the oldest part of a long conversation, after a reply and off the main thread.
+     * It is cancelled if the user sends a message meanwhile, and tried again after the next reply.
+     */
+    private fun summarizeIfDue() {
+        val conversation = storedConversation ?: return
+        val all = lines()
+        val covered = Assistant.summaryDue(all, summarized) ?: return
+        val request = Assistant.summaryRequest(summary, all.subList(summarized, covered))
+        summarizing = true
+        chatWorker.execute {
+            if (!summarizing) return@execute
+            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request) {} }.getOrNull()?.trim()
+            val finished = summarizing
+            summarizing = false
+            // A cancelled summary is partial text; it is dropped.
+            if (!finished || text.isNullOrBlank()) return@execute
+            app.vault({ db -> ConversationStore(db).setSummary(conversation, text, covered) }) { stored ->
+                onMain {
+                    if (stored.getOrDefault(false) && storedConversation == conversation) {
+                        summary = text
+                        summarized = covered
+                    }
                 }
             }
         }
@@ -588,6 +630,8 @@ class AppState(private val app: SeBrainApp) {
         if (generating) return
         storedConversation = null
         conversationId = null
+        summary = null
+        summarized = 0
         messages.clear()
     }
 
@@ -604,6 +648,11 @@ class AppState(private val app: SeBrainApp) {
         Assistant.factToRemember(text)?.let { fact ->
             rememberFact(text, fact)
             return
+        }
+        if (summarizing) {
+            // The user comes first: drop the summary being written and answer.
+            summarizing = false
+            app.chat.cancel()
         }
         markGenerating(true)
         stopRequested = false
@@ -666,7 +715,7 @@ class AppState(private val app: SeBrainApp) {
     private fun generate(question: String) {
         // The history is what came before this message, without the action lines.
         val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
-        val memory = Assistant.remember(earlier.map { Assistant.Line(it.fromUser, it.text) })
+        val memory = Assistant.remember(earlier.map { Assistant.Line(it.fromUser, it.text) }, summary, summarized)
         val history = memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }
         val query = Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
         messages += ChatMessage(false, "")
@@ -708,7 +757,7 @@ class AppState(private val app: SeBrainApp) {
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
                     markGenerating(false)
                     if (started) {
-                        if (!visible) conversationId?.let(::openConversation)
+                        if (!visible) conversationId?.let(::openConversation) else if (!stopRequested) summarizeIfDue()
                         refreshNotes()
                     } else {
                         // Finished off screen: the reply is stored, so clear it from memory like onStop does.

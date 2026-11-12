@@ -47,6 +47,13 @@ object Assistant {
     const val MEMORY_CHARS = 300
     const val PAST_CHARS = 260
 
+    /** The model-written summary of the oldest part of a long conversation. */
+    const val SUMMARY_TRIGGER = 8
+    const val SUMMARY_WORDS = 120
+    const val SUMMARY_CHARS = 1000
+    const val SUMMARY_LINE_CHARS = 500
+    const val SUMMARY_INPUT_CHARS = 6000
+
     /** Context budget, so the prompt stays well inside the model's context window. */
     const val NOTE_CHARS = 900
     const val CONNECTED_CHARS = 280
@@ -98,13 +105,23 @@ object Assistant {
     class Line(val fromUser: Boolean, val text: String)
 
     /**
-     * The conversation as the model remembers it, in three layers: [recent] messages word for
-     * word, [outline] with one line for each older message, and [covered], the titles of the
-     * notes and answers already written, so "the next one" does not repeat one of them.
+     * The conversation as the model remembers it, in layers: [recent] messages word for word,
+     * [outline] with one line for each older message, [summary] for the oldest part once the
+     * model has summarized it, and [covered], the titles of the notes and answers already
+     * written, so "the next one" does not repeat one of them.
      */
-    class Memory(val recent: List<Line>, val outline: List<String>, val covered: List<String>)
+    class Memory(
+        val recent: List<Line>,
+        val outline: List<String>,
+        val covered: List<String>,
+        val summary: String? = null,
+    )
 
-    fun remember(earlier: List<Line>): Memory {
+    /**
+     * @param summary what the model wrote about the first [summarized] messages, if anything.
+     *   Those messages are then left out of the outline.
+     */
+    fun remember(earlier: List<Line>, summary: String? = null, summarized: Int = 0): Memory {
         var budget = HISTORY_BUDGET
         val recent = ArrayDeque<Line>()
         for (line in earlier.asReversed()) {
@@ -115,7 +132,8 @@ object Assistant {
         }
         // The model's chat format expects the history to start with the user.
         while (recent.isNotEmpty() && !recent.first().fromUser) recent.removeFirst()
-        val older = earlier.dropLast(recent.size)
+        val hasSummary = !summary.isNullOrBlank()
+        val older = earlier.dropLast(recent.size).drop(if (hasSummary) summarized else 0)
         val outline = older.takeLast(OUTLINE_LINES).map { line ->
             val gist = if (line.fromUser) line.text else heading(line.text) ?: line.text
             // The whole message on one line: a list answered earlier must survive in the outline.
@@ -123,7 +141,35 @@ object Assistant {
                 shorten(gist.trim().replace(WHITESPACE, " "), OUTLINE_CHARS)
         }
         val covered = earlier.filter { !it.fromUser }.mapNotNull { heading(it.text) }.distinctBy { it.lowercase() }
-        return Memory(recent.toList(), outline, covered)
+        return Memory(recent.toList(), outline, covered, summary?.takeIf { hasSummary })
+    }
+
+    /**
+     * How many messages from the start should be covered by the summary now, or null if it is
+     * not time yet. A summary is written when [SUMMARY_TRIGGER] messages have left the recent
+     * window since the last one, so it costs one extra model call every few turns, not each turn.
+     */
+    fun summaryDue(earlier: List<Line>, summarized: Int): Int? {
+        val older = earlier.size - remember(earlier).recent.size
+        return older.takeIf { it - summarized >= SUMMARY_TRIGGER }
+    }
+
+    const val SUMMARY_SYSTEM = "You write short, faithful summaries of conversations. You never add information."
+
+    /** Asks for a new summary from the [previous] one and the [lines] that came after it. */
+    fun summaryRequest(previous: String?, lines: List<Line>): String = buildString {
+        append("Summarize the conversation below between a user and their assistant in at most $SUMMARY_WORDS words, ")
+        append("in the language the user writes in. Keep what the user wanted, the names, lists and facts that were ")
+        append("stated, the titles of notes that were written, and what was left pending. Write plain sentences, ")
+        append("no heading and no preamble.\n\n")
+        if (!previous.isNullOrBlank()) append("Summary so far:\n").append(previous.trim()).append("\n\nWhat came next:\n")
+        var budget = SUMMARY_INPUT_CHARS
+        for (line in lines) {
+            val text = shorten(line.text.trim().replace(WHITESPACE, " "), SUMMARY_LINE_CHARS)
+            if (text.length > budget) break
+            budget -= text.length
+            append(if (line.fromUser) "User: " else "Assistant: ").append(text).append('\n')
+        }
     }
 
     /** The first `# Heading` of a reply: the title of the note or topic it wrote. */
@@ -177,8 +223,9 @@ object Assistant {
             facts.forEach { append("- ").append(shorten(it.replace('\n', ' '), MEMORY_CHARS)).append('\n') }
             append('\n')
         }
+        memory.summary?.let { append("Summary of this conversation so far:\n").append(shorten(it.trim(), SUMMARY_CHARS)).append("\n\n") }
         if (withOutline && memory.outline.isNotEmpty()) {
-            append("Earlier in this conversation:\n").append(memory.outline.joinToString("\n")).append("\n\n")
+            append(if (memory.summary == null) "Earlier in this conversation:\n" else "After that:\n").append(memory.outline.joinToString("\n")).append("\n\n")
         }
         if (memory.covered.isNotEmpty()) {
             append("Already written in this conversation: ").append(memory.covered.joinToString("; ")).append(". ")
@@ -195,6 +242,8 @@ object Assistant {
             append("Connected notes, reached through links or shared tags:\n\n")
             connected.forEach { append(render(it, CONNECTED_CHARS)).append("\n\n") }
         }
+        // Seen on the phone: with no note given, the model still cited "[1]".
+        if (notes.isEmpty()) append("No note from the vault matches this message, so do not cite any note.\n\n")
         if (past.isNotEmpty()) {
             append("From earlier conversations with the user:\n")
             past.forEach {

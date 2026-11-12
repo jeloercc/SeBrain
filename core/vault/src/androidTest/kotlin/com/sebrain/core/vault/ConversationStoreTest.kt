@@ -86,4 +86,17 @@ class ConversationStoreTest {
             assertEquals(1, ConversationStore(db).search("exokernel\" OR NOT (text:*", 5).size)
         }
     }
+
+    @Test
+    fun theSummaryRemembersHowManyMessagesItCovers() {
+        val id = conversation("Kernels", true to "one", false to "two", true to "three")
+        session.withDatabase { db ->
+            val store = ConversationStore(db)
+            assertEquals(null, store.summary(id))
+            assertTrue(store.setSummary(id, "They counted.", covered = 2))
+            assertEquals("They counted." to 2, store.summary(id))
+            assertEquals(false, store.setSummary(id, "Too far.", covered = 4))
+            assertEquals("They counted." to 2, store.summary(id))
+        }
+    }
 }

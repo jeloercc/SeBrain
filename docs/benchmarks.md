@@ -747,3 +747,12 @@ from the first list. The whole conversation used 961 tokens of context at its la
 Not measured: speed while the app is behind `GenerationService`, and Spanish characters per
 token. Running the test while the app is open on the phone loads the model twice in one
 process and runs out of memory.
+
+### Conversation summary (2026-11-12)
+
+`AssistantPhoneTest#summary`, same phone and model, one run. A scripted 10-message
+conversation in Spanish about a home server was summarized in 19.3 s (310 prompt tokens, 130
+reply tokens, 94 words). The summary kept the server name, the three services, the data disk
+path and the pending decision. Asked afterwards with only the summary as memory, the model
+answered all three facts correctly in 10.3 s. It also cited "[1]" although no note was given;
+the prompt now says when no note matches. That fix was not rerun on the phone.

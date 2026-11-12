@@ -162,10 +162,15 @@ message; the assistant gets the best 2 matches from other conversations ("From e
 conversations with the user"), and the Chats panel has a search field. Words under four
 letters do not search. Schema v5 also adds `conversation.summary` and
 `conversation.summarized_until`, not used yet. Built and unit-tested; `ConversationStoreTest`
-has not run on the Pixel yet (the phone was locked), so the app with v5 is not installed.
+passes on the Pixel, and v5 is applied to the real vault.
 
-Not built: a model-written summary of long conversations and suggested facts about the user.
-The plan is in `docs/plan-memory.md`.
+Summary of long conversations: when 8 messages have left the recent window since the last
+summary, the model summarizes the oldest part (120 words) right after a reply, on the chat
+thread. It is stored in `conversation.summary` and replaces those messages in the prompt. A
+new message from the user cancels a summary in progress; it is tried again after the next
+reply. Measured on the Pixel: 19 s to write, and the facts were recalled from it.
+
+Not built: suggested facts about the user. The plan is in `docs/plan-memory.md`.
 
 ## Post-quantum cryptography
 

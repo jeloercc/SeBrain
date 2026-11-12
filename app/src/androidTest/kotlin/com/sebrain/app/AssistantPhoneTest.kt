@@ -95,6 +95,34 @@ class AssistantPhoneTest {
         }
     }
 
+    /** Writes a summary of a scripted conversation, then asks for something only the summary holds. */
+    @Test
+    fun summary() {
+        val script = listOf(
+            true to "Estoy montando un servidor casero que se llama atlas, con Debian 12",
+            false to "Perfecto. Para atlas con Debian 12 te recomiendo empezar por actualizar el sistema y crear un usuario sin privilegios.",
+            true to "quiero usar docker y no podman",
+            false to "De acuerdo, Docker. Instala docker-ce desde el repositorio oficial y añade tu usuario al grupo docker.",
+            true to "los servicios que voy a poner son jellyfin, nextcloud y pihole",
+            false to "Bien: Jellyfin para multimedia, Nextcloud para archivos y Pi-hole para bloquear publicidad por DNS. Cada uno en su contenedor.",
+            true to "el disco de datos es de 4 TB y esta montado en /srv/datos",
+            false to "Entonces los volúmenes de Jellyfin y Nextcloud deben apuntar a /srv/datos.",
+            true to "falta decidir como hacer las copias de seguridad",
+            false to "Pendiente: copias de seguridad. Opciones: restic a un disco externo o a otro equipo por Tailscale.",
+        ).map { Assistant.Line(it.first, it.second) }
+        var start = System.nanoTime()
+        val summary = chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), Assistant.summaryRequest(null, script)) {}.trim()
+        log("summary seconds=%.1f words=${summary.split(Regex("\\s+")).size} stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))
+        log("summary text=${summary.replace('\n', ' ')}")
+
+        // Only the summary is given, as if every scripted message had left the recent window.
+        val memory = Assistant.remember(script, summary, summarized = script.size).let { Assistant.Memory(emptyList(), it.outline, it.covered, it.summary) }
+        val question = "como se llama mi servidor, donde esta el disco de datos y que quedo pendiente?"
+        start = System.nanoTime()
+        val reply = chat.reply(Assistant.SYSTEM, emptyList(), Assistant.prompt(question, emptyList(), false, emptyList(), memory)) {}
+        log("recall seconds=%.1f reply=${reply.replace('\n', ' ').take(400)}".format((System.nanoTime() - start) / 1e9))
+    }
+
     private fun log(line: String) {
         Log.i("SEBRAIN_EVAL", line)
     }

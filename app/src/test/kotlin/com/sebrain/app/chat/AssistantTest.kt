@@ -113,7 +113,8 @@ class AssistantTest {
     @Test
     fun standingFactsOpenThePrompt() {
         val prompt = Assistant.prompt("hola", emptyList(), asNote = false, tags = emptyList(), facts = listOf("Answer briefly."))
-        assertTrue(prompt.startsWith("What the user asked you to always remember:\n- Answer briefly.\n\nMessage: hola"))
+        assertTrue(prompt.startsWith("What the user asked you to always remember:\n- Answer briefly.\n\nNo note from the vault matches"))
+        assertTrue(prompt.contains("do not cite any note.\n\nMessage: hola"))
     }
 
     @Test
@@ -143,5 +144,31 @@ class AssistantTest {
         val past = listOf(PastMessage("Kernels", "2026-11-10T09:00:00Z", fromUser = false, text = "The exokernel\nexposes hardware."))
         val prompt = Assistant.prompt("what did we say about exokernels?", emptyList(), asNote = false, tags = emptyList(), past = past)
         assertTrue(prompt.contains("From earlier conversations with the user:\n- 2026-11-10, \"Kernels\": you answered: The exokernel exposes hardware.\n"))
+    }
+
+    @Test
+    fun aSummaryIsDueOnceEnoughMessagesLeftTheRecentWindow() {
+        val turns = (1..7).flatMap { listOf(Assistant.Line(true, "question $it"), Assistant.Line(false, "answer $it")) }
+        // 14 short messages: 6 are recent, 8 are older.
+        assertEquals(8, Assistant.summaryDue(turns, summarized = 0))
+        assertEquals(null, Assistant.summaryDue(turns, summarized = 2))
+        assertEquals(null, Assistant.summaryDue(turns.take(10), summarized = 0))
+    }
+
+    @Test
+    fun theSummaryReplacesTheMessagesItCovers() {
+        val turns = (1..7).flatMap { listOf(Assistant.Line(true, "question $it"), Assistant.Line(false, "answer $it")) }
+        val memory = Assistant.remember(turns, summary = "They discussed kernels.", summarized = 6)
+        assertEquals(listOf("- User asked: question 4", "- You answered: answer 4"), memory.outline)
+        val prompt = Assistant.prompt("next", emptyList(), asNote = false, tags = emptyList(), memory = memory)
+        assertTrue(prompt.startsWith("Summary of this conversation so far:\nThey discussed kernels.\n\nAfter that:\n- User asked: question 4"))
+        // Without a summary the same messages stay in the outline.
+        assertEquals(8, Assistant.remember(turns, summary = null, summarized = 6).outline.size)
+    }
+
+    @Test
+    fun theSummaryRequestCarriesThePreviousSummaryAndTheNewMessages() {
+        val request = Assistant.summaryRequest("They listed kernel types.", listOf(Assistant.Line(true, "now the\nexokernel"), Assistant.Line(false, "# Exokernel\n\nIt exposes hardware.")))
+        assertTrue(request.contains("Summary so far:\nThey listed kernel types.\n\nWhat came next:\nUser: now the exokernel\nAssistant: # Exokernel It exposes hardware.\n"))
     }
 }

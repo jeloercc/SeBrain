@@ -79,6 +79,30 @@ class ConversationStore(private val db: SQLiteDatabase) {
         "SELECT count(*) FROM message WHERE conversation_id = ?", conversationId as Any,
     ).use { c -> c.moveToFirst(); c.getInt(0) }
 
+    /**
+     * Stores the summary of the first [covered] messages of the conversation. Returns false if
+     * the conversation has fewer messages than that.
+     */
+    fun setSummary(conversationId: Long, summary: String, covered: Int): Boolean {
+        if (covered <= 0) return false
+        val until = db.rawQuery(
+            "SELECT id FROM message WHERE conversation_id = ? ORDER BY id LIMIT 1 OFFSET ${covered - 1}",
+            conversationId as Any,
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else return false }
+        db.execSQL(
+            "UPDATE conversation SET summary = ?, summarized_until = ? WHERE id = ?",
+            arrayOf<Any>(summary, until, conversationId),
+        )
+        return true
+    }
+
+    /** The stored summary and how many messages it covers, or null if there is none. */
+    fun summary(conversationId: Long): Pair<String, Int>? = db.rawQuery(
+        "SELECT c.summary, (SELECT count(*) FROM message m WHERE m.conversation_id = c.id AND m.id <= c.summarized_until) " +
+            "FROM conversation c WHERE c.id = ? AND c.summary IS NOT NULL",
+        conversationId as Any,
+    ).use { c -> if (c.moveToFirst()) c.getString(0) to c.getInt(1) else null }
+
     /** Most recently used first. */
     fun list(limit: Int = 100): List<ConversationSummary> = db.rawQuery(
         "SELECT c.id, c.title, c.updated_at, (SELECT count(*) FROM message m WHERE m.conversation_id = c.id) " +

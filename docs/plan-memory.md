@@ -1,9 +1,9 @@
 # Plan: finish the assistant's memory
 
-**Status (2026-11-12):** step 1 done; step 0 item 1 done (items 2 to 5 need the user); step 2
-built, with schema v5 approved, but its vault test and the app install wait for an unlocked
-phone. Step 3 is next. Step 1 results are in `docs/benchmarks.md`: 4096-token limit, about
-7.5 tokens/s written; the prompt is cut to fit (`Assistant.INPUT_CHARS`).
+**Status (2026-11-12):** steps 1, 2 and 3 are done and on the Pixel (schema v5 applied to the
+real vault; `ConversationStoreTest` 5 of 5 on the phone; summary measured, see
+`docs/benchmarks.md`). Step 0 item 1 is done; items 2 to 5 need the user. Step 4 is next and
+waits for one decision: how often fact suggestions run.
 
 ## Step 0 — Check what is already built (no code)
 
