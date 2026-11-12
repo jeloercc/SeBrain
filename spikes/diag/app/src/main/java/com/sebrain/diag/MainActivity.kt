@@ -45,6 +45,20 @@ class MainActivity : Activity() {
             "bg" -> scheduleBackgroundTest()
             "cognition" -> scheduleCognitionBench()
             "cognition-bg" -> scheduleBackgroundCognition()
+            "llm" -> scope.launch {
+                LlmBench(
+                    applicationContext,
+                    intent.getStringExtra("model") ?: "",
+                    intent.getStringExtra("backend") ?: "gpu",
+                ).run()
+            }
+            "embed" -> scope.launch {
+                EmbeddingBench(
+                    applicationContext,
+                    intent.getStringExtra("backend") ?: "cpu",
+                    intent.getIntExtra("minutes", 10),
+                ).run()
+            }
             "schema" -> scope.launch { SchemaProbe(applicationContext).run() }
             "whitespace" -> scope.launch {
                 WhitespaceProbe(applicationContext, intent.getStringExtra("set") ?: "whitespace").run()

@@ -598,3 +598,92 @@ Schema keys: `title`, `people`, `dates`, `topics`, `tasks`. `whitespace_pattern`
 3. **`createConversation` cost comes from enabling constrained decoding:** 2660 ms versus 3 ms in the foreground. This identifies the cost that was only a candidate before. The background figure (14.9 s per segment) was not re-measured without constraints, so the saving there is an extrapolation.
 4. **Time per segment is the same in the foreground,** because the unconstrained output is about twice as long (fence and pretty-printing), which offsets the saved setup. One run per variant; generation is deterministic.
 5. **Dates are still invented when the text gives no year,** as in the previous section.
+
+## Outbox spike: key properties while locked, 2026-11-08
+
+`spikes/diag/.../OutboxProbeReceiver.kt`, triggered with `am broadcast` on the Pixel 10. Every locked result was logged with `KeyguardManager.isDeviceLocked() == true`.
+
+Both keys are EC P-256 `PURPOSE_AGREE_KEY` and report `KeyInfo.securityLevel = STRONGBOX`.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| (a) StrongBox accepts `setUnlockedDeviceRequired(true)` on an EC `AGREE_KEY` key | PASS | Key generated; ECDH secret matches the software side while unlocked |
+| (a) ECDH with that key fails while locked | PASS (rejected) | `InvalidKeyException` caused by `KeyStoreException: Device locked` (internal code -72) |
+| (a) ECDH works after unlock | PASS | Secrets match |
+| (b) The public key can be read while locked | PASS | 91 bytes, equal to the key recorded while unlocked |
+| (c) Encrypting to the public key works while locked | PASS | Software ECDH with an ephemeral key, HKDF, AES-256-GCM |
+| (c) The entry written while locked decrypts after unlock | PASS | Round trip of the 22-byte plaintext |
+| (d) `K_inbox` without an unlock requirement does ECDH while locked | PASS | Secrets match |
+| (e) LiteRT-LM on the NPU from a Worker with the device locked | PASS (2026-11-09) | `deviceLocked=true` at start, on the segment and at the end; see below |
+
+**(e):** two runs were invalid because the device was woken by `WAKE_REASON_TAP` a few seconds after the screen was turned off (21:13:08 and 21:14:25) and was unlocked when the Worker ran. The second run logged `deviceLocked=false` on every segment, so it says nothing about the locked state.
+
+A third run started with `deviceLocked=true` at 23:00:14, after JobScheduler deferred it for 19 minutes with all constraints met, but the device was unlocked before inference. A locked-phone Worker should expect start delays of many minutes.
+
+**(e) verified on 2026-11-09, 15:32–15:33.** One segment, job started with `cmd jobscheduler run -f` after locking, process at `importance=230`, screen off, not charging. No wake event during the run.
+
+| Metric | Value |
+| --- | --- |
+| `deviceLocked` | `true` at start, on the segment and at the end |
+| Backend | NPU, loaded with no dispatch error |
+| Engine load | 32,444 ms |
+| `createConversation` | 15,895 ms |
+| Decode | 512 tokens at 15.6 tok/s |
+| Total for the segment | 51,287 ms |
+
+- The output was invalid JSON because it hit the 512-token limit. The spike Worker still uses the old schema (title first, flexible whitespace), which loops on some inputs; the minimal schema decided in `docs/design-cognition-worker.md` is not applied to it. This does not affect what (e) checks.
+- It is a single segment, so the timings are one sample. The engine load was much slower than in earlier background runs (5–16 s); the cause was not measured.
+
+## Phase 1 MVP: phone test session, 2026-11-09
+
+`scripts/run-phone-tests.sh` on the Pixel 10, one session: unlocked tests, one lock by the script, one unlock by the user. Every step passed.
+
+| Step | Result | Detail |
+| --- | --- | --- |
+| `:core:crypto` instrumented tests | PASS | 4 tests. Both `K_inbox` keys and `K_dedup` are StrongBox; segments decrypt with the Keystore keys |
+| `:core:vault` instrumented tests | PASS | 28 tests, 5 skipped by design (emulator page size check and phase tests) |
+| `:app` pipeline tests | PASS | 9 tests, 3 skipped by design (phase tests). Share text to vault with real keys; nothing on disk in plaintext |
+| Share intent, first share | PASS | `ACTION_SEND` sent from adb to `ShareActivity`: stored, then `imported=1`, `remaining=0` |
+| Share intent, same text again | PASS | Reported as a duplicate; the vault still has 1 capture |
+| Vault: reopen after a process kill | PASS | Same wrapped DEK |
+| Vault: closes on lock and refuses while locked | PASS | Key zeroed; Keystore itself refuses to unwrap |
+| Ingestion and deduplication while locked | PASS | `K_inbox` public key and `K_dedup` work with the keyguard locked |
+| Balanced `K_inbox` decrypts while locked | PASS | |
+| Strict `K_inbox` refuses while locked | PASS | `DeviceLocked` |
+| Import while locked | PASS (refused) | Stopped by `DeviceLocked`; the 2 segments stayed in the inbox |
+| Import after unlock | PASS | The 2 captures made while locked were imported |
+| Spike Worker with the minimal schema | INFO | 5 of 5 valid JSON, 0 empty titles, 5.9–9.5 s per segment in the foreground |
+
+**Notes:**
+
+- The share intent came from the adb shell, not from another app's share sheet. The share sheet itself was not exercised.
+- The share test left one capture ("Phone test capture …") in the real app vault on the phone.
+- The spike result is 5 segments, one run. With the old schema, segment 0 looped to the token limit in the earlier locked run.
+- The gap between screen-off and the keyguard locking was not exercised: this Pixel locks at once when the script turns the screen off.
+
+## EmbeddingGemma 2 Text 270M: sustained run per backend, 2026-11-10
+
+`spikes/diag/.../EmbeddingBench.kt` through `scripts/run-embedding-bench.sh`, Pixel 10, foreground, screen on, charging over USB. One process per backend, 10 minutes each, 2 minutes of cool-down in between. Output: 256 dimensions, L2 normalized. The text is 69 words (389 characters) of Spanish.
+
+**Models:** `litert-community/embeddinggemma-2-text-270m-litert-lm` at revision `9be6e8b9` (Apache-2.0, not gated), pushed with adb and verified by pinned SHA-256.
+
+| File | Backend | SHA-256 |
+| --- | --- | --- |
+| `embeddinggemma-2-text-270m_Google_Tensor_G5.litertlm` | NPU | `f066663433a31a8228b46f3271d2714a3b72a341ed4563cbc6d90f2e3dd0162d` |
+| `embeddinggemma-2-text-270m.litertlm` | GPU, CPU | `2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb` |
+
+| Backend | First minute | Last minute | Change | Texts in 10 min | Peak RSS | Max `thermalStatus` | Battery at the end |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NPU | 41.3 texts/s | 41.3 texts/s | 0% | 24,906 | 429 MB | 2 | 42.2 °C |
+| GPU | 8.3 texts/s | 2.9 texts/s | −65% | 4,563 | 566 MB | 2 | 41.9 °C |
+| CPU | 7.0 texts/s | 7.1 texts/s | +1% | 4,517 | 529 MB | 2 | 40.9 °C |
+
+**Backend decision for embeddings: NPU.** It is about 5 times faster than GPU or CPU and did not slow down in 10 minutes. The GPU loses two thirds of its speed as the device heats up. CPU is the fallback.
+
+**Limits:**
+
+- The backends ran in sequence, so GPU and CPU started on a device already warmed by the previous run. The GPU drop was not measured from a cold start.
+- The per-size latency, the load times and the first minutes of each run were lost: the script read the device log at the end and the buffer had rotated. The script now streams the log to a file. A repeat of the quick pass is recorded below if available.
+- Tokens per second are not reported: LiteRT-LM 0.18.1 does not expose token counts for embeddings.
+- Foreground only. Embedding from a background Worker, limited to CPUs 0–2, was not measured.
+- LiteRT-LM 0.18.1 loads this model: verified first on the emulator CPU (256 dimensions, norm 1.0, related text 0.88 versus unrelated 0.70 cosine).

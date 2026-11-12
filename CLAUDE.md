@@ -1,17 +1,18 @@
 # SeBrain — context for Claude Code
 
 Native Android app (Kotlin + C/JNI) that acts as a 100% local second brain on a Google Pixel 10 (Tensor G5).
-It ingests data from other apps, processes it with on-device AI and stores it encrypted.
+It is a unifying app: an Obsidian-style vault of notes, tags and links, stored encrypted, connected to the user's other apps, with a local uncensored AI that answers questions and acts on the notes.
+**Current plan and product decisions: `docs/roadmap.md` (2026-11-10). It takes precedence over the phase order below and in the research document.**
 Full research document (the reason behind each decision): https://claude.ai/artifact/VzkdPNuHAbtrMDV83R2HSJ
 
 ## Hard rules (non-negotiable)
 
-- The app does NOT declare `android.permission.INTERNET`. If a dependency merges it, remove it with `tools:node="remove"`.
+- The app has internet access (decided 2026-11-10). `TailnetGateway` in `:core:net` is the only code that opens connections: HTTPS only, over the device's normal connection, which goes through Tailscale when the user has it on. It can also require Tailscale for a connection. No other module may open sockets, and no dependency may use the network on its own. Note content never leaves the device in plaintext.
 - Zero analytics, telemetry or crash reporting SDKs (Firebase, Crashlytics, etc.).
   - **Exception pending confirmation:** ML Kit GenAI (`com.google.mlkit:genai-prompt`, optional behind a setting) pulls in `transport-backend-cct`, `transport-runtime` and `firebase-*` libraries. Result in `docs/benchmarks.md`.
 - No plaintext data leaves the process. Nothing is written to disk unencrypted, except model binaries.
 - `allowBackup="false"`, `dataExtractionRules` that exclude everything, `FLAG_SECURE` on screens with vault content.
-- Models are imported locally (SAF / `adb push`) and verified with a SHA-256 pinned in code. The app downloads nothing.
+- Models are verified by SHA-256 before use: pinned in code, or published by Hugging Face for a model the user chose and confirmed. Models may be downloaded in the app or imported locally (SAF / `adb push`).
 - Every native library aligned to 16 KB pages (`-Wl,-z,max-page-size=16384`, NDK r27+).
 - Language: code, comments, identifiers, repo docs, commit messages, system prompts and JSON keys are in English. Extracted values keep the source language of the captured text (do not translate user data). Conversation with the user stays in Spanish.
 
@@ -31,16 +32,23 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ## Architecture (three processes, one vault)
 
-1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (SHA-256 of the canonical content) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
+1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (keyed tag of the canonical content, see `K_dedup`) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
 2. **Cognition** (`CognitionWorker`): decrypts segments → chunking → JSON extraction with constrained decoding → embeddings → inserts into `capture`, `chunk`, `chunk_fts`, `chunk_vec` in one transaction. Deletes the segment only after `COMMIT`. Loads the LLM per batch and releases it when done.
 3. **Query** (app open): query embedding → RRF FTS5 + vec0 → top 8 → LiteRT-LM with `[n]` citations. With the Gemini Nano setting on, Nano is used and it falls back to LiteRT-LM if AICore returns `BUSY`.
 
 ### Keys (Android Keystore)
 
-- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it).
+- `K_inbox`: EC P-256 pair, `PURPOSE_AGREE_KEY`, StrongBox (TEE fallback if StrongBox rejects it). Two keys, one per mode (Strict: `setUnlockedDeviceRequired(true)`; Balanced: no unlock requirement); each segment stores its key id. Default mode: Balanced (decided 2026-11-09).
 - `K_wrap`: AES-256-GCM, StrongBox, `setUnlockedDeviceRequired(true)`; wraps the 32-byte DEK stored in `noBackupFilesDir`.
+- `K_dedup`: HMAC-SHA256, StrongBox, no unlock requirement. Deduplication stores `HMAC(K_dedup, SHA-256(content))` tags; no plain content hashes on disk.
 - `K_secret` (optional): AES-256-GCM with `AUTH_BIOMETRIC_STRONG` for fields marked as secret.
 - Never pass the DEK as a passphrase (avoids PBKDF2). Zero buffers after use.
+
+### Locked-phone processing (decided, not implemented)
+
+- The vault closes on lock in both modes and its DEK is never unwrapped while locked. Idle timeout while unlocked: 5 minutes. Keeping the session open while charging is rejected.
+- Strict: cognition only while unlocked.
+- Balanced: while locked, `CognitionWorker` decrypts with `K_inbox` and writes results encrypted to `K_outbox` (EC P-256, StrongBox, private part `setUnlockedDeviceRequired(true)`); a merge step inserts them into the vault after unlock.
 
 ### AccessibilityService
 
@@ -82,14 +90,13 @@ Each spike delivered minimal code + numbers measured on the Pixel 10. Details in
 
 ## Next phases
 
-- **Phase 1, first task:** build `sqlcipher-android` with `sqlite-vec.c` (`-DSQLITE_CORE`) and FTS5, aligned to 16 KB. Criterion: `SELECT vec_version()` and FTS5 in `PRAGMA compile_options` on the device.
+- **Phase 1 (vault + Share MVP):** implemented; see `docs/plan-phase1.md`, `docs/design-vault-session.md` and `docs/design-phase1-mvp.md`. Run `scripts/run-phone-tests.sh` for the phone tests.
 - **Phase 2, first task:** LiteRT-LM benchmark of EmbeddingGemma 2 (270M) on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
 - **Phase 4, extraction-model benchmark:** compare Gemma 3 1B with Gemma 4 E2B on NPU, GPU and CPU, with the same measurements.
   - Measure the `createConversation` cost with and without constrained decoding in the background. So far it was only measured in the foreground (2660 ms versus 3 ms); the background saving is an extrapolation.
 
 ## Open decisions (do not assume; ask)
 
-- Inbox processing mode: Strict (unlocked only) or Balanced (after first unlock).
 - Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
 - Distribution: sideload only or private Play.
 - Initial allowlist of apps for notifications.
