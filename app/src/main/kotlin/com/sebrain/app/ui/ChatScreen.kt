@@ -64,7 +64,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 Text(
                     when {
                         state.loadingModel -> "The first load of a model can take a minute"
-                        model != null -> "On device · ${state.modelBackend} · ${if (state.canAct) "can act on notes" else "answers only"}"
+                        model != null -> "On device · ${state.modelBackend} · answers and acts on notes"
                         else -> ""
                     },
                     style = MaterialTheme.typography.labelSmall,

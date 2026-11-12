@@ -21,6 +21,7 @@ import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.Note
 import com.sebrain.core.vault.NoteStore
 import java.time.Instant
+import org.json.JSONObject
 import java.time.ZoneId
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
@@ -175,6 +176,7 @@ class AppState(private val app: SeBrainApp) {
 
     // ---- Chat ----
     private val chatWorker = Executors.newSingleThreadExecutor()
+    private val tools = NoteTools(app.session, app.indexer) { action -> onMain { messages += ChatMessage(false, action, isAction = true) } }
     private var pendingQuestion: String? = null
     val messages = mutableStateListOf<ChatMessage>()
     var languageModels by mutableStateOf(emptyList<KnownModel>())
@@ -204,10 +206,8 @@ class AppState(private val app: SeBrainApp) {
                 val model = choice ?: models.firstOrNull { it.fileName == saved } ?: models.firstOrNull()
                 if (model != null) {
                     app.chat.load(model)
-                    app.chat.startConversation(
-                        SYSTEM,
-                        listOf(NoteTools(app.session, app.indexer) { action -> onMain { messages += ChatMessage(false, action, isAction = true) } }),
-                    )
+                    // Models without native function calling get the actions as a text protocol.
+                    app.chat.startConversation(if (app.chat.supportsTools) SYSTEM else SYSTEM + TEXT_ACTIONS, listOf(tools))
                     app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, model.fileName).apply()
                 }
                 models to model
@@ -218,7 +218,7 @@ class AppState(private val app: SeBrainApp) {
                     languageModels = models
                     currentModel = model
                     modelBackend = app.chat.backend
-                    canAct = app.chat.supportsTools
+                    canAct = model != null
                     if (model == null) chatProblem = "No language model is installed. Download one in Models."
                     pendingQuestion?.let { pendingQuestion = null; if (model != null) generate(it) }
                 }.onFailure {
@@ -266,7 +266,9 @@ class AppState(private val app: SeBrainApp) {
                         onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece) }
                     }
                 }
+                val visible = result.getOrNull()?.takeIf { !app.chat.supportsTools }?.let(::runTextActions)
                 onMain {
+                    if (visible != null && index < messages.size) messages[index] = messages[index].copy(text = visible)
                     result.onFailure {
                         if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
                     }
@@ -278,6 +280,36 @@ class AppState(private val app: SeBrainApp) {
     }
 
     fun stopGenerating() = app.chat.cancel()
+
+    /**
+     * Runs the `ACTION {json}` lines of a reply and returns the reply without them, followed by
+     * the outcome of the actions that did not succeed. Malformed lines are dropped.
+     */
+    private fun runTextActions(reply: String): String {
+        val kept = ArrayList<String>()
+        val notes = ArrayList<String>()
+        for (line in reply.lines()) {
+            val start = line.indexOf("ACTION")
+            val brace = line.indexOf('{')
+            if (start < 0 || brace < start) {
+                kept += line
+                continue
+            }
+            val outcome = runCatching {
+                val json = JSONObject(line.substring(brace, line.lastIndexOf('}') + 1))
+                fun list(key: String) = json.optJSONArray(key)?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty()
+                when (json.optString("action")) {
+                    "create_note" -> tools.createNote(json.getString("title"), json.optString("text"), list("tags"))
+                    "add_tags" -> tools.addTags(json.getString("title"), list("tags"))
+                    "link_notes" -> tools.linkNotes(json.getString("from"), json.getString("to"))
+                    else -> "Unknown action"
+                }
+            }.getOrElse { "The action could not be read" }
+            // Successful actions are already shown through the tools' own report.
+            if (!outcome.startsWith("Created") && !outcome.startsWith("Tagged") && !outcome.startsWith("Linked")) notes += outcome
+        }
+        return (kept.joinToString("\n").trim() + notes.joinToString("") { "\n($it)" }).trim()
+    }
 
     // ---- Models ----
     private val gateway = TailnetGateway(app)
@@ -378,6 +410,12 @@ class AppState(private val app: SeBrainApp) {
                 "Answer directly and concisely, in the language of the question. " +
                 "When notes from the vault are given, use them if they are relevant and cite them as [1], [2]. " +
                 "If the notes do not contain the answer, say so and answer from your own knowledge. " +
-                "Use the tools only when the user asks you to create, tag, link or search notes."
+                "Act on notes only when the user asks you to create, tag or link notes."
+        const val TEXT_ACTIONS =
+            "\n\nTo act on notes, write one line per action, starting with ACTION and followed by JSON on the same line:\n" +
+                "ACTION {\"action\":\"create_note\",\"title\":\"...\",\"text\":\"...\",\"tags\":[\"...\"]}\n" +
+                "ACTION {\"action\":\"add_tags\",\"title\":\"title of an existing note\",\"tags\":[\"...\"]}\n" +
+                "ACTION {\"action\":\"link_notes\",\"from\":\"title of a note\",\"to\":\"title of another note\"}\n" +
+                "The app runs these lines and hides them. Never write an ACTION line unless the user asked for that action."
     }
 }

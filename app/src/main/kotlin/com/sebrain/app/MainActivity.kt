@@ -5,6 +5,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
@@ -52,7 +53,7 @@ class MainActivity : ComponentActivity() {
                 ) { padding ->
                     when (tab) {
                         0 -> if (fullScreen) NotesScreen(state) else NotesScreen(state, Modifier.padding(padding))
-                        1 -> ChatScreen(state, Modifier.padding(padding))
+                        1 -> ChatScreen(state, Modifier.padding(padding).consumeWindowInsets(padding))
                         else -> ModelsScreen(state, Modifier.padding(padding))
                     }
                 }

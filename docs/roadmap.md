@@ -56,3 +56,9 @@ model, streaming replies, model picker) and Models (Hugging Face search, downloa
 remove). Screen state lives in `ui/AppState`; vault content is cleared from it in `onStop`.
 A model file is hashed once and the result is remembered for its exact size and modification
 time (`ModelFiles.verifyOnce`), so a multi-gigabyte model is not hashed on every load.
+
+Checked on the Pixel 10 on 2026-11-11: the app starts, Gemma 4 E4B abliterated loads on GPU in
+20 to 30 s and answers a question citing a note. That model reports no native function
+calling, so note actions use a text protocol instead: the model writes `ACTION {json}` lines
+(`create_note`, `add_tags`, `link_notes`), and `AppState.runTextActions` runs and hides them.
+The text protocol has not been run on the phone yet.
