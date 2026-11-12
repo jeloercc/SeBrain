@@ -11,6 +11,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
+import com.sebrain.app.chat.Assistant
+import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.VaultContext
+import com.sebrain.core.ml.ChatEngine
+import com.sebrain.core.vault.ConversationStore
+import com.sebrain.core.vault.ConversationSummary
 import com.sebrain.app.privacy.AppPrivacy
 import com.sebrain.app.privacy.DexTrackerScanner
 import com.sebrain.app.privacy.PrivacyAudit
@@ -154,6 +160,8 @@ class AppState(private val app: SeBrainApp) {
         app.requestImport()
         refreshInstalled()
         refreshPrivacy()
+        loadConversations()
+        conversationId?.let(::openConversation)
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -169,6 +177,8 @@ class AppState(private val app: SeBrainApp) {
         brains = emptyList()
         selectedBrain = null
         messages.clear()
+        conversations = emptyList()
+        stopRequested = true
         app.chat.cancel()
         chatWorker.execute {
             app.chat.close()
@@ -461,6 +471,16 @@ class AppState(private val app: SeBrainApp) {
         private set
     var chatProblem by mutableStateOf<String?>(null)
         private set
+    var conversations by mutableStateOf(emptyList<ConversationSummary>())
+        private set
+
+    /** The open conversation, or null for a new one that has no message yet. Kept across onStop. */
+    var conversationId by mutableStateOf<Long?>(null)
+        private set
+
+    /** Written on the vault thread when a conversation is created, so later writes find it. */
+    @Volatile private var storedConversation: Long? = null
+    @Volatile private var stopRequested = false
 
     /** Loads [choice], or the model used last, or the first installed one. Does nothing if it is already loaded. */
     fun ensureModel(choice: KnownModel? = null) {
@@ -474,7 +494,6 @@ class AppState(private val app: SeBrainApp) {
                 val model = choice ?: models.firstOrNull { it.fileName == saved } ?: models.firstOrNull()
                 if (model != null) {
                     app.chat.load(model)
-                    app.chat.startConversation(SYSTEM)
                     app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, model.fileName).apply()
                 }
                 models to model
@@ -486,96 +505,167 @@ class AppState(private val app: SeBrainApp) {
                     currentModel = model
                     modelBackend = app.chat.backend
                     canAct = model != null
-                    if (model == null) chatProblem = "No language model is installed. Download one in Models."
+                    if (model == null) {
+                        chatProblem = "No language model is installed. Download one in Models."
+                        generating = false
+                    }
                     pendingQuestion?.let { pendingQuestion = null; if (model != null) generate(it) }
                 }.onFailure {
                     currentModel = null
                     chatProblem = "The model could not be loaded: ${it.message}"
                     pendingQuestion = null
+                    generating = false
                 }
             }
         }
     }
 
-    /** Sends a question. If the model is still loading, it is answered as soon as it is ready. */
-    fun ask(question: String) {
-        if (question.isBlank() || generating) return
-        messages += ChatMessage(true, question.trim())
-        if (currentModel == null) {
-            pendingQuestion = question.trim()
-            ensureModel()
-        } else {
-            generate(question.trim())
+    fun loadConversations() {
+        app.vault({ db -> ConversationStore(db).list() }) { result ->
+            onMain { conversations = result.getOrDefault(emptyList()) }
         }
     }
 
-    private class Source(val title: String, val text: String)
+    /** Shows a saved conversation; the next message continues it. */
+    fun openConversation(id: Long) {
+        if (generating) return
+        app.vault({ db -> ConversationStore(db).messages(id) }) { result ->
+            onMain {
+                result.onSuccess { stored ->
+                    storedConversation = id
+                    conversationId = id
+                    messages.clear()
+                    messages += stored.map { ChatMessage(it.fromUser, it.text) }
+                }
+            }
+        }
+    }
+
+    fun newConversation() {
+        if (generating) return
+        storedConversation = null
+        conversationId = null
+        messages.clear()
+    }
+
+    fun deleteConversation(id: Long) {
+        if (generating) return
+        if (id == conversationId) newConversation()
+        app.vault({ db -> ConversationStore(db).delete(id) }) { loadConversations() }
+    }
+
+    /** Sends a message. If the model is still loading, it is answered as soon as it is ready. */
+    fun ask(question: String) {
+        val text = question.trim()
+        if (text.isEmpty() || generating) return
+        generating = true
+        stopRequested = false
+        messages += ChatMessage(true, text)
+        persist(fromUser = true, text = text)
+        if (currentModel == null) {
+            pendingQuestion = text
+            ensureModel()
+        } else {
+            generate(text)
+        }
+    }
+
+    /** Stores a message in the open conversation, creating the conversation on its first message. */
+    private fun persist(fromUser: Boolean, text: String) {
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            val id = storedConversation
+                ?: store.create(text.lineSequence().first().take(60), now).also { storedConversation = it }
+            store.add(id, fromUser, text, now)
+            id
+        }) { result ->
+            onMain {
+                result.onSuccess { conversationId = it }
+                loadConversations()
+            }
+        }
+    }
 
     private fun generate(question: String) {
         generating = true
+        // The history is what came before this message, without the action lines.
+        val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
+        val history = earlier.takeLast(Assistant.HISTORY_MESSAGES)
+            .map { ChatEngine.Turn(it.fromUser, Assistant.shorten(it.text, Assistant.HISTORY_CHARS)) }
+        val query = Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
         messages += ChatMessage(false, "")
         val index = messages.lastIndex
-        val asNote = wantsNote(question)
+        val asNote = Assistant.wantsNote(question)
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
-        app.search(question, { db, vector ->
-            val captures = CaptureStore(db)
-            HybridSearch(db).search(question, vector, CONTEXT_NOTES).mapNotNull { hit ->
-                captures.summaryOf(hit.captureId)?.let { Source(it.title.orEmpty(), hit.text) }
-            }
-        }) { found ->
-            val context = found.getOrDefault(emptyList())
-            val prompt = buildString {
-                if (context.isNotEmpty()) {
-                    append("Notes from the vault that may be relevant:\n")
-                    append(context.mapIndexed { i, note -> "[${i + 1}] ${note.title}: ${note.text}" }.joinToString("\n\n"))
-                    append("\n\n")
-                }
-                append(if (asNote) "Request: " else "Question: ").append(question)
-                if (asNote) append(NOTE_FORMAT)
-            }
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector) }) { found ->
+            val context = found.getOrNull()
+            val notes = context?.notes.orEmpty()
+            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty())
             chatWorker.execute {
                 val result = runCatching {
-                    app.chat.send(prompt) { piece ->
-                        onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece) }
+                    if (stopRequested) {
+                        ""
+                    } else {
+                        app.chat.reply(Assistant.SYSTEM, history, prompt) { piece ->
+                            onMain {
+                                if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece)
+                            }
+                        }
                     }
                 }
-                val saved = result.getOrNull()?.takeIf { asNote }?.let { createNoteFrom(it, question, context) } == true
+                val reply = result.getOrNull().orEmpty()
+                val saved = reply.isNotBlank() && asNote && !stopRequested && createNoteFrom(reply, question, notes)
                 onMain {
                     result.onFailure {
-                        if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
+                        if (index < messages.size) {
+                            messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
+                        }
                     }
-                    if (saved && index < messages.size) messages[index] = messages[index].copy(saved = true)
+                    // The screen may have been cleared by onStop meanwhile; the reply is still stored.
+                    val visible = index < messages.size
+                    val final = (if (visible) messages[index].text else reply).ifBlank { if (stopRequested) "[stopped]" else "" }
+                    if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
+                    if (final.isNotBlank()) persist(fromUser = false, text = final)
                     generating = false
+                    if (!visible) conversationId?.let(::openConversation)
                     refreshNotes()
                 }
             }
         }
     }
 
-    fun stopGenerating() = app.chat.cancel()
+    fun stopGenerating() {
+        stopRequested = true
+        app.chat.cancel()
+        // If the model was still loading, nothing will reply: free the input now.
+        if (loadingModel) {
+            pendingQuestion = null
+            generating = false
+        }
+    }
 
     /** Saves the answer at [index] as a note. */
     fun saveAsNote(index: Int) {
         val answer = messages.getOrNull(index) ?: return
         val question = messages.take(index).lastOrNull { it.fromUser }?.text.orEmpty()
         messages[index] = answer.copy(saved = true)
-        chatWorker.execute {
-            createNoteFrom(answer.text, question, emptyList())
-            onMain { refreshNotes() }
+        app.search(question, { db, vector -> VaultContext.build(db, question, vector) }) { found ->
+            chatWorker.execute {
+                createNoteFrom(answer.text, question, found.getOrNull()?.notes.orEmpty())
+                onMain { refreshNotes() }
+            }
         }
     }
 
     /**
-     * Stores a reply as a note in Obsidian format: `# Title`, the body, `[[links]]` to the notes
-     * the reply cites, and `#tags`. Returns whether a note was created.
+     * Stores a reply as a note in Obsidian format: `# Title`, the body with each citation turned
+     * into a `[[link]]` to the cited note, only links to notes that exist, and `#tags`.
      */
-    private fun createNoteFrom(reply: String, question: String, context: List<Source>): Boolean {
-        val (title, body, tags) = parseNote(reply, question)
+    private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>): Boolean {
+        val (title, body, tags) = Assistant.parseNote(reply, question)
         if (body.isBlank()) return false
-        val related = Regex("\\[(\\d+)]").findAll(reply)
-            .mapNotNull { context.getOrNull(it.groupValues[1].toInt() - 1)?.title }
-            .filter { it.isNotBlank() && !it.equals(title, ignoreCase = true) }.distinct().toList()
-        val text = if (related.isEmpty()) body else body + "\n\nRelated: " + related.joinToString(" ") { "[[$it]]" }
+        val text = Assistant.linkify(body, context, title)
         val outcome = runCatching { tools.createNote(title, text, tags) }.getOrElse { "The note could not be saved: ${it.message}" }
         val created = outcome.startsWith("Created")
         if (!created) onMain { messages += ChatMessage(false, outcome) }
@@ -672,48 +762,8 @@ class AppState(private val app: SeBrainApp) {
 
     private companion object {
         const val LIMIT = 100
-        const val CONTEXT_NOTES = 6
         const val PROGRESS_STEP = 8L * 1024 * 1024
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
-        const val SYSTEM =
-            "You are SeBrain, a private assistant that runs entirely on the user's phone. " +
-                "Always answer the question itself, directly and completely, in the language of the question. " +
-                "When notes from the vault are given, use them if they are relevant and cite them as [1], [2]. " +
-                "If the notes do not contain the answer, answer from your own knowledge. " +
-                "Put every script or piece of code in a fenced code block with its language, like ```bash."
-        const val NOTE_FORMAT =
-            "\n\nThe answer will be saved as a note. Write the information that was asked for, complete and " +
-                "useful on its own. Do not repeat the request and do not say that you are creating a note. " +
-                "Use exactly this format:\n# A short title\n\nThe content, in Markdown\n\nTags: two to four lowercase one-word tags, separated by commas"
-
-        private val NOTE_WORD = Regex("\\b(notas?|notes?)\\b", RegexOption.IGNORE_CASE)
-        private val SAVE_WORD = Regex(
-            "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
-            RegexOption.IGNORE_CASE,
-        )
-        private val TAG_LINE = Regex("^[*_#\\s]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
-
-        /** True when the user asks for the answer to be stored as a note. */
-        fun wantsNote(question: String) = NOTE_WORD.containsMatchIn(question) && SAVE_WORD.containsMatchIn(question)
-
-        /** Splits a reply into title, body and tags. Without a `# Title` line, [fallbackTitle] is used. */
-        fun parseNote(reply: String, fallbackTitle: String): Triple<String, String, List<String>> {
-            val lines = reply.trim().lines().toMutableList()
-            var tags = emptyList<String>()
-            val tagIndex = lines.indexOfLast { TAG_LINE.matches(it.trim()) }
-            if (tagIndex >= 0) {
-                tags = TAG_LINE.find(lines[tagIndex].trim())!!.groupValues[1].split(',', ' ')
-                    .map { it.trim().trim('*', '_', '#', '.') }.filter { it.isNotEmpty() }
-                lines.removeAt(tagIndex)
-            }
-            val first = lines.indexOfFirst { it.isNotBlank() }
-            val title = if (first >= 0 && lines[first].trimStart().startsWith("#")) {
-                lines.removeAt(first).trim().trimStart('#').trim().trim('*').trim()
-            } else {
-                fallbackTitle.lineSequence().firstOrNull().orEmpty().take(60)
-            }
-            return Triple(title.ifBlank { "Note" }, lines.joinToString("\n").trim(), tags)
-        }
     }
 }

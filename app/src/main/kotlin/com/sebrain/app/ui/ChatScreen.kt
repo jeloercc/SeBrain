@@ -18,10 +18,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,12 +37,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
 fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+    var chatsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     LaunchedEffect(Unit) { state.ensureModel() }
     val lastLength = state.messages.lastOrNull()?.text?.length ?: 0
@@ -71,6 +75,44 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 )
             }
             Box {
+                TextButton(onClick = { state.loadConversations(); chatsOpen = true }, enabled = !state.generating) { Text("Chats") }
+                DropdownMenu(expanded = chatsOpen, onDismissRequest = { chatsOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("+ New chat") },
+                        onClick = { chatsOpen = false; state.newConversation() },
+                    )
+                    if (state.conversations.isEmpty()) {
+                        DropdownMenuItem(text = { Text("No saved chats yet") }, onClick = { chatsOpen = false }, enabled = false)
+                    }
+                    state.conversations.forEach { chat ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(
+                                        chat.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (chat.id == state.conversationId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        "${chat.messages} messages · ${chat.updatedAt.take(10)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            onClick = { chatsOpen = false; state.openConversation(chat.id) },
+                            trailingIcon = {
+                                IconButton(onClick = { state.deleteConversation(chat.id) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Delete chat")
+                                }
+                            },
+                            modifier = Modifier.widthIn(min = 260.dp, max = 320.dp),
+                        )
+                    }
+                }
+            }
+            Box {
                 TextButton(onClick = { menuOpen = true }, enabled = !state.loadingModel && !state.generating) { Text("Model") }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     if (state.languageModels.isEmpty()) {
@@ -89,7 +131,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
             Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
         }
         if (state.messages.isEmpty() && state.chatProblem == null) {
-            EmptyState("Ask about your notes, or ask SeBrain to create, tag or link one.\n\nEverything runs on this phone.")
+            EmptyState("Ask about your notes: SeBrain answers from them and from how they are linked.\nSay “make a note about…” to save an answer, linked to related notes.\n\nChats are saved, encrypted, under Chats. Everything runs on this phone.")
         }
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),

@@ -12,9 +12,8 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
-import com.google.ai.edge.litertlm.ToolSet
-import com.google.ai.edge.litertlm.tool
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Runs a language model the user installed, fully on the device.
@@ -26,13 +25,10 @@ import java.util.concurrent.CountDownLatch
 class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseable {
     private val appContext = context.applicationContext
     private var engine: Engine? = null
-    private var conversation: Conversation? = null
 
     var loaded: KnownModel? = null
         private set
     var backend: String? = null
-        private set
-    var supportsTools = false
         private set
 
     /** Installed models that are language models, as reported by the model files themselves. */
@@ -47,10 +43,6 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
         close()
         val path = models.file(model).path
         check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
-        supportsTools = runCatching {
-            ModelInfo.from(path).use { (it as? ModelInfo.Llm)?.supportsFunctionCalling() == true }
-        }.getOrDefault(false)
-
         var lastError: Throwable? = null
         for ((name, factory) in listOf<Pair<String, () -> Backend>>("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })) {
             try {
@@ -58,7 +50,7 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
                     .also { it.initialize() }
                 loaded = model
                 backend = name
-                Log.i(TAG, "language model loaded on $name, tools=$supportsTools")
+                Log.i(TAG, "language model loaded on $name")
                 return
             } catch (e: Throwable) {
                 lastError = e
@@ -68,56 +60,76 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
         throw IllegalStateException("No backend could load ${model.fileName}", lastError)
     }
 
-    /** Starts a new conversation, forgetting the previous one. Tools are ignored if the model cannot call them. */
-    fun startConversation(systemInstruction: String, tools: List<ToolSet> = emptyList()) {
-        conversation?.close()
-        val engine = checkNotNull(engine) { "No model is loaded" }
-        val config = if (supportsTools && tools.isNotEmpty()) {
-            ConversationConfig(systemInstruction = Contents.of(systemInstruction), tools = tools.map { tool(it) })
-        } else {
-            ConversationConfig(systemInstruction = Contents.of(systemInstruction))
-        }
-        conversation = engine.createConversation(config)
-    }
+    @Volatile private var active: Conversation? = null
+    @Volatile private var cancelled = false
 
-    /** Sends a message and blocks until the reply is complete. [onText] receives the reply as it is written. */
-    fun send(text: String, onText: (String) -> Unit): String {
-        val conversation = checkNotNull(conversation) { "No conversation was started" }
+    /** One earlier message of the conversation, given back to the model as history. */
+    class Turn(val fromUser: Boolean, val text: String)
+
+    /**
+     * Answers [text] in a fresh conversation that starts from [history]. Blocks until the reply
+     * is complete or [cancel] is called; [onText] receives the reply as it is written.
+     *
+     * Every reply gets its own conversation, closed afterwards. A cancelled conversation is
+     * never reused, which is what used to leave the chat unable to send another message.
+     * Creating a conversation without constrained decoding costs about 3 ms (Phase 0).
+     */
+    fun reply(systemInstruction: String, history: List<Turn>, text: String, onText: (String) -> Unit): String {
+        val engine = checkNotNull(engine) { "No model is loaded" }
+        val config = ConversationConfig(
+            systemInstruction = Contents.of(systemInstruction),
+            initialMessages = history.map { if (it.fromUser) Message.user(it.text) else Message.model(it.text) },
+        )
+        val conversation = engine.createConversation(config)
+        cancelled = false
+        active = conversation
         val done = CountDownLatch(1)
         val reply = StringBuilder()
         var failure: Throwable? = null
-        conversation.sendMessageAsync(
-            text,
-            object : MessageCallback {
-                override fun onMessage(message: Message) {
-                    val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-                    if (piece.isNotEmpty()) {
-                        reply.append(piece)
-                        onText(piece)
+        try {
+            conversation.sendMessageAsync(
+                text,
+                object : MessageCallback {
+                    override fun onMessage(message: Message) {
+                        if (cancelled) return
+                        val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                        if (piece.isNotEmpty()) {
+                            synchronized(reply) { reply.append(piece) }
+                            onText(piece)
+                        }
                     }
-                }
 
-                override fun onDone() = done.countDown()
+                    override fun onDone() = done.countDown()
 
-                override fun onError(throwable: Throwable) {
-                    failure = throwable
-                    done.countDown()
+                    override fun onError(throwable: Throwable) {
+                        failure = throwable
+                        done.countDown()
+                    }
+                },
+            )
+            // The native side may not call back after a cancel, so the wait never depends on it.
+            while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
+                if (cancelled) {
+                    done.await(CANCEL_GRACE_MS, TimeUnit.MILLISECONDS)
+                    break
                 }
-            },
-        )
-        done.await()
-        failure?.let { throw it }
-        return reply.toString()
+            }
+        } finally {
+            active = null
+            runCatching { conversation.close() }
+        }
+        if (!cancelled) failure?.let { throw it }
+        return synchronized(reply) { reply.toString() }
     }
 
     /** Stops the reply being written, if any. Safe to call from another thread. */
     fun cancel() {
-        runCatching { conversation?.cancelProcess() }
+        cancelled = true
+        runCatching { active?.cancelProcess() }
     }
 
     override fun close() {
-        conversation?.close()
-        conversation = null
+        cancel()
         engine?.close()
         engine = null
         loaded = null
@@ -126,5 +138,7 @@ class ChatEngine(context: Context, private val models: ModelFiles) : AutoCloseab
 
     private companion object {
         const val TAG = "SEBRAIN_ML"
+        const val POLL_MS = 200L
+        const val CANCEL_GRACE_MS = 2000L
     }
 }

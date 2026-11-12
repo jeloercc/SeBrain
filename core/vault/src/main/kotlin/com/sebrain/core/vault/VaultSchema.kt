@@ -4,7 +4,7 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** Creates and upgrades the vault schema. The version is stored in `PRAGMA user_version`. */
 internal object VaultSchema {
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** Dimensions of the stored embeddings (EmbeddingGemma, Matryoshka at 256). */
     const val EMBEDDING_DIMENSIONS = 256
@@ -21,6 +21,7 @@ internal object VaultSchema {
             if (current < 1) createV1(db)
             if (current < 2) upgradeToV2(db)
             if (current < 3) upgradeToV3(db)
+            if (current < 4) upgradeToV4(db)
             db.execSQL("PRAGMA user_version = $VERSION")
             db.setTransactionSuccessful()
         } finally {
@@ -86,5 +87,23 @@ internal object VaultSchema {
                 "PRIMARY KEY(source_id, target_title))",
         )
         db.execSQL("CREATE INDEX link_by_target ON link(target_title)")
+    }
+
+    /**
+     * Chat conversations, approved 2026-11-12. They live in the vault so they are encrypted with
+     * the vault key, and they are not chunked, so they never appear in note search. Not part of
+     * the backup snapshot yet.
+     */
+    private fun upgradeToV4(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE conversation(id INTEGER PRIMARY KEY, title TEXT NOT NULL, " +
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        )
+        db.execSQL(
+            "CREATE TABLE message(id INTEGER PRIMARY KEY, " +
+                "conversation_id INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE, " +
+                "from_user INTEGER NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)",
+        )
+        db.execSQL("CREATE INDEX message_by_conversation ON message(conversation_id, id)")
     }
 }

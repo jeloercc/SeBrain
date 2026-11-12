@@ -102,6 +102,26 @@ Not yet checked on the Pixel.
 keeps working in the personal profile. It sees domains, apps and byte counts, never content.
 It changes the "does not filter other apps' traffic" decision above.
 
+## Assistant over the graph (2026-11-12)
+
+- **Graph context:** `chat/VaultContext` searches the vault (hybrid search, chunks grouped by
+  note, top 4 notes), then adds up to 4 neighbours one step away through `[[links]]`,
+  backlinks and shared tags. `chat/Assistant` renders each note with its tags and links, so
+  the model sees how ideas relate. A short follow-up is searched together with the previous
+  question.
+- **Better notes:** the note prompt lists the titles the new note may link to and the tags in
+  use. Citations `[n]` become `[[Title]]` links, and a `[[link]]` to a title that does not
+  exist becomes plain text, so made-up links no longer add false nodes to the graph.
+- **Stop fixed:** every reply runs in a fresh LiteRT-LM conversation (`ChatEngine.reply`, with
+  `ConversationConfig.initialMessages` as history, checked in the 0.18.1 jar). The wait no
+  longer depends on a native callback after `cancelProcess`, which left the chat stuck.
+- **Saved chats:** schema v4 (approved 2026-11-12) adds `conversation` and `message` tables in
+  the vault. They are not chunked, so they never show in note search, and they are not in the
+  backup snapshot yet. The Chats button next to Model lists, opens and deletes them.
+- History sent to the model: the last 6 messages, 700 characters each. The model's context
+  size (`EngineConfig.maxNumTokens`) is left at the model default; not measured.
+- Not yet checked on the Pixel: the v4 migration and the new chat.
+
 ## Post-quantum cryptography
 
 Decided 2026-11-10: SeBrain uses native post-quantum cryptography instead of the user's TypeScript `pqc-sdk`, which a Kotlin app cannot run.

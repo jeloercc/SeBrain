@@ -140,6 +140,15 @@ class NoteStore(private val db: SQLiteDatabase) {
         id,
     )
 
+    /** Notes that share at least one tag with this note, the most shared tags first. */
+    fun sharingTags(id: Long, limit: Int): List<CaptureSummary> = summaries(
+        "SELECT c.id, c.captured_at, c.source, c.text, c.title FROM capture c " +
+            "JOIN capture_tag ct ON ct.capture_id = c.id " +
+            "WHERE ct.tag_id IN (SELECT tag_id FROM capture_tag WHERE capture_id = ?) AND c.id != ? " +
+            "GROUP BY c.id ORDER BY count(*) DESC, c.id DESC LIMIT $limit",
+        id, id,
+    )
+
     fun findByTitle(title: String): Long? = db.rawQuery(
         "SELECT id FROM capture WHERE title = ? COLLATE NOCASE ORDER BY id LIMIT 1", title as Any,
     ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
@@ -164,7 +173,7 @@ class NoteStore(private val db: SQLiteDatabase) {
         }
     }
 
-    private fun summaries(sql: String, argument: Any): List<CaptureSummary> = db.rawQuery(sql, argument).use { c ->
+    private fun summaries(sql: String, vararg arguments: Any): List<CaptureSummary> = db.rawQuery(sql, *arguments).use { c ->
         generateSequence {
             if (c.moveToNext()) CaptureSummary(c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4)) else null
         }.toList()
