@@ -8,6 +8,14 @@ Note content never leaves the device in plaintext and is encrypted at rest. Inte
 is limited to HTTPS through the app's `TailnetGateway`, used for the Hugging Face model
 browser and model downloads.
 
+<img width="411" height="844" alt="Screenshot 2026-11-12 at 12 28 31 PM" src="https://github.com/user-attachments/assets/ae3ac12f-6dda-4415-b535-a9d7926753b0" /> <img width="413" height="862" alt="Screenshot 2026-11-12 at 12 29 00 PM" src="https://github.com/user-attachments/assets/68ed10ff-d213-4916-a26f-bd76f44172fe" /> <img width="411" height="851" alt="Screenshot 2026-11-12 at 12 30 09 PM" src="https://github.com/user-attachments/assets/c8b73ed7-72f3-431d-a38f-6c7eb89d5926" /> <img width="411" height="833" alt="Screenshot 2026-11-12 at 12 30 34 PM" src="https://github.com/user-attachments/assets/46f34dc4-ca46-4ed0-af01-17a01050805f" /> <img width="408" height="870" alt="Screenshot 2026-11-12 at 12 31 00 PM" src="https://github.com/user-attachments/assets/9f235eaa-960c-4f48-9e2a-6f72ef350dca" />
+
+
+
+
+
+
+
 ## Current status
 
 The project is under active development and is not a release build.
