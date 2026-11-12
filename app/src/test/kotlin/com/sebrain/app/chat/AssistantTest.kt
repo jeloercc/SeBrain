@@ -15,7 +15,7 @@ class AssistantTest {
         assertTrue(prompt.contains("[1] Coffee\nTags: #drinks · Links to: Caffeine · Linked from: Mornings\nI drink it black."))
         assertTrue(prompt.contains("Connected notes"))
         assertTrue(prompt.contains("[2] Caffeine (linked from [1])\nA stimulant."))
-        assertTrue(prompt.endsWith("Message: Why do I drink coffee?"))
+        assertTrue(prompt.contains("Message: Why do I drink coffee?\n\nWrite in the language of the message above"))
     }
 
     @Test
@@ -60,5 +60,59 @@ class AssistantTest {
         assertEquals("Tea", title)
         assertEquals("Green and black.", body)
         assertEquals(listOf("drinks", "tea"), tags)
+    }
+
+    @Test
+    fun memoryKeepsRecentMessagesAndOutlinesOlderOnes() {
+        val long = "x ".repeat(700)
+        val earlier = listOf(
+            Assistant.Line(true, "List the kernel types"),
+            Assistant.Line(false, "Monolithic, microkernel, hybrid, exokernel."),
+            Assistant.Line(true, "make a note of the first"),
+            Assistant.Line(false, "# Monolithic Kernel\n\n$long"),
+            Assistant.Line(true, "now the next one"),
+            Assistant.Line(false, "# Microkernel\n\n$long"),
+            Assistant.Line(true, "and the next"),
+            Assistant.Line(false, "# Hybrid Kernel\n\n$long"),
+        )
+        val memory = Assistant.remember(earlier)
+        // The budget holds the last two notes, shortened, and the requests before them.
+        assertEquals(listOf(true, false, true, false), memory.recent.map { it.fromUser })
+        assertEquals("now the next one", memory.recent.first().text)
+        assertTrue(memory.recent.all { it.text.length <= Assistant.HISTORY_CHARS + 2 })
+        assertEquals(
+            listOf(
+                "- User asked: List the kernel types",
+                "- You answered: Monolithic, microkernel, hybrid, exokernel.",
+                "- User asked: make a note of the first",
+                "- You answered: Monolithic Kernel",
+            ),
+            memory.outline,
+        )
+        assertEquals(listOf("Monolithic Kernel", "Microkernel", "Hybrid Kernel"), memory.covered)
+
+        val prompt = Assistant.prompt("haz la nota del siguiente", emptyList(), asNote = true, tags = emptyList(), memory = memory)
+        assertTrue(prompt.contains("Already written in this conversation: Monolithic Kernel; Microkernel; Hybrid Kernel. Do not write any of them again."))
+        assertTrue(prompt.contains("- You answered: Monolithic, microkernel, hybrid, exokernel."))
+    }
+
+    @Test
+    fun historyStartsWithTheUser() {
+        val memory = Assistant.remember(listOf(Assistant.Line(false, "hello"), Assistant.Line(true, "hi"), Assistant.Line(false, "yes")))
+        assertEquals(listOf("hi", "yes"), memory.recent.map { it.text })
+    }
+
+    @Test
+    fun factsToRememberAreRecognisedButQuestionsAreNot() {
+        assertEquals("prefiero respuestas cortas", Assistant.factToRemember("Recuerda que prefiero respuestas cortas"))
+        assertEquals("my server is called atlas", Assistant.factToRemember("remember that my server is called atlas"))
+        assertEquals(null, Assistant.factToRemember("¿recuerdas que hablamos de kernels?"))
+        assertEquals(null, Assistant.factToRemember("explícame qué recuerda un kernel"))
+    }
+
+    @Test
+    fun standingFactsOpenThePrompt() {
+        val prompt = Assistant.prompt("hola", emptyList(), asNote = false, tags = emptyList(), facts = listOf("Answer briefly."))
+        assertTrue(prompt.startsWith("What the user asked you to always remember:\n- Answer briefly.\n\nMessage: hola"))
     }
 }

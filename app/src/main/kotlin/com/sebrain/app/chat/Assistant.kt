@@ -28,12 +28,20 @@ object Assistant {
             "- Never invent what a note says, and never cite a number that was not given.\n" +
             "- If the notes do not cover the question, say so in one short sentence, then answer from " +
             "general knowledge.\n" +
-            "- Earlier messages are the conversation so far; use them to understand follow-up questions.\n" +
+            "- Earlier messages are the conversation so far; use them to understand follow-up questions. " +
+            "When the user asks to continue or for the next one, move on to a topic not covered yet; " +
+            "never repeat an answer or a note you already wrote.\n" +
             "- Put every script or piece of code in a fenced code block with its language, like ```bash."
 
-    /** History given back to the model: the last messages, each shortened. */
+    /** Working memory: the last messages go back to the model in full, within this budget. */
     const val HISTORY_MESSAGES = 6
-    const val HISTORY_CHARS = 700
+    const val HISTORY_CHARS = 1200
+    const val HISTORY_BUDGET = 3000
+
+    /** Older messages are kept only as one outline line each. */
+    const val OUTLINE_CHARS = 100
+    const val OUTLINE_LINES = 20
+    const val MEMORY_CHARS = 300
 
     /** Context budget, so the prompt stays well inside the model's context window. */
     const val NOTE_CHARS = 900
@@ -46,6 +54,11 @@ object Assistant {
     )
     private val TAG_LINE = Regex("^[*_#\\s]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
     private val CITATION = Regex("\\s?\\[(\\d+)](?!\\()")
+    private val HEADING = Regex("^#{1,3}\\s+(.+)$", RegexOption.MULTILINE)
+    private val REMEMBER = Regex(
+        "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
     private val WIKILINK = Regex("\\[\\[([^\\[\\]|]+)(?:\\|[^\\[\\]]*)?]]")
 
     /** True when the user asks for the answer to be stored as a note. */
@@ -61,8 +74,71 @@ object Assistant {
         return previousUserMessage.trim().take(HISTORY_CHARS) + "\n" + text
     }
 
-    /** The user message the model sees: the vault notes as a small graph, then the request. */
-    fun prompt(message: String, notes: List<ContextNote>, asNote: Boolean, tags: List<String>): String = buildString {
+    /** One message of the conversation. */
+    class Line(val fromUser: Boolean, val text: String)
+
+    /**
+     * The conversation as the model remembers it, in three layers: [recent] messages word for
+     * word, [outline] with one line for each older message, and [covered], the titles of the
+     * notes and answers already written, so "the next one" does not repeat one of them.
+     */
+    class Memory(val recent: List<Line>, val outline: List<String>, val covered: List<String>)
+
+    fun remember(earlier: List<Line>): Memory {
+        var budget = HISTORY_BUDGET
+        val recent = ArrayDeque<Line>()
+        for (line in earlier.asReversed()) {
+            val text = shorten(line.text, HISTORY_CHARS)
+            if (recent.size == HISTORY_MESSAGES || text.length > budget) break
+            budget -= text.length
+            recent.addFirst(Line(line.fromUser, text))
+        }
+        // The model's chat format expects the history to start with the user.
+        while (recent.isNotEmpty() && !recent.first().fromUser) recent.removeFirst()
+        val older = earlier.dropLast(recent.size)
+        val outline = older.takeLast(OUTLINE_LINES).map { line ->
+            val gist = if (line.fromUser) line.text else heading(line.text) ?: line.text
+            (if (line.fromUser) "- User asked: " else "- You answered: ") +
+                shorten(gist.trim().lineSequence().firstOrNull().orEmpty(), OUTLINE_CHARS)
+        }
+        val covered = earlier.filter { !it.fromUser }.mapNotNull { heading(it.text) }.distinctBy { it.lowercase() }
+        return Memory(recent.toList(), outline, covered)
+    }
+
+    /** The first `# Heading` of a reply: the title of the note or topic it wrote. */
+    fun heading(text: String): String? = HEADING.find(text)?.groupValues?.get(1)?.trim()?.trim('*')?.trim()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * A fact the user asks SeBrain to keep, such as "recuerda que prefiero respuestas cortas".
+     * Null for anything else, including questions like "¿recuerdas que…?".
+     */
+    fun factToRemember(message: String): String? {
+        if ('?' in message) return null
+        return REMEMBER.find(message.trim())?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 3 }
+    }
+
+    /** The user message the model sees: its memory, the vault notes as a small graph, then the request. */
+    fun prompt(
+        message: String,
+        notes: List<ContextNote>,
+        asNote: Boolean,
+        tags: List<String>,
+        memory: Memory = Memory(emptyList(), emptyList(), emptyList()),
+        facts: List<String> = emptyList(),
+    ): String = buildString {
+        if (facts.isNotEmpty()) {
+            append("What the user asked you to always remember:\n")
+            facts.forEach { append("- ").append(shorten(it.replace('\n', ' '), MEMORY_CHARS)).append('\n') }
+            append('\n')
+        }
+        if (memory.outline.isNotEmpty()) {
+            append("Earlier in this conversation:\n").append(memory.outline.joinToString("\n")).append("\n\n")
+        }
+        if (memory.covered.isNotEmpty()) {
+            append("Already written in this conversation: ").append(memory.covered.joinToString("; ")).append(". ")
+            append("Do not write any of them again. If the user asks for the next one, write about a new topic ")
+            append("that follows them.\n\n")
+        }
         val found = notes.filter { it.via == null }
         val connected = notes.filter { it.via != null }
         if (found.isNotEmpty()) {
@@ -75,6 +151,8 @@ object Assistant {
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(noteFormat(notes.map { it.title }, tags))
+        // Last, because a small model follows the most recent instruction best.
+        append("\n\nWrite in the language of the message above, even if the notes are in another language.")
     }
 
     fun render(note: ContextNote, chars: Int): String = buildString {

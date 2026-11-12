@@ -589,6 +589,10 @@ class AppState(private val app: SeBrainApp) {
     fun ask(question: String) {
         val text = question.trim()
         if (text.isEmpty() || generating) return
+        Assistant.factToRemember(text)?.let { fact ->
+            rememberFact(text, fact)
+            return
+        }
         markGenerating(true)
         stopRequested = false
         messages += ChatMessage(true, text)
@@ -598,6 +602,30 @@ class AppState(private val app: SeBrainApp) {
             ensureModel()
         } else {
             generate(text)
+        }
+    }
+
+    /**
+     * "Remember that…": the fact is saved as a note tagged #memory, without asking the model.
+     * Notes with that tag go into every prompt, and the user can edit or delete them in Notes.
+     */
+    private fun rememberFact(message: String, fact: String) {
+        messages += ChatMessage(true, message)
+        persist(fromUser = true, text = message)
+        chatWorker.execute {
+            val outcome = runCatching {
+                tools.createNote("Memory: " + Assistant.shorten(fact.lineSequence().first(), 40), fact, listOf(VaultContext.MEMORY_TAG))
+            }.getOrElse { "The memory could not be saved: ${it.message}" }
+            val reply = if (outcome.startsWith("Created")) {
+                "Remembered. It is saved as a note tagged #memory, and I will keep it in mind in every chat."
+            } else {
+                outcome
+            }
+            onMain {
+                messages += ChatMessage(false, reply)
+                persist(fromUser = false, text = reply)
+                refreshNotes()
+            }
         }
     }
 
@@ -626,17 +654,20 @@ class AppState(private val app: SeBrainApp) {
     private fun generate(question: String) {
         // The history is what came before this message, without the action lines.
         val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
-        val history = earlier.takeLast(Assistant.HISTORY_MESSAGES)
-            .map { ChatEngine.Turn(it.fromUser, Assistant.shorten(it.text, Assistant.HISTORY_CHARS)) }
+        val memory = Assistant.remember(earlier.map { Assistant.Line(it.fromUser, it.text) })
+        val history = memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }
         val query = Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
         messages += ChatMessage(false, "")
         val index = messages.lastIndex
         val asNote = Assistant.wantsNote(question)
+        // What this conversation already wrote is not searched again, or the model copies it. For
+        // a question, only what is still word for word in the history is left out, so nothing is lost.
+        val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector) }) { found ->
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
-            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty())
+            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.facts.orEmpty())
             chatWorker.execute {
                 val result = runCatching {
                     if (stopRequested) {

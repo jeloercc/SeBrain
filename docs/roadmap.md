@@ -138,6 +138,28 @@ It changes the "does not filter other apps' traffic" decision above.
 - Not yet checked on the Pixel: a reply finishing while another app is on screen, and GPU
   speed in that state.
 
+## Memory architecture (2026-11-12)
+
+The model has a small context window, so memory is layered. Each layer is built without an
+extra model call (`chat/Assistant.remember`, `chat/VaultContext`).
+
+| Layer | What it holds | Where it lives |
+| --- | --- | --- |
+| Working memory | The last messages word for word: up to 6, 1200 characters each, 3000 in total | Sent as chat history (`initialMessages`) |
+| Conversation outline | One line for each older message: what the user asked, the title of what was answered | In the prompt |
+| Covered topics | Titles (`# Heading`) of the notes and answers already written in this conversation | In the prompt, with "do not write them again" |
+| Standing memory | Facts the user asked to keep. "Recuerda que…" / "Remember that…" saves a note tagged `#memory` without calling the model; the user edits or deletes it in Notes | Vault notes, in every prompt |
+| Knowledge | Notes matching the message, plus graph neighbours | Vault (hybrid search + links + tags) |
+| Episodes | Saved conversations | Vault, `conversation` and `message` tables |
+
+Fixes that came with it: a note already written in the conversation is left out of the
+retrieved context (the model was copying it when asked for "the next one"), and the prompt
+ends by asking for the language of the message, because notes in English pulled replies into
+English.
+
+Not built: a model-written summary of long conversations, search over past conversations, and
+automatic extraction of facts about the user. Not yet checked on the Pixel.
+
 ## Post-quantum cryptography
 
 Decided 2026-11-10: SeBrain uses native post-quantum cryptography instead of the user's TypeScript `pqc-sdk`, which a Kotlin app cannot run.
