@@ -72,6 +72,8 @@ dependencies {
     // Required by the upstream Java layer (SupportSQLite interfaces).
     api("androidx.sqlite:sqlite:2.7.0")
 
+    testImplementation("junit:junit:4.13.2")
+
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

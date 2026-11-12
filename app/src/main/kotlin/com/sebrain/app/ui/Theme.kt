@@ -12,16 +12,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Cyberpunk palette: neon cyan, magenta and yellow on near-black. The app is always dark. */
+/** Simple post-punk palette: ink black, bone, oxidized red and muted olive. */
 object Neon {
-    val Cyan = Color(0xFF00F0FF)
-    val Magenta = Color(0xFFFF2A6D)
-    val Yellow = Color(0xFFFCEE0A)
-    val Void = Color(0xFF07070D)
-    val Panel = Color(0xFF0F1020)
-    val PanelHigh = Color(0xFF171A2E)
-    val Line = Color(0xFF1F5F7A)
-    val Dim = Color(0xFF7C8BA6)
+    val Cyan = Color(0xFFE7E1D5)
+    val Magenta = Color(0xFFD04A4A)
+    val Coral = Color(0xFFE56B61)
+    val Yellow = Color(0xFFB4BE72)
+    val Void = Color(0xFF101010)
+    val Panel = Color(0xFF191817)
+    val PanelHigh = Color(0xFF24211F)
+    val Line = Color(0xFF5A4A43)
+    val Dim = Color(0xFFA79D91)
 }
 
 private val Colors = darkColorScheme(
@@ -36,9 +37,9 @@ private val Colors = darkColorScheme(
     tertiary = Neon.Yellow,
     onTertiary = Color(0xFF1F1D00),
     background = Neon.Void,
-    onBackground = Color(0xFFD7F9FF),
+    onBackground = Neon.Cyan,
     surface = Neon.Void,
-    onSurface = Color(0xFFD7F9FF),
+    onSurface = Neon.Cyan,
     surfaceVariant = Neon.PanelHigh,
     onSurfaceVariant = Neon.Dim,
     surfaceContainerLowest = Neon.Void,
@@ -47,7 +48,7 @@ private val Colors = darkColorScheme(
     surfaceContainerHigh = Neon.PanelHigh,
     surfaceContainerHighest = Neon.PanelHigh,
     outline = Neon.Line,
-    outlineVariant = Color(0xFF16384A),
+    outlineVariant = Color(0xFF3A2D2A),
     error = Color(0xFFFF4D4D),
 )
 

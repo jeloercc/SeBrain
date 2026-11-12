@@ -15,21 +15,30 @@ data class Note(
 /** Notes, tags and links. Every capture is a note. Use it inside [VaultSession.withDatabase]. */
 /** Notes and the links between them. A node without an id is a link target that does not exist yet. */
 class NoteGraph(val nodes: List<Node>, val edges: List<Pair<Int, Int>>) {
-    class Node(val id: Long?, val title: String)
+    class Node(val id: Long?, val title: String, val source: String = "unknown")
 }
 
 class NoteStore(private val db: SQLiteDatabase) {
     /** The newest [limit] notes and every link between them, as indexes into the node list. */
-    fun graph(limit: Int = 2000): NoteGraph {
+    fun graph(limit: Int = 2000, sources: Set<String>? = null): NoteGraph {
         val nodes = ArrayList<NoteGraph.Node>()
         val byId = HashMap<Long, Int>()
         val byTitle = HashMap<String, Int>()
-        db.rawQuery("SELECT id, COALESCE(title, substr(text, 1, 40)) FROM capture ORDER BY id DESC LIMIT $limit").use { c ->
+        val sourceClause = when {
+            sources == null -> ""
+            sources.isEmpty() -> " WHERE 0"
+            else -> " WHERE source IN (${sources.joinToString { "?" }})"
+        }
+        val args = sources?.toTypedArray() ?: emptyArray()
+        db.rawQuery(
+            "SELECT id, COALESCE(title, substr(text, 1, 40)), source FROM capture$sourceClause ORDER BY id DESC LIMIT $limit",
+            args,
+        ).use { c ->
             while (c.moveToNext()) {
                 val title = c.getString(1).orEmpty()
                 byId[c.getLong(0)] = nodes.size
                 byTitle.putIfAbsent(title.lowercase(), nodes.size)
-                nodes += NoteGraph.Node(c.getLong(0), title)
+                nodes += NoteGraph.Node(c.getLong(0), title, c.getString(2))
             }
         }
         val edges = LinkedHashSet<Pair<Int, Int>>()
@@ -37,7 +46,7 @@ class NoteStore(private val db: SQLiteDatabase) {
             while (c.moveToNext()) {
                 val source = byId[c.getLong(0)] ?: continue
                 val target = byTitle.getOrPut(c.getString(1).lowercase()) {
-                    nodes += NoteGraph.Node(null, c.getString(1))
+                    nodes += NoteGraph.Node(null, c.getString(1), "unresolved")
                     nodes.size - 1
                 }
                 if (source != target) edges += source to target

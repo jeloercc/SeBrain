@@ -1,5 +1,41 @@
 # Benchmarks — Phase 0
 
+## Search-scale harness
+
+`core/vault/src/androidTest/.../SearchScaleBenchmarkTest.kt` creates 10,000
+encrypted-vault notes, indexes one text chunk per note and reports 20 warmed
+full-text search samples with p50, p95 and maximum latency. Run it on the Pixel
+with:
+
+```sh
+scripts/run-scale-benchmark.sh <serial>
+```
+
+The harness reports measurements; it does not claim the research target
+(under 100 ms) until a real Pixel run records the result. The 50-question
+retrieval-quality evaluation still requires a user-supplied question set and
+gold answers.
+
+**Pixel 10 result, 2026-11-11 22:37:** 10,000 notes, 20 warmed text-search
+samples; p50 **28 ms**, p95 **31 ms**, maximum **31 ms**. This meets the
+latency target for this synthetic text-search workload. It does not establish
+the 50-question retrieval-quality target.
+
+## Retrieval-quality evaluation
+
+Use [`docs/retrieval-evaluation-template.csv`](retrieval-evaluation-template.csv)
+with 50 real questions and their expected note titles. Record the top-8 output
+for each question in a second CSV with columns `id,rank,retrieved_title`, then
+run:
+
+```sh
+scripts/evaluate-retrieval.py questions.csv results.csv
+```
+
+The evaluator rejects missing or unknown question IDs and exits successfully
+only when at least 80% of expected titles appear in the top eight. No accuracy
+claim is made until the real dataset is run.
+
 ## Diagnostic spike (`spikes/diag/`), 2026-11-07
 
 **Device:** Pixel 10 (`frankel`), Android 17, SDK 37 (`sdk_full` 37.1), patch 2026-10-05, build `CP3A.261005.005`, AICore 26.10.15.7. USB connected, battery 74%, Wi-Fi on.
