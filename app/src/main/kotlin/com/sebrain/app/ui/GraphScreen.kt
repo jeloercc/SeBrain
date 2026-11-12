@@ -110,7 +110,9 @@ private const val PULL = 0.25f
 @Composable
 fun GraphScreen(state: AppState, modifier: Modifier = Modifier) {
     val graph = state.graph
-    var layout by remember { mutableStateOf<Layout?>(null) }
+    // The layout is kept with the graph it was computed for, so a new graph is never drawn
+    // with an older graph's positions (that crashed with an index out of bounds).
+    var layout by remember { mutableStateOf<Pair<NoteGraph, Layout>?>(null) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     LaunchedEffect(state.graphSource) { state.loadGraph() }
@@ -122,14 +124,14 @@ fun GraphScreen(state: AppState, modifier: Modifier = Modifier) {
             val radius = SPACING * sqrt(graph.nodes.size.toFloat()) + SPACING
             scale = (480f / radius).coerceIn(0.15f, 2.5f)
             offset = Offset.Zero
-            layout = computed
+            layout = graph to computed
         }
     }
     val labelPaint = remember {
         Paint().apply { color = Color(0xFFDADADA).toArgb(); textSize = 26f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
     }
     Box(modifier.fillMaxSize().background(BACKGROUND)) {
-        val placed = layout
+        val placed = layout?.takeIf { it.first === graph }?.second
         if (graph == null || placed == null) {
             Text("Drawing the graph…", color = Color(0xFF9A9A9A), modifier = Modifier.align(Alignment.Center))
             return@Box
