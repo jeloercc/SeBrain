@@ -1,5 +1,7 @@
 package com.sebrain.app.ui
 
+import com.sebrain.app.chat.Assistant
+import com.sebrain.app.chat.VaultContext
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -168,6 +170,13 @@ private fun NoteList(state: AppState, modifier: Modifier) {
             val summary = when {
                 problem != null -> problem
                 state.query.isNotBlank() -> "${state.notes.size} results"
+                // Standing memory goes into every prompt, within a budget; say when it is exceeded.
+                state.selectedTag.equals(VaultContext.MEMORY_TAG, ignoreCase = true) -> {
+                    val cut = state.notes.size > VaultContext.MEMORY_NOTES ||
+                        state.notes.any { it.text.length > Assistant.MEMORY_CHARS + 60 }
+                    "${state.notes.size} memory notes · the assistant reads the ${VaultContext.MEMORY_NOTES} newest, " +
+                        "${Assistant.MEMORY_CHARS} characters each" + if (cut) " · over the limit: some are cut or left out" else ""
+                }
                 state.selectedTag != null -> "${state.notes.size} notes with #${state.selectedTag}"
                 else -> "${state.noteCount} notes"
             }

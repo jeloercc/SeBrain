@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.NoteFormat
 import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.ml.ModelFiles
 import java.io.File
@@ -71,8 +72,7 @@ class AssistantPhoneTest {
             earlier += Assistant.Line(true, request)
             earlier += Assistant.Line(false, reply)
             if (asNote) {
-                val (title, body, _) = Assistant.parseNote(reply, request)
-                vault += title to body
+                NoteFormat.parse(reply, request).forEach { vault += it.title to it.body }
             }
         }
         log("titles written: ${vault.map { it.first }}")
@@ -92,6 +92,23 @@ class AssistantPhoneTest {
             )
             if (result.isFailure) break
             chars *= 2
+        }
+    }
+
+    /** One note, then several in one request: what the model writes and what is saved after cleaning. */
+    @Test
+    fun noteFormat() {
+        for (request in listOf(
+            "haz una nota sobre el protocolo TCP",
+            "crea una nota para cada uno de estos protocolos: UDP, QUIC y HTTP/3",
+        )) {
+            val start = System.nanoTime()
+            val reply = chat.reply(Assistant.SYSTEM, emptyList(), Assistant.prompt(request, emptyList(), true, listOf("redes", "protocolos"))) {}
+            log("format request=\"$request\" seconds=%.1f stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))
+            log("format raw=${reply.replace("\n", "⏎")}")
+            NoteFormat.parse(reply, request).forEachIndexed { i, note ->
+                log("format note ${i + 1}: title=\"${note.title}\" tags=${note.tags} body=${note.body.replace("\n", "⏎")}")
+            }
         }
     }
 

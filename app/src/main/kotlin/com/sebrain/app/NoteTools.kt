@@ -32,6 +32,10 @@ class NoteTools(
             val clean = cleanTags(tags)
             if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })
         }
+        // Links point to titles, so two notes with one title would make them ambiguous.
+        if (session.withDatabase { NoteStore(it).findByTitle(title.trim()) } != null) {
+            return "A note titled \"${title.trim()}\" already exists; it was not saved again"
+        }
         val created = session.withDatabase { db ->
             write(db) {
                 NoteStore(db).create(body, NoteIndexer.sha256Hex(body), Instant.now().toString(), ZoneId.systemDefault().id)

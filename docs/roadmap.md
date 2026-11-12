@@ -176,8 +176,30 @@ Suggested facts: the "Suggest memories" button under the last reply asks the mod
 assistant never writes to standing memory on its own. Measured on the Pixel: 9 s, three
 correct facts, the known one not repeated.
 
-Left in `docs/plan-memory.md`: a memory size warning, conversations in the backup (needs
-approval of backup format v2), and the 20-conversation evaluation.
+Backup format v2 (approved 2026-11-12): the snapshot now carries the conversations, their
+messages and summaries; v1 backups are still read. Checked on the Pixel with a test vault:
+export, restore into another vault, messages searchable. The Notes screen, filtered by
+`#memory`, says how many memory notes there are and warns when they pass what the assistant
+reads (8 notes, 300 characters each).
+
+Left in `docs/plan-memory.md`: the 20-conversation evaluation.
+
+## Note format (2026-11-12)
+
+`chat/NoteFormat` owns the format of the notes the assistant writes.
+
+- **Template given to the model:** `# Title`, one or two sentences, `## Key points` (three to
+  six bullets), optional `## Details`, and a last `Tags:` line. Section names are in Spanish
+  ("Puntos clave", "Detalles") when the request is in Spanish.
+- **Several notes in one request:** each note starts at its own `# Title`; `##` is only for
+  sections. At most 5 notes per reply. Measured: three notes in 77 s.
+- **Cleaning, whatever the model wrote:** text before the first title and a closing question
+  are dropped; a code fence around the whole reply is removed; `*` and `•` bullets become
+  `-`; the title loses bold marks, "Title:" labels and final punctuation; tags are lowercased,
+  hyphenated and limited to 4; a `#` comment inside a code block is not taken for a title.
+- A note whose title already exists is not saved again, because links point to titles.
+- The titles written in a conversation (all of them, for a reply with several notes) feed the
+  "already written" list, so "the next one" skips them.
 
 ## Post-quantum cryptography
 

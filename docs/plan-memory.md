@@ -1,9 +1,9 @@
 # Plan: finish the assistant's memory
 
-**Status (2026-11-12):** steps 1 to 4 are done and on the Pixel; results in
-`docs/benchmarks.md`. Step 4 was built as "only on demand" (the "Suggest memories" button).
-Step 0 item 1 is done; items 2 to 5 need the user, as do the in-app checks of steps 2 to 4.
-Step 5 is next; its backup part waits for approval of backup format v2.
+**Status (2026-11-12):** steps 1 to 5 are done and on the Pixel; results in
+`docs/benchmarks.md`. Backup format v2 (approved) carries the conversations and still reads
+v1. Step 0 item 1 is done; items 2 to 5 need the user, as do the in-app checks of steps 2 to
+5. Step 6, the 20-conversation evaluation, is what remains.
 
 ## Step 0 — Check what is already built (no code)
 

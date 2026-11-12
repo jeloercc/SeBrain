@@ -11,10 +11,14 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 /**
  * Logical vault snapshot. It excludes derived chunks, FTS rows and vectors; those
  * are rebuilt after restore. Callers must encrypt the returned bytes before writing.
+ *
+ * Format version 2 (approved 2026-11-12) adds the saved conversations after the notes.
+ * Version 1 snapshots are still read; they simply have no conversations.
  */
 object VaultBackupSnapshot {
     private val MAGIC = "SBSN".toByteArray(StandardCharsets.US_ASCII)
-    private const val VERSION = 1
+    private const val VERSION = 2
+    private const val FIRST_VERSION = 1
     private const val MAX_RECORDS = 1_000_000
     private const val MAX_FIELD_BYTES = 16 * 1024 * 1024
 
@@ -25,6 +29,48 @@ object VaultBackupSnapshot {
         val tags: List<String>,
         val links: List<String>,
     )
+
+    data class Message(val fromUser: Boolean, val text: String, val createdAt: String)
+
+    data class Conversation(
+        val title: String,
+        val createdAt: String,
+        val updatedAt: String,
+        val summary: String?,
+        /** How many messages from the start the summary covers. */
+        val summarized: Int,
+        val messages: List<Message>,
+    )
+
+    class Snapshot(val records: List<Record>, val conversations: List<Conversation>)
+
+    private fun exportConversations(db: SQLiteDatabase): List<Conversation> {
+        val store = ConversationStore(db)
+        return db.rawQuery(
+            "SELECT id, title, created_at, updated_at FROM conversation ORDER BY id", emptyArray<String>(),
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val messages = db.rawQuery(
+                        "SELECT from_user, text, created_at FROM message WHERE conversation_id = ? ORDER BY id", id as Any,
+                    ).use { m -> buildList { while (m.moveToNext()) add(Message(m.getInt(0) == 1, m.getString(1), m.getString(2))) } }
+                    val summary = store.summary(id)
+                    add(Conversation(c.getString(1), c.getString(2), c.getString(3), summary?.first, summary?.second ?: 0, messages))
+                }
+            }
+        }
+    }
+
+    private fun restoreConversations(db: SQLiteDatabase, conversations: List<Conversation>) {
+        val store = ConversationStore(db)
+        for (conversation in conversations) {
+            val id = store.create(conversation.title, conversation.createdAt)
+            conversation.messages.forEach { store.add(id, it.fromUser, it.text, it.createdAt) }
+            if (conversation.summary != null) store.setSummary(id, conversation.summary, conversation.summarized)
+            db.execSQL("UPDATE conversation SET updated_at = ? WHERE id = ?", arrayOf<Any>(conversation.updatedAt, id))
+        }
+    }
 
     fun export(db: SQLiteDatabase): ByteArray {
         val records = mutableListOf<Record>()
@@ -61,12 +107,16 @@ object VaultBackupSnapshot {
                 )
             }
         }
-        return encode(records)
+        return encode(records, exportConversations(db))
     }
 
-    /** Restores only into an empty database. Derived search data must be rebuilt separately. */
+    /**
+     * Restores only into an empty database. Derived search data must be rebuilt separately.
+     * Returns the number of notes restored.
+     */
     fun restore(db: SQLiteDatabase, snapshot: ByteArray): Int {
-        val records = decode(snapshot)
+        val decoded = decode(snapshot)
+        val records = decoded.records
         val count = CaptureStore(db).count()
         check(count == 0L) { "Restore requires an empty vault" }
         db.beginTransaction()
@@ -94,6 +144,7 @@ object VaultBackupSnapshot {
                     )
                 }
             }
+            restoreConversations(db, decoded.conversations)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -101,12 +152,15 @@ object VaultBackupSnapshot {
         return records.size
     }
 
-    internal fun encode(records: List<Record>): ByteArray {
+    /** [version] exists so a test can write the old format; the app always writes the current one. */
+    internal fun encode(records: List<Record>, conversations: List<Conversation> = emptyList(), version: Int = VERSION): ByteArray {
         require(records.size <= MAX_RECORDS) { "Too many backup records" }
+        require(conversations.size <= MAX_RECORDS) { "Too many backup conversations" }
+        require(version in FIRST_VERSION..VERSION) { "Unsupported snapshot version" }
         val output = ByteArrayOutputStream()
         DataOutputStream(output).use { data ->
             data.write(MAGIC)
-            data.writeInt(VERSION)
+            data.writeInt(version)
             data.writeInt(records.size)
             records.forEach { record ->
                 writeString(data, record.capture.segmentId.toString())
@@ -121,18 +175,36 @@ object VaultBackupSnapshot {
                 writeStrings(data, record.tags)
                 writeStrings(data, record.links)
             }
+            if (version >= 2) {
+                data.writeInt(conversations.size)
+                conversations.forEach { conversation ->
+                    writeString(data, conversation.title)
+                    writeString(data, conversation.createdAt)
+                    writeString(data, conversation.updatedAt)
+                    writeNullable(data, conversation.summary)
+                    data.writeInt(conversation.summarized)
+                    require(conversation.messages.size <= MAX_RECORDS) { "Too many backup messages" }
+                    data.writeInt(conversation.messages.size)
+                    conversation.messages.forEach { message ->
+                        data.writeBoolean(message.fromUser)
+                        writeString(data, message.text)
+                        writeString(data, message.createdAt)
+                    }
+                }
+            }
         }
         return output.toByteArray()
     }
 
-    internal fun decode(bytes: ByteArray): List<Record> {
+    internal fun decode(bytes: ByteArray): Snapshot {
         DataInputStream(ByteArrayInputStream(bytes)).use { data ->
             val magic = ByteArray(MAGIC.size).also(data::readFully)
             require(magic.contentEquals(MAGIC)) { "Bad snapshot magic" }
-            require(data.readInt() == VERSION) { "Unsupported snapshot version" }
+            val version = data.readInt()
+            require(version in FIRST_VERSION..VERSION) { "Unsupported snapshot version" }
             val count = data.readInt()
             require(count in 0..MAX_RECORDS) { "Invalid snapshot record count" }
-            return buildList(count) {
+            val records = buildList(count) {
                 repeat(count) {
                     val capture = CaptureRecord(
                         UUID.fromString(readString(data)),
@@ -146,6 +218,21 @@ object VaultBackupSnapshot {
                     add(Record(capture, readNullable(data), readNullable(data), readStrings(data), readStrings(data)))
                 }
             }
+            if (version < 2) return Snapshot(records, emptyList())
+            val conversationCount = data.readInt()
+            require(conversationCount in 0..MAX_RECORDS) { "Invalid snapshot conversation count" }
+            val conversations = List(conversationCount) {
+                val title = readString(data)
+                val createdAt = readString(data)
+                val updatedAt = readString(data)
+                val summary = readNullable(data)
+                val summarized = data.readInt()
+                val messageCount = data.readInt()
+                require(messageCount in 0..MAX_RECORDS) { "Invalid snapshot message count" }
+                val messages = List(messageCount) { Message(data.readBoolean(), readString(data), readString(data)) }
+                Conversation(title, createdAt, updatedAt, summary, summarized, messages)
+            }
+            return Snapshot(records, conversations)
         }
     }
 

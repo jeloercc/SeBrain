@@ -20,7 +20,7 @@ object VaultContext {
 
     /** Notes with this tag are the user's standing instructions and facts; they go into every prompt. */
     const val MEMORY_TAG = "memory"
-    private const val MEMORY_NOTES = 8
+    const val MEMORY_NOTES = 8
 
     private const val PAST_MESSAGES = 2
 

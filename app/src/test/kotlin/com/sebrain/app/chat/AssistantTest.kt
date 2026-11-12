@@ -55,14 +55,6 @@ class AssistantTest {
     }
 
     @Test
-    fun parsedNoteKeepsTitleBodyAndTags() {
-        val (title, body, tags) = Assistant.parseNote("# Tea\n\nGreen and black.\n\nTags: drinks, tea", "fallback")
-        assertEquals("Tea", title)
-        assertEquals("Green and black.", body)
-        assertEquals(listOf("drinks", "tea"), tags)
-    }
-
-    @Test
     fun memoryKeepsRecentMessagesAndOutlinesOlderOnes() {
         val long = "x ".repeat(700)
         val earlier = listOf(

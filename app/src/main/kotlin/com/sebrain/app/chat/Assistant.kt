@@ -84,9 +84,7 @@ object Assistant {
         "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
         RegexOption.IGNORE_CASE,
     )
-    private val TAG_LINE = Regex("^[*_#\\s]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
     private val CITATION = Regex("\\s?\\[(\\d+)](?!\\()")
-    private val HEADING = Regex("^#{1,3}\\s+(.+)$", RegexOption.MULTILINE)
     private val REMEMBER = Regex(
         "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
@@ -147,7 +145,7 @@ object Assistant {
             (if (line.fromUser) "- User asked: " else "- You answered: ") +
                 shorten(gist.trim().replace(WHITESPACE, " "), OUTLINE_CHARS)
         }
-        val covered = earlier.filter { !it.fromUser }.mapNotNull { heading(it.text) }.distinctBy { it.lowercase() }
+        val covered = earlier.filter { !it.fromUser }.flatMap { NoteFormat.titles(it.text) }.distinctBy { it.lowercase() }
         return Memory(recent.toList(), outline, covered, summary?.takeIf { hasSummary })
     }
 
@@ -179,8 +177,8 @@ object Assistant {
         }
     }
 
-    /** The first `# Heading` of a reply: the title of the note or topic it wrote. */
-    fun heading(text: String): String? = HEADING.find(text)?.groupValues?.get(1)?.trim()?.trim('*')?.trim()?.takeIf { it.isNotEmpty() }
+    /** The first `# Title` of a reply: the note or topic it wrote. Section headings (`##`) do not count. */
+    fun heading(text: String): String? = NoteFormat.titles(text).firstOrNull()
 
     /**
      * A fact the user asks SeBrain to keep, such as "recuerda que prefiero respuestas cortas".
@@ -299,7 +297,7 @@ object Assistant {
             append('\n')
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
-        if (asNote) append(noteFormat(notes.map { it.title }, tags))
+        if (asNote) append(NoteFormat.instructions(message, notes.map { it.title }, tags))
         // Last, because a small model follows the most recent instruction best.
         append("\n\nWrite in the language of the message above, even if the notes are in another language.")
     }
@@ -314,40 +312,6 @@ object Assistant {
         )
         if (facts.isNotEmpty()) append('\n').append(facts.joinToString(" · "))
         append('\n').append(shorten(stripHeading(note.text, note.title), chars))
-    }
-
-    private fun noteFormat(titles: List<String>, tags: List<String>): String = buildString {
-        append("\n\nThe answer will be saved as a note in the vault. Write the information that was asked for, ")
-        append("complete and useful on its own. Do not repeat the request and do not say that you are creating a note.")
-        val linkable = titles.filter { it.isNotBlank() }.distinct()
-        if (linkable.isNotEmpty()) {
-            append("\nExisting notes you may link to: ").append(linkable.joinToString(", ") { "[[$it]]" }).append('.')
-            append(" Link one only where the new note really builds on it, writing its title exactly as shown.")
-        }
-        if (tags.isNotEmpty()) {
-            append("\nTags already in use: ").append(tags.joinToString(", ")).append(". Reuse them when they fit.")
-        }
-        append("\nUse exactly this format:\n# A short title\n\nThe content, in Markdown\n\n")
-        append("Tags: two to four lowercase one-word tags, separated by commas")
-    }
-
-    /** Splits a reply into title, body and tags. Without a `# Title` line, [fallbackTitle] is used. */
-    fun parseNote(reply: String, fallbackTitle: String): Triple<String, String, List<String>> {
-        val lines = reply.trim().lines().toMutableList()
-        var tags = emptyList<String>()
-        val tagIndex = lines.indexOfLast { TAG_LINE.matches(it.trim()) }
-        if (tagIndex >= 0) {
-            tags = TAG_LINE.find(lines[tagIndex].trim())!!.groupValues[1].split(',', ' ')
-                .map { it.trim().trim('*', '_', '#', '.') }.filter { it.isNotEmpty() }
-            lines.removeAt(tagIndex)
-        }
-        val first = lines.indexOfFirst { it.isNotBlank() }
-        val title = if (first >= 0 && lines[first].trimStart().startsWith("#")) {
-            lines.removeAt(first).trim().trimStart('#').trim().trim('*').trim()
-        } else {
-            fallbackTitle.lineSequence().firstOrNull().orEmpty().take(60)
-        }
-        return Triple(title.ifBlank { "Note" }, lines.joinToString("\n").trim(), tags)
     }
 
     /**

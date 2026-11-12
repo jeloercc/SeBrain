@@ -764,3 +764,16 @@ home-server script, with "Prefiere Docker a Podman" given as already remembered,
 proposed three facts in 9.2 s (226 prompt tokens, 59 reply tokens): the server name and system,
 the three services, and the data disk and its path. All three were stated by the user, and the
 known fact was not repeated.
+
+### Note format with the real model (2026-11-12)
+
+`AssistantPhoneTest#noteFormat`, same phone and model, one run, no vault notes in context.
+
+| Request | Time | Reply tokens | Result |
+| --- | --- | --- | --- |
+| "haz una nota sobre el protocolo TCP" | 25.7 s | 168 | One note with title, two-sentence lead, "Puntos clave" (4 bullets), "Detalles", 4 tags |
+| "crea una nota para cada uno de estos protocolos: UDP, QUIC y HTTP/3" | 77.0 s | 534 | Three notes, each in the same format with its own tags |
+
+The model followed the template in both cases, so the cleaning in `NoteFormat.parse` had
+nothing to fix here; its cases (introduction, closing question, code fence around the reply,
+`*` bullets, bold title, "Etiquetas:") are covered by unit tests only.

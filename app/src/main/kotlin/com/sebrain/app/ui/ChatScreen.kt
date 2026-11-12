@@ -264,7 +264,7 @@ private fun ChatsSheet(state: AppState, onClose: () -> Unit) {
 private fun Bubble(message: ChatMessage) {
     val colors = MaterialTheme.colorScheme
     if (message.isAction) {
-        Text("✓ ${message.text}", style = MaterialTheme.typography.labelLarge, color = colors.secondary, modifier = Modifier.padding(horizontal = 4.dp))
+        Text((if (message.text.startsWith("Created")) "✓ " else "• ") + message.text, style = MaterialTheme.typography.labelLarge, color = colors.secondary, modifier = Modifier.padding(horizontal = 4.dp))
         return
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {

@@ -99,4 +99,37 @@ class ConversationStoreTest {
             assertEquals("They counted." to 2, store.summary(id))
         }
     }
+
+    @Test
+    fun aBackupCarriesConversationsIntoAnotherVault() {
+        val id = conversation("Kernels", true to "List the kernel types", false to "Monolithic and exokernel.", true to "thanks")
+        val snapshot = session.withDatabase { db ->
+            ConversationStore(db).setSummary(id, "They listed kernels.", covered = 2)
+            VaultBackupSnapshot.export(db)
+        }
+
+        val otherDir = File(context.noBackupFilesDir, "conversation-restore-${System.nanoTime()}").apply { mkdirs() }
+        val otherKey = WrapKey(alias = "test_conversation_restore_${System.nanoTime()}")
+        val other = VaultSession(context, File(otherDir, "vault.db"), WrappedDekStore(File(otherDir, "dek.wrapped"), otherKey))
+        try {
+            other.withDatabase { db ->
+                assertEquals(0, VaultBackupSnapshot.restore(db, snapshot))
+                val store = ConversationStore(db)
+                val restored = store.list().single()
+                assertEquals("Kernels", restored.title)
+                assertEquals(3, restored.messages)
+                assertEquals(
+                    listOf(true to "List the kernel types", false to "Monolithic and exokernel.", true to "thanks"),
+                    store.messages(restored.id).map { it.fromUser to it.text },
+                )
+                assertEquals("They listed kernels." to 2, store.summary(restored.id))
+                // The restored messages are searchable.
+                assertEquals(listOf(restored.id), store.search("exokernel", 5).map { it.conversationId })
+            }
+        } finally {
+            other.close()
+            otherKey.delete()
+            otherDir.deleteRecursively()
+        }
+    }
 }

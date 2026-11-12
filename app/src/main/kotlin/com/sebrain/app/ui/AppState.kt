@@ -14,6 +14,7 @@ import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.vault.ConversationStore
@@ -857,16 +858,18 @@ class AppState(private val app: SeBrainApp) {
     }
 
     /**
-     * Stores a reply as a note in Obsidian format: `# Title`, the body with each citation turned
-     * into a `[[link]]` to the cited note, only links to notes that exist, and `#tags`.
+     * Stores the notes in a reply, one per `# Title`, in Obsidian format: the title, the cleaned
+     * body with each citation turned into a `[[link]]` to the cited note, only links to notes
+     * that exist, and `#tags`. Returns whether at least one note was created.
      */
     private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>): Boolean {
-        val (title, body, tags) = Assistant.parseNote(reply, question)
-        if (body.isBlank()) return false
-        val text = Assistant.linkify(body, context, title)
-        val outcome = runCatching { tools.createNote(title, text, tags) }.getOrElse { "The note could not be saved: ${it.message}" }
-        val created = outcome.startsWith("Created")
-        if (!created) onMain { messages += ChatMessage(false, outcome) }
+        var created = false
+        for (note in NoteFormat.parse(reply, question)) {
+            val text = Assistant.linkify(note.body, context, note.title)
+            val outcome = runCatching { tools.createNote(note.title, text, note.tags) }
+                .getOrElse { "The note could not be saved: ${it.message}" }
+            if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
+        }
         return created
     }
 
