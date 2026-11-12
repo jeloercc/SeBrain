@@ -23,20 +23,57 @@ Updated 2026-11-10. "Built" means it compiles and its local tests pass; "verifie
 | Step | Contents | Status |
 | --- | --- | --- |
 | 0 | Foundations: encrypted vault (SQLCipher, sqlite-vec, FTS5), Keystore keys, Share into the app | Verified on the Pixel |
-| 1 | Notes like Obsidian: writing, `#tags`, `[[links]]`, backlinks, tag filter, edit, delete, share out | Built, not verified |
-| 1b | Search by words and by meaning (EmbeddingGemma on the NPU) | Built, not verified inside the app |
-| 1c | Internet access and the Hugging Face model browser | Built, not verified |
-| 2 | Local AI chat: questions answered from the notes with citations, using the uncensored model; actions on notes (create, tag, link, search) | Built, not verified |
-| 3 | Link cleaning: strip tracking parameters from links that enter | Next |
-| 4 | Notification capture with a per-app allowlist | Pending |
-| 5 | Obsidian import and export (Markdown) | Pending |
-| 6 | Hardening: encrypted backup, post-quantum layer, privacy checks, threat model review | Pending |
+| 1 | Notes like Obsidian: writing, `#tags`, `[[links]]`, backlinks, tag filter, edit, delete, share out | Built and verified on Pixel |
+| 1b | Search by words and by meaning (EmbeddingGemma on the NPU) | Built and verified on Pixel |
+| 1c | Internet access and the Hugging Face model browser | Built and verified on Pixel |
+| 2 | Local AI chat: questions answered from the notes with citations, using the uncensored model; actions on notes (create, tag, link, search) | Built and verified on Pixel |
+| 3 | Link cleaning: strip tracking parameters from links that enter | Built, unit-tested |
+| 4 | Integrations and mini-brains: typed captures, provenance, source filters, and notification capture with a per-app allowlist | Implemented and verified on Pixel with Termux notification capture, provenance, source filtering and a saved mini-brain |
+| 5 | Obsidian import and export (Markdown) | Built, limitations documented |
+| 6 | Hardening: encrypted backup, post-quantum layer, privacy checks, threat model review | Privacy/dependency audit complete; encrypted export, temporary restore validation and derived-index rebuild implemented and SAF E2E verified on Pixel; PQC envelope design complete; provider benchmarks and activation remain pending |
+
+### Markdown interoperability limitations
+
+The Markdown bridge imports one document at a time through the Android file picker and uses the
+filename (without the final `.md`) as the note subject. It preserves the document text and
+reuses SeBrain's existing `#tags` and `[[links]]` parser; it does not attempt to reproduce
+Obsidian plugins, front matter, attachments, canvases, or a folder hierarchy. Export writes one
+selected note to a user-chosen unencrypted `.md` file outside the encrypted vault. Duplicate
+text is rejected by the existing content-deduplication rule.
 
 **One verification session** on the Pixel covers steps 1, 1b, 1c and 2 together.
 
 Open criteria from the research document, measured in step 6: search over 10,000 notes in under 100 ms, and the right chunk in the top 8 for at least 80% of 50 real questions.
 
 Designed but not built: processing with the phone locked (encrypted outbox, `docs/design-vault-session.md`), and a background `CognitionWorker` with automatic extraction (`docs/design-cognition-worker.md`). Both are lower priority under the current product direction.
+
+Integration architecture is specified in `docs/design-integrations-and-mini-brains.md`.
+The graph/database contract must be approved before schema changes are applied.
+SeBrain is intentionally a privacy control plane rather than a container or
+traffic interceptor for other apps. It can monitor explicitly shared data,
+allowlisted notifications and approved providers, but Android remains the
+authority for other apps' permissions and network behavior.
+The initial hardening audit is recorded in `docs/threat-model.md`.
+
+## Handoff for future agents
+
+This is an operational handoff. Read it before changing backup, indexing,
+integration or security behavior.
+
+- **Current branch:** `feature/integrations-mini-brains`.
+- **Worktree state:** changes are uncommitted; do not revert unrelated work.
+- **Completed:** `NoteIndexer.rebuildAll` rebuilds derived chunks, FTS/markup and
+  available vectors in bounded batches.
+- **Backup validation:** restore targets a uniquely named temporary SQLCipher
+  vault, rebuilds derived indexes, checks the restored note count, then deletes
+  the temporary database and wrapped key. The active vault is not replaced.
+- **Verified:** real SAF export and restore on Pixel `57301FDCR001DP` passed.
+  The flow restored 2 notes into a temporary vault and confirmed the active
+  vault was unchanged; the test artifact was deleted afterward.
+- **Do not claim:** retrieval-quality accuracy, PQC provider readiness or
+  active-vault replacement.
+- **Next safe action:** keep active-vault activation as a separately approved
+  design decision; do not implement it as an implicit extension of validation.
 
 ## Post-quantum cryptography
 
@@ -50,10 +87,12 @@ This changes the key hierarchy, so it is proposed and approved before it is impl
 
 ## Interface (2026-11-11)
 
-The app is one Compose activity (`MainActivity`, Material 3, dark and light) with three tabs:
-Notes (search, tag chips, note cards, full-screen viewer and editor), Ask (chat with the local
-model, streaming replies, model picker) and Models (Hugging Face search, download, import,
-remove). Screen state lives in `ui/AppState`; vault content is cleared from it in `onStop`.
+The app is one Compose activity (`MainActivity`, Material 3 dark mode) with five tabs:
+Notes (search, filters, note cards, network preview, full-screen viewer and editor), Graph
+(force-directed network with source filters), Ask (chat with the local model, streaming replies,
+model picker), Models (Hugging Face search, download, import, remove), and Integrate (encrypted
+notification allowlist). Screen state lives in `ui/AppState`;
+vault content is cleared from it in `onStop`.
 A model file is hashed once and the result is remembered for its exact size and modification
 time (`ModelFiles.verifyOnce`), so a multi-gigabyte model is not hashed on every load.
 
@@ -70,5 +109,6 @@ English); the prompt then asks for `# Title`, the content, and a `Tags:` line, a
 the notes the reply cites, and inline `#tags`. Every answer also has a "Save as note" button.
 
 The Graph tab draws notes as nodes and `[[links]]` as edges with a force-directed layout
-(`ui/GraphScreen`); links to notes that do not exist yet are grey nodes. Pinch to zoom, drag to
-pan, tap a node to open the note. Not yet run on the phone.
+(`ui/GraphScreen`); links to notes that do not exist yet are grey nodes. It supports source
+filters, pinch to zoom, drag to pan, and node taps. Source-filtered graph,
+notification capture and saved mini-brain behavior were verified on the Pixel with Termux.

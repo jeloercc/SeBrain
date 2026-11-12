@@ -1,5 +1,9 @@
 package com.sebrain.app.ui
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -10,6 +14,7 @@ import androidx.compose.runtime.setValue
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.cognition.NoteIndexer
+import com.sebrain.cognition.MarkdownInterop
 import com.sebrain.core.ml.KnownModel
 import com.sebrain.core.net.HubFile
 import com.sebrain.core.net.HubModel
@@ -21,8 +26,20 @@ import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.Note
 import com.sebrain.core.vault.NoteGraph
 import com.sebrain.core.vault.NoteStore
+import com.sebrain.core.vault.VaultBackupSnapshot
+import com.sebrain.core.vault.VaultSession
+import com.sebrain.core.crypto.BackupMetadata
+import com.sebrain.core.crypto.EncryptedBackupCodec
+import com.sebrain.core.crypto.WrappedDekStore
+import com.sebrain.ingest.IntegrationPolicyStore
+import com.sebrain.ingest.BrainStore
+import com.sebrain.ingest.MiniBrain
+import com.sebrain.ingest.NotificationCaptureService
 import java.time.Instant
 import java.time.ZoneId
+import java.nio.charset.StandardCharsets
+import java.io.File
+import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
@@ -32,6 +49,7 @@ class NoteDetail(val note: Note, val linksTo: List<CaptureSummary>, val linkedFr
 class NoteDraft(val id: Long?, val text: String)
 
 data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false, val saved: Boolean = false)
+data class IntegrationApp(val packageName: String, val label: String)
 
 /**
  * Everything the screens show and do. State is only changed on the main thread; vault, model
@@ -60,9 +78,70 @@ class AppState(private val app: SeBrainApp) {
     var tab by mutableStateOf(0)
     var graph by mutableStateOf<NoteGraph?>(null)
         private set
+    var graphSource by mutableStateOf<String?>(null)
+        private set
+    private var graphFilterSources: Set<String>? = null
+    var graphSources by mutableStateOf(emptyList<String>())
+        private set
+    var brains by mutableStateOf(emptyList<MiniBrain>())
+        private set
+    var selectedBrain by mutableStateOf<MiniBrain?>(null)
+        private set
+    var brainName by mutableStateOf("")
+    var brainSources by mutableStateOf(emptySet<String>())
+    var integrationApps by mutableStateOf(emptyList<IntegrationApp>())
+        private set
+    var notificationPackages by mutableStateOf(emptySet<String>())
+        private set
+    var notificationAccessEnabled by mutableStateOf(false)
+        private set
+    var backupStatus by mutableStateOf<String?>(null)
+        private set
 
     fun loadGraph() {
-        app.vault({ db -> NoteStore(db).graph() }) { result -> onMain { graph = result.getOrNull() } }
+        val source = graphFilterSources
+        app.vault({ db ->
+            val captures = CaptureStore(db)
+            captures.sources() to NoteStore(db).graph(sources = source)
+        }) { result ->
+            onMain {
+                result.onSuccess { (sources, loadedGraph) ->
+                    graphSources = sources
+                    graph = loadedGraph
+                }
+            }
+        }
+    }
+
+    fun selectGraphSource(source: String?) {
+        graphSource = source
+        graphFilterSources = source?.let(::setOf)
+        selectedBrain = null
+        loadGraph()
+    }
+
+    fun selectBrain(brain: MiniBrain?) {
+        selectedBrain = brain
+        graphSource = brain?.sources?.singleOrNull()
+        graphFilterSources = brain?.sources
+        loadGraph()
+    }
+
+    fun toggleBrainSource(source: String, enabled: Boolean) {
+        brainSources = brainSources.toMutableSet().apply {
+            if (enabled) add(source) else remove(source)
+        }.toSet()
+    }
+
+    fun saveBrain() {
+        val name = brainName.trim()
+        if (name.isEmpty() || brainSources.isEmpty()) return
+        val updated = (brains.filterNot { it.name.equals(name, ignoreCase = true) } +
+            MiniBrain(name, brainSources)).sortedBy { it.name.lowercase() }
+        brains = updated
+        brainName = ""
+        brainSources = emptySet()
+        chatWorker.execute { BrainStore(app).save(updated) }
     }
 
     /** Opens a note from another tab. */
@@ -75,6 +154,7 @@ class AppState(private val app: SeBrainApp) {
         app.onImported = { onMain { refreshNotes() } }
         app.requestImport()
         refreshInstalled()
+        refreshIntegrations()
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -85,6 +165,10 @@ class AppState(private val app: SeBrainApp) {
         detail = null
         draft = null
         graph = null
+        graphSources = emptyList()
+        graphFilterSources = null
+        brains = emptyList()
+        selectedBrain = null
         messages.clear()
         app.chat.cancel()
         chatWorker.execute {
@@ -117,6 +201,7 @@ class AppState(private val app: SeBrainApp) {
                 tag != null -> store.withTag(tag, LIMIT)
                 else -> captures.recent(LIMIT)
             }
+
             Triple(captures.count(), found, store.tags())
         }) { result ->
             onMain {
@@ -133,7 +218,115 @@ class AppState(private val app: SeBrainApp) {
                     vaultProblem = "The vault is not available (${it.javaClass.simpleName})"
                 }
             }
+
         }
+    }
+
+    fun refreshIntegrations() {
+        chatWorker.execute {
+            val packageManager = app.packageManager
+            val apps = packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+                .asSequence()
+                .filter { it.packageName != app.packageName }
+                .map {
+                    IntegrationApp(
+                        packageName = it.packageName,
+                        label = packageManager.getApplicationLabel(it).toString(),
+                    )
+                }
+
+                .sortedBy { it.label.lowercase() }
+                .toList()
+            val policy = runCatching { IntegrationPolicyStore(app).load() }
+                .getOrElse { com.sebrain.ingest.IntegrationPolicy.denyAll() }
+            val savedBrains = runCatching { BrainStore(app).load() }.getOrElse { emptyList() }
+            val enabledPackages = NotificationManagerCompat.getEnabledListenerPackages(app)
+            onMain {
+                integrationApps = apps
+                notificationPackages = policy.packages()
+                brains = savedBrains
+                notificationAccessEnabled = app.packageName in enabledPackages
+            }
+            app.vault({ db -> CaptureStore(db).sources() }) { result ->
+                onMain { graphSources = result.getOrDefault(emptyList()) }
+            }
+        }
+    }
+
+    fun exportBackup(uri: Uri, passphrase: CharArray) {
+        app.background({
+            try {
+                val encrypted = app.session.withDatabase { db ->
+                    val snapshot = VaultBackupSnapshot.export(db)
+                    EncryptedBackupCodec.encrypt(
+                        snapshot,
+                        passphrase,
+                        BackupMetadata(1, Instant.now().toString(), CaptureStore(db).count()),
+                    )
+                }
+                app.contentResolver.openOutputStream(uri)?.use { it.write(encrypted) }
+                    ?: error("Could not open backup destination")
+                "Backup exported"
+            } finally {
+                passphrase.fill('\u0000')
+            }
+        }) { result ->
+            onMain { backupStatus = result.fold({ it }, { "Backup failed (${it.javaClass.simpleName})" }) }
+        }
+    }
+
+    fun restoreBackup(uri: Uri, passphrase: CharArray) {
+        app.background({
+            val restoreDir = File(app.cacheDir, "sebrain-restore-${UUID.randomUUID()}")
+            var blob: ByteArray? = null
+            var payload: ByteArray? = null
+            try {
+                val encryptedBlob = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("Could not open backup")
+                blob = encryptedBlob
+                val decrypted = EncryptedBackupCodec.decrypt(encryptedBlob, passphrase)
+                payload = decrypted.payload
+                val session = VaultSession(
+                    app,
+                    File(restoreDir, "vault.db"),
+                    WrappedDekStore(File(restoreDir, "dek.wrapped")),
+                )
+                val count = try {
+                    session.withDatabase { db ->
+                        val restored = VaultBackupSnapshot.restore(db, decrypted.payload)
+                        val rebuilt = app.indexer.rebuildAll(db)
+                        check(rebuilt.notes == restored) { "Restore index count mismatch" }
+                        restored
+                    }
+                } finally {
+                    session.close()
+                }
+                "Backup validated and restored to a temporary vault ($count note(s)); active vault unchanged"
+            } finally {
+                passphrase.fill('\u0000')
+                blob?.fill(0)
+                payload?.fill(0)
+                restoreDir.deleteRecursively()
+            }
+        }) { result ->
+            onMain { backupStatus = result.fold({ it }, { "Restore failed (${it.javaClass.simpleName})" }) }
+        }
+    }
+
+    fun setNotificationPackageEnabled(packageName: String, enabled: Boolean) {
+        val updated = notificationPackages.toMutableSet().apply {
+            if (enabled) add(packageName) else remove(packageName)
+        }.toSet()
+        notificationPackages = updated
+        chatWorker.execute {
+            val policy = com.sebrain.ingest.IntegrationPolicy.fromPackages(updated)
+            IntegrationPolicyStore(app).save(policy)
+            NotificationCaptureService.configurePolicy(updated)
+        }
+    }
+
+    fun openNotificationSettings() {
+        app.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     fun open(id: Long) {
@@ -141,6 +334,12 @@ class AppState(private val app: SeBrainApp) {
             val store = NoteStore(db)
             store.get(id)?.let { NoteDetail(it, store.linkedFrom(id), store.backlinks(id)) }
         }) { result -> onMain { detail = result.getOrNull() } }
+    }
+
+    fun openByTitle(title: String) {
+        app.vault({ db -> NoteStore(db).findByTitle(title) }) { result ->
+            result.getOrNull()?.let(::open)
+        }
     }
 
     fun closeDetail() {
@@ -184,6 +383,49 @@ class AppState(private val app: SeBrainApp) {
             onMain {
                 detail = null
                 refreshNotes()
+            }
+        }
+    }
+
+    fun exportMarkdown(id: Long, uri: Uri) {
+        app.vault({ db -> NoteStore(db).get(id) }) { result ->
+            result.onSuccess { note ->
+                if (note == null) return@onSuccess
+                app.background({
+                    app.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(note.text.toByteArray(StandardCharsets.UTF_8))
+                    } ?: error("The selected document cannot be written")
+                }) {}
+            }
+        }
+    }
+
+    fun importMarkdown(uri: Uri) {
+        app.background({
+            val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+                ?: "Untitled.md"
+            val text = app.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(StandardCharsets.UTF_8) }
+                ?: error("The selected document cannot be read")
+            val document = MarkdownInterop.importDocument(name, text)
+            val hash = NoteIndexer.sha256Hex(text)
+            val now = Instant.now().toString()
+            app.session.withDatabase { db ->
+                db.beginTransaction()
+                try {
+                    val store = NoteStore(db)
+                    val id = store.create(text, hash, now, ZoneId.systemDefault().id)
+                        ?: error("A note with the same text already exists")
+                    app.indexer.index(db, id, text, document.subject)
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        }) { result ->
+            onMain {
+                result.onSuccess { refreshNotes() }
+                    .onFailure { vaultProblem = "Markdown import failed (${it.message ?: it.javaClass.simpleName})" }
             }
         }
     }

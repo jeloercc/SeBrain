@@ -70,6 +70,11 @@ class CaptureStore(private val db: SQLiteDatabase) {
         c.getLong(0)
     }
 
+    fun sources(): List<String> = db.rawQuery(
+        "SELECT DISTINCT source FROM capture ORDER BY source",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList() }
+
     fun findBySegmentId(segmentId: UUID): CaptureRecord? = db.rawQuery(
         "SELECT segment_id, content_sha256, captured_at, time_zone, source, subject, text " +
             "FROM capture WHERE segment_id = ?",

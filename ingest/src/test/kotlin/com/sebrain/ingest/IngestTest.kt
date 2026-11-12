@@ -47,6 +47,24 @@ class IngestTest {
     }
 
     @Test
+    fun removesTrackingParametersAndKeepsFunctionalQueryAndFragment() {
+        val input = "Read https://example.com/article?id=42&utm_source=mail&gclid=abc#details."
+        assertEquals("Read https://example.com/article?id=42#details.", CaptureNormalizer.normalize(input))
+    }
+
+    @Test
+    fun removesTrackingParametersFromMarkdownTextWithoutRemovingPunctuation() {
+        val input = "[Article](https://example.com/a?fbclid=abc&utm_campaign=spring), then continue."
+        assertEquals("[Article](https://example.com/a), then continue.", CaptureNormalizer.normalize(input))
+    }
+
+    @Test
+    fun preservesUnknownParametersAndNonHttpText() {
+        val input = "ref=utm_source&x=1 https://example.com/a?session=keep&x=2"
+        assertEquals("ref=utm_source&x=1 https://example.com/a?session=keep&x=2", CaptureNormalizer.normalize(input))
+    }
+
+    @Test
     fun storesEncryptedSegmentWithCapturedAt() {
         val result = ingestor().ingest(Capture("Reunión el jueves", "share", "Asunto")) as IngestResult.Stored
         val file = File(inbox, "${result.segmentId}.seg")
@@ -108,5 +126,25 @@ class IngestTest {
             ingestor { error("no key") }.ingest(Capture("retry", "share"))
         }
         assertTrue(ingestor().ingest(Capture("retry", "share")) is IngestResult.Stored)
+    }
+
+    @Test
+    fun integrationPolicyDeniesPackagesByDefaultAndAllowsOnlyExactNames() {
+        val policy = IntegrationPolicy.fromPackages(listOf("com.example.mail", " com.example.calendar "))
+
+        assertTrue(policy.allows("com.example.mail"))
+        assertTrue(policy.allows("com.example.calendar"))
+        assertFalse(policy.allows("com.example.browser"))
+        assertFalse(IntegrationPolicy.denyAll().allows("com.example.mail"))
+    }
+
+    @Test
+    fun integrationPolicyRejectsWildcardsAndMalformedNames() {
+        assertThrows(IllegalArgumentException::class.java) {
+            IntegrationPolicy.fromPackages(listOf("*"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            IntegrationPolicy.fromPackages(listOf("com"))
+        }
     }
 }

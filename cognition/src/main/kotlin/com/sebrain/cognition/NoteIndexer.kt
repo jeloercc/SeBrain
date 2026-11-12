@@ -13,6 +13,8 @@ class NoteIndexer(
     /** Embeds texts, or returns null if no embedding model is available. */
     private val embed: (List<String>) -> List<FloatArray>? = { null },
 ) {
+    data class RebuildResult(val notes: Int, val vectors: Int)
+
     /** Rebuilds the index of one note. Call it inside a transaction with the write that changed the text. */
     fun index(db: SQLiteDatabase, id: Long, text: String, subject: String? = null) {
         val chunks = Chunker.chunk(text)
@@ -29,6 +31,32 @@ class NoteIndexer(
     /** A failing model must not block a write: the text is still stored and searchable. */
     fun embedOrNull(texts: List<String>): List<FloatArray>? =
         if (texts.isEmpty()) emptyList() else runCatching { embed(texts) }.getOrNull()?.takeIf { it.size == texts.size }
+
+    /** Rebuilds derived search data without changing capture text or provenance. */
+    fun rebuildAll(db: SQLiteDatabase, batchSize: Int = 32): RebuildResult {
+        require(batchSize > 0) { "Batch size must be positive" }
+        var notes = 0
+        while (true) {
+            val pending = com.sebrain.core.vault.CaptureStore(db).withoutIndex(batchSize)
+            if (pending.isEmpty()) break
+            pending.forEach { (id, text) ->
+                index(db, id, text)
+                notes++
+            }
+        }
+
+        var vectors = 0
+        while (true) {
+            val pending = ChunkStore(db).chunksWithoutVector(batchSize)
+            if (pending.isEmpty()) break
+            val embeddings = embedOrNull(pending.map { it.text }) ?: break
+            pending.forEachIndexed { index, chunk ->
+                ChunkStore(db).addVector(chunk, embeddings[index])
+                vectors++
+            }
+        }
+        return RebuildResult(notes, vectors)
+    }
 
     companion object {
         fun sha256Hex(text: String): String =

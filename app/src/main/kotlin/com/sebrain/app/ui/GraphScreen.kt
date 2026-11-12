@@ -6,8 +6,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,9 +38,9 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val NODE = Neon.Yellow
-private val MISSING = Color(0xFF6B6B6B)
-private val EDGE = Color(0xAA00F0FF)
+private val NODE = Neon.Coral
+private val MISSING = Neon.Dim
+private val EDGE = Neon.Line.copy(alpha = 0.7f)
 private val BACKGROUND = Neon.Void
 
 /** Where each node is drawn, in graph units, and how many links it has. */
@@ -109,7 +113,7 @@ fun GraphScreen(state: AppState, modifier: Modifier = Modifier) {
     var layout by remember { mutableStateOf<Layout?>(null) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    LaunchedEffect(Unit) { state.loadGraph() }
+    LaunchedEffect(state.graphSource) { state.loadGraph() }
     LaunchedEffect(graph) {
         layout = null
         if (graph != null) {
@@ -179,11 +183,38 @@ fun GraphScreen(state: AppState, modifier: Modifier = Modifier) {
                 if (labels) drawContext.canvas.nativeCanvas.drawText(graph.nodes[i].title.take(24), px, py + radius + 28f, labelPaint)
             }
         }
-        Text(
-            "${graph.nodes.count { it.id != null }} notes · ${graph.edges.size} links",
-            color = Color(0xFF9A9A9A),
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
-        )
+        Column(Modifier.align(Alignment.TopStart).padding(16.dp)) {
+            Text("NETWORK GRAPH", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+            Text(
+                "${graph.nodes.count { it.id != null }} notes · ${graph.edges.size} links",
+                color = Neon.Dim,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+            ) {
+                SourceFilter("ALL", state.graphSource == null && state.selectedBrain == null) { state.selectGraphSource(null) }
+                state.brains.forEach { brain ->
+                    SourceFilter(brain.name.uppercase(), state.selectedBrain == brain) {
+                        state.selectBrain(brain)
+                    }
+                }
+                state.graphSources.forEach { source ->
+                    SourceFilter(source.uppercase(), state.graphSource == source) {
+                        state.selectGraphSource(source)
+                    }
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun SourceFilter(label: String, selected: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+    )
 }

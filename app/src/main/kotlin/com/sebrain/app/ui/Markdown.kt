@@ -10,9 +10,12 @@ import android.os.PersistableBundle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal class Segment(val code: Boolean, val text: String, val language: String)
+
+private val WIKI_LINK = Regex("""\[\[([^\]]+)]]""")
 
 /** Splits Markdown into prose and fenced code blocks. An unclosed fence runs to the end. */
 internal fun segments(text: String): List<Segment> {
@@ -88,15 +93,70 @@ private const val TERMUX = "com.termux"
 
 /** Shows Markdown text with its code blocks set apart. [title] names the file a block is sent as. */
 @Composable
-fun MarkdownBody(text: String, title: String, color: Color = MaterialTheme.colorScheme.onSurface) {
+fun MarkdownBody(
+    text: String,
+    title: String,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    onLinkClick: (String) -> Unit = {},
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         segments(text).forEach { segment ->
             if (segment.code) {
                 CodeBlock(segment, title)
             } else {
-                SelectionContainer { Text(segment.text, style = MaterialTheme.typography.bodyLarge, color = color) }
+                InlineMarkdown(segment.text, color = color, onLinkClick = onLinkClick)
             }
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun InlineMarkdown(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines: Int = Int.MAX_VALUE,
+    onLinkClick: (String) -> Unit = {},
+) {
+    val parts = buildList {
+        var cursor = 0
+        WIKI_LINK.findAll(text).forEach { match ->
+            if (match.range.first > cursor) add(text.substring(cursor, match.range.first) to null)
+            add(match.groupValues[1] to match.groupValues[1])
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) add(text.substring(cursor) to null)
+    }
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        maxLines = maxLines,
+    ) {
+        parts.forEach { (value, link) ->
+            if (link == null) {
+                SelectionContainer {
+                    Text(value, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = maxLines)
+                }
+            } else {
+                LinkPill(link, onClick = { onLinkClick(link) })
+            }
+        }
+    }
+}
+
+@Composable
+fun LinkPill(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .background(Neon.PanelHigh, MaterialTheme.shapes.small)
+            .border(BorderStroke(1.dp, Neon.Line), MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, color = Neon.Cyan, style = MaterialTheme.typography.labelSmall)
     }
 }
 

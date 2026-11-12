@@ -1,23 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A hexagonal vault with three linked nodes inside. -->
+<!-- A simple circuit-brain mark in coral and bone on the dark adaptive-icon background. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M54,28 L76.5,41 L76.5,67 L54,80 L31.5,67 L31.5,41 Z"
-        android:strokeColor="#00F0FF"
+        android:pathData="M54,14 A40,40 0,1 1,53.99,14"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#E7E1D5"
+        android:strokeWidth="3.5" />
+    <path
+        android:pathData="M52,29 C43,23 34,29 35,38 C27,39 24,47 29,53 C24,60 29,68 36,68 C34,77 43,83 50,77 C55,84 65,81 67,75 C76,77 82,68 77,61 C84,56 81,46 74,43 C76,34 66,27 58,31 Z"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#D04A4A"
         android:strokeWidth="3.5"
-        android:strokeLineJoin="miter" />
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round" />
     <path
-        android:pathData="M54,54 L54,39 M54,54 L41,61.5 M54,54 L67,61.5"
-        android:strokeColor="#FF2A6D"
-        android:strokeWidth="2.5" />
+        android:pathData="M54,31 L54,75 M37,42 C44,42 48,46 48,52 L48,59 C48,64 45,67 40,67 M71,43 C64,43 60,47 60,53 L60,60 C60,66 64,69 69,69 M42,53 L48,53 M60,54 L67,54 M48,61 L54,61 M54,69 L62,69"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#E7E1D5"
+        android:strokeWidth="2.5"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#FCEE0A"
-        android:pathData="M49,54 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
-    <path
-        android:fillColor="#00F0FF"
-        android:pathData="M50.5,39 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0 M37.5,61.5 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0 M63.5,61.5 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
+        android:fillColor="#D04A4A"
+        android:pathData="M37,42 a3.5,3.5 0,1 0,7,0 a3.5,3.5 0,1 0,-7,0 M67,43 a3.5,3.5 0,1 0,7,0 a3.5,3.5 0,1 0,-7,0 M37,67 a3.5,3.5 0,1 0,7,0 a3.5,3.5 0,1 0,-7,0 M66,69 a3.5,3.5 0,1 0,7,0 a3.5,3.5 0,1 0,-7,0" />
 </vector>

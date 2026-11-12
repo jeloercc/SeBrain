@@ -14,6 +14,7 @@ internal object CaptureNormalizer {
             .replace("\u0000", "")
             .replace(TRAILING_SPACES, "")
             .trim()
+            .let(LinkCleaner::clean)
 
     fun sha256(canonical: String): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
