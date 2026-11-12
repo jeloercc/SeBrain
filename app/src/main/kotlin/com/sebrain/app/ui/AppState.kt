@@ -225,16 +225,19 @@ class AppState(private val app: SeBrainApp) {
     fun refreshIntegrations() {
         chatWorker.execute {
             val packageManager = app.packageManager
-            val apps = packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+            val launcher = android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            val apps = packageManager.queryIntentActivities(launcher, PackageManager.ResolveInfoFlags.of(0))
                 .asSequence()
+                .map { it.activityInfo.applicationInfo }
                 .filter { it.packageName != app.packageName }
+                .distinctBy { it.packageName }
                 .map {
                     IntegrationApp(
                         packageName = it.packageName,
                         label = packageManager.getApplicationLabel(it).toString(),
                     )
                 }
-
                 .sortedBy { it.label.lowercase() }
                 .toList()
             val policy = runCatching { IntegrationPolicyStore(app).load() }

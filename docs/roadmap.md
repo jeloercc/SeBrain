@@ -61,7 +61,8 @@ This is an operational handoff. Read it before changing backup, indexing,
 integration or security behavior.
 
 - **Current branch:** `feature/integrations-mini-brains`.
-- **Worktree state:** changes are uncommitted; do not revert unrelated work.
+- **Worktree state:** all work is committed on this branch (last checked 2026-11-12); it is not merged into `main` yet.
+- **Verified 2026-11-12:** `assembleDebug`, `testDebugUnitTest`, `lintDebug` and `scripts/check-release-privacy.sh` pass. The notification allowlist now lists launcher apps through a `<queries>` intent instead of `QUERY_ALL_PACKAGES`.
 - **Completed:** `NoteIndexer.rebuildAll` rebuilds derived chunks, FTS/markup and
   available vectors in bounded batches.
 - **Backup validation:** restore targets a uniquely named temporary SQLCipher

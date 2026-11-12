@@ -2,14 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Required to show every installed package in the integration allowlist. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-
     <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway (HTTPS only). -->
 
-    <!-- Code blocks can be sent to Termux, after the user confirms. -->
     <queries>
+        <!-- Code blocks can be sent to Termux, after the user confirms. -->
         <package android:name="com.termux" />
+        <!-- Launcher apps only, for the notification allowlist. No QUERY_ALL_PACKAGES. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

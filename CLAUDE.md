@@ -67,7 +67,7 @@ Disabled and out of scope until Phase 7. Android 17 revokes it with Advanced Pro
 
 ## Gradle modules
 
-`:app` (Compose) · `:ingest` · `:cognition` · `:core:crypto` · `:core:vault` (includes the SQLCipher + sqlite-vec `.so`) · `:core:ml`
+`:app` (Compose) · `:ingest` · `:cognition` · `:core:crypto` · `:core:vault` (includes the SQLCipher + sqlite-vec `.so`) · `:core:ml` · `:core:net` (`TailnetGateway`, Hugging Face client)
 
 `minSdk` and `targetSdk`: Android 16/17 (the only device is the Pixel 10). Do not add compatibility with older versions.
 
@@ -88,12 +88,11 @@ Each spike delivered minimal code + numbers measured on the Pixel 10. Details in
 - `nano-v4-full` observed; ML Kit stays optional pending the telemetry analysis.
 - The Worker does not run under forced Doze (blocked for 15 min, started 6 s after `unforce`); the design requires charging.
 
-## Next phases
+## Current status (2026-11-12)
 
-- **Phase 1 (vault + Share MVP):** implemented; see `docs/plan-phase1.md`, `docs/design-vault-session.md` and `docs/design-phase1-mvp.md`. Run `scripts/run-phone-tests.sh` for the phone tests.
-- **Phase 2, first task:** LiteRT-LM benchmark of EmbeddingGemma 2 (270M) on NPU, GPU and CPU. Measure latency, tokens/s, peak RAM and temperature after 10 min.
-- **Phase 4, extraction-model benchmark:** compare Gemma 3 1B with Gemma 4 E2B on NPU, GPU and CPU, with the same measurements.
-  - Measure the `createConversation` cost with and without constrained decoding in the background. So far it was only measured in the foreground (2660 ms versus 3 ms); the background saving is an extrapolation.
+The step table in `docs/roadmap.md` is the source of truth. Steps 0 to 5 are built; steps 0, 1, 1b, 1c, 2 and 4 are verified on the Pixel. Step 6 (hardening) is partial: the encrypted backup and the temporary restore validation work, while active-vault replacement and the PQC layer still need an approved design. Run `scripts/run-phone-tests.sh` for the phone tests.
+
+Still pending from the original phases: the extraction-model benchmark (Gemma 3 1B against Gemma 4 E2B), and measuring the `createConversation` cost with constrained decoding in the background. It was only measured in the foreground (2660 ms versus 3 ms).
 
 ## Open decisions (do not assume; ask)
 
