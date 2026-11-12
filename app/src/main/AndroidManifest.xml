@@ -4,10 +4,16 @@
 
     <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway (HTTPS only). -->
 
+    <!-- Code blocks can be sent to Termux, after the user confirms. -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <application
         android:name=".SeBrainApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
         android:label="SeBrain"
         android:usesCleartextTraffic="false">
         <activity

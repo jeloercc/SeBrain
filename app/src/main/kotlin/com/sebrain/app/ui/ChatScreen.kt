@@ -1,6 +1,7 @@
 package com.sebrain.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,8 +15,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
@@ -148,16 +147,14 @@ private fun Bubble(message: ChatMessage) {
         return
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
-        SelectionContainer {
-            Text(
-                message.text.ifEmpty { "…" },
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .background(if (message.fromUser) colors.primaryContainer else colors.surfaceContainerHigh, RoundedCornerShape(18.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                color = if (message.fromUser) colors.onPrimaryContainer else colors.onSurface,
-                style = MaterialTheme.typography.bodyLarge,
-            )
+        Box(
+            Modifier
+                .widthIn(max = 340.dp)
+                .background(if (message.fromUser) colors.primaryContainer else colors.surfaceContainerHigh, MaterialTheme.shapes.medium)
+                .border(1.dp, if (message.fromUser) colors.primary.copy(alpha = 0.5f) else colors.outline, MaterialTheme.shapes.medium)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            MarkdownBody(message.text.ifEmpty { "…" }, "script", if (message.fromUser) colors.onPrimaryContainer else colors.onSurface)
         }
     }
 }

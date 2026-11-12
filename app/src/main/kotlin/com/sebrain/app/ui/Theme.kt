@@ -1,44 +1,80 @@
 package com.sebrain.app.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
-private val Dark = darkColorScheme(
-    primary = Color(0xFF7CC4FF),
-    onPrimary = Color(0xFF00213A),
-    primaryContainer = Color(0xFF123A5C),
-    onPrimaryContainer = Color(0xFFD3E8FF),
-    secondary = Color(0xFF9BE9A8),
-    onSecondary = Color(0xFF07310F),
-    secondaryContainer = Color(0xFF1B3A24),
-    onSecondaryContainer = Color(0xFFC9F5D1),
-    background = Color(0xFF0D1117),
-    onBackground = Color(0xFFE6EDF3),
-    surface = Color(0xFF0D1117),
-    onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = Color(0xFF1C2330),
-    onSurfaceVariant = Color(0xFF9DA7B3),
-    surfaceContainer = Color(0xFF161B22),
-    surfaceContainerHigh = Color(0xFF1C2330),
-    outline = Color(0xFF3A4452),
-    error = Color(0xFFFF7B72),
+/** Cyberpunk palette: neon cyan, magenta and yellow on near-black. The app is always dark. */
+object Neon {
+    val Cyan = Color(0xFF00F0FF)
+    val Magenta = Color(0xFFFF2A6D)
+    val Yellow = Color(0xFFFCEE0A)
+    val Void = Color(0xFF07070D)
+    val Panel = Color(0xFF0F1020)
+    val PanelHigh = Color(0xFF171A2E)
+    val Line = Color(0xFF1F5F7A)
+    val Dim = Color(0xFF7C8BA6)
+}
+
+private val Colors = darkColorScheme(
+    primary = Neon.Cyan,
+    onPrimary = Color(0xFF00202A),
+    primaryContainer = Color(0xFF06323D),
+    onPrimaryContainer = Neon.Cyan,
+    secondary = Neon.Magenta,
+    onSecondary = Color(0xFF2A0010),
+    secondaryContainer = Color(0xFF3D0A1E),
+    onSecondaryContainer = Color(0xFFFFB3C8),
+    tertiary = Neon.Yellow,
+    onTertiary = Color(0xFF1F1D00),
+    background = Neon.Void,
+    onBackground = Color(0xFFD7F9FF),
+    surface = Neon.Void,
+    onSurface = Color(0xFFD7F9FF),
+    surfaceVariant = Neon.PanelHigh,
+    onSurfaceVariant = Neon.Dim,
+    surfaceContainerLowest = Neon.Void,
+    surfaceContainerLow = Neon.Panel,
+    surfaceContainer = Neon.Panel,
+    surfaceContainerHigh = Neon.PanelHigh,
+    surfaceContainerHighest = Neon.PanelHigh,
+    outline = Neon.Line,
+    outlineVariant = Color(0xFF16384A),
+    error = Color(0xFFFF4D4D),
 )
 
-private val Light = lightColorScheme(
-    primary = Color(0xFF0B63B0),
-    secondary = Color(0xFF1F7A35),
-    background = Color(0xFFF8FAFC),
-    surface = Color(0xFFF8FAFC),
-    surfaceVariant = Color(0xFFE6EBF1),
-    surfaceContainer = Color(0xFFFFFFFF),
-    surfaceContainerHigh = Color(0xFFEEF2F6),
+private val Cut = Shapes(
+    extraSmall = CutCornerShape(4.dp),
+    small = CutCornerShape(6.dp),
+    medium = CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp),
+    large = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp),
+    extraLarge = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp),
 )
+
+private val Mono = FontFamily.Monospace
+
+private fun typography(): Typography {
+    val base = Typography()
+    return base.copy(
+        headlineSmall = base.headlineSmall.copy(fontFamily = Mono, fontWeight = FontWeight.Bold),
+        titleLarge = base.titleLarge.copy(fontFamily = Mono, fontWeight = FontWeight.Bold),
+        titleMedium = base.titleMedium.copy(fontFamily = Mono, fontWeight = FontWeight.Bold),
+        titleSmall = base.titleSmall.copy(fontFamily = Mono, fontWeight = FontWeight.Bold),
+        labelLarge = base.labelLarge.copy(fontFamily = Mono, letterSpacing = 1.sp),
+        labelMedium = base.labelMedium.copy(fontFamily = Mono, letterSpacing = 1.sp),
+        labelSmall = base.labelSmall.copy(fontFamily = Mono, letterSpacing = 1.sp),
+    )
+}
 
 @Composable
 fun SeBrainTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
+    MaterialTheme(colorScheme = Colors, shapes = Cut, typography = typography(), content = content)
 }

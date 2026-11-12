@@ -34,10 +34,10 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val NODE = Color(0xFFF2C14E)
+private val NODE = Neon.Yellow
 private val MISSING = Color(0xFF6B6B6B)
-private val EDGE = Color(0x99F2C14E)
-private val BACKGROUND = Color(0xFF1E1E1E)
+private val EDGE = Color(0xAA00F0FF)
+private val BACKGROUND = Neon.Void
 
 /** Where each node is drawn, in graph units, and how many links it has. */
 private class Layout(val x: FloatArray, val y: FloatArray, val degree: IntArray)

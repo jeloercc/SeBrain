@@ -2,6 +2,7 @@ package com.sebrain.app.ui
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -83,6 +83,12 @@ fun NotesScreen(state: AppState, modifier: Modifier = Modifier) {
 private fun NoteList(state: AppState, modifier: Modifier) {
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            Text(
+                "SEBRAIN // VAULT",
+                modifier = Modifier.padding(start = 20.dp, top = 12.dp),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
             OutlinedTextField(
                 value = state.query,
                 onValueChange = state::search,
@@ -161,6 +167,7 @@ private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -213,7 +220,7 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
             )
-            SelectionContainer { Text(note.text, style = MaterialTheme.typography.bodyLarge) }
+            MarkdownBody(note.text, note.title)
             if (note.tags.isNotEmpty()) {
                 Section("Tags")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
