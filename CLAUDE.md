@@ -32,7 +32,7 @@ Full research document (the reason behind each decision): https://claude.ai/arti
 
 ## Architecture (three processes, one vault)
 
-1. **Ingestion** (always on, no AI): Share intent, `NotificationListenerService` with a per-package allowlist, tile + OCR (optional). Normalizes, deduplicates (keyed tag of the canonical content, see `K_dedup`) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
+1. **Ingestion** (always on, no AI): Share intent, tile + OCR (optional). Notification capture was removed on 2026-11-12. Normalizes, deduplicates (keyed tag of the canonical content, see `K_dedup`) and encrypts with ECIES using the `K_inbox` public key into AES-GCM segments (`K_seg` ephemeral per segment). Works with the phone locked.
 2. **Cognition** (`CognitionWorker`): decrypts segments → chunking → JSON extraction with constrained decoding → embeddings → inserts into `capture`, `chunk`, `chunk_fts`, `chunk_vec` in one transaction. Deletes the segment only after `COMMIT`. Loads the LLM per batch and releases it when done.
 3. **Query** (app open): query embedding → RRF FTS5 + vec0 → top 8 → LiteRT-LM with `[n]` citations. With the Gemini Nano setting on, Nano is used and it falls back to LiteRT-LM if AICore returns `BUSY`.
 
@@ -98,7 +98,7 @@ Still pending from the original phases: the extraction-model benchmark (Gemma 3 
 
 - Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
 - Distribution: sideload only or private Play.
-- Initial allowlist of apps for notifications.
+- Work profile + local VPN firewall for other apps (see `docs/roadmap.md`, Privacy panel).
 
 ## Way of working
 

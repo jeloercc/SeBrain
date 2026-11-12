@@ -2,8 +2,6 @@ package com.sebrain.app.ui
 
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
+import com.sebrain.app.privacy.AppPrivacy
+import com.sebrain.app.privacy.DexTrackerScanner
+import com.sebrain.app.privacy.PrivacyAudit
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.cognition.MarkdownInterop
 import com.sebrain.core.ml.KnownModel
@@ -31,10 +32,8 @@ import com.sebrain.core.vault.VaultSession
 import com.sebrain.core.crypto.BackupMetadata
 import com.sebrain.core.crypto.EncryptedBackupCodec
 import com.sebrain.core.crypto.WrappedDekStore
-import com.sebrain.ingest.IntegrationPolicyStore
 import com.sebrain.ingest.BrainStore
 import com.sebrain.ingest.MiniBrain
-import com.sebrain.ingest.NotificationCaptureService
 import java.time.Instant
 import java.time.ZoneId
 import java.nio.charset.StandardCharsets
@@ -49,7 +48,6 @@ class NoteDetail(val note: Note, val linksTo: List<CaptureSummary>, val linkedFr
 class NoteDraft(val id: Long?, val text: String)
 
 data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false, val saved: Boolean = false)
-data class IntegrationApp(val packageName: String, val label: String)
 
 /**
  * Everything the screens show and do. State is only changed on the main thread; vault, model
@@ -89,11 +87,12 @@ class AppState(private val app: SeBrainApp) {
         private set
     var brainName by mutableStateOf("")
     var brainSources by mutableStateOf(emptySet<String>())
-    var integrationApps by mutableStateOf(emptyList<IntegrationApp>())
+    var privacyApps by mutableStateOf(emptyList<AppPrivacy>())
         private set
-    var notificationPackages by mutableStateOf(emptySet<String>())
+    var usageAccess by mutableStateOf(false)
         private set
-    var notificationAccessEnabled by mutableStateOf(false)
+    /** "12 / 80" while the tracker scan runs, null otherwise. */
+    var scanProgress by mutableStateOf<String?>(null)
         private set
     var backupStatus by mutableStateOf<String?>(null)
         private set
@@ -154,7 +153,7 @@ class AppState(private val app: SeBrainApp) {
         app.onImported = { onMain { refreshNotes() } }
         app.requestImport()
         refreshInstalled()
-        refreshIntegrations()
+        refreshPrivacy()
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -222,39 +221,65 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
-    fun refreshIntegrations() {
-        chatWorker.execute {
-            val packageManager = app.packageManager
-            val launcher = android.content.Intent(android.content.Intent.ACTION_MAIN)
-                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-            val apps = packageManager.queryIntentActivities(launcher, PackageManager.ResolveInfoFlags.of(0))
-                .asSequence()
-                .map { it.activityInfo.applicationInfo }
-                .filter { it.packageName != app.packageName }
-                .distinctBy { it.packageName }
-                .map {
-                    IntegrationApp(
-                        packageName = it.packageName,
-                        label = packageManager.getApplicationLabel(it).toString(),
-                    )
-                }
-                .sortedBy { it.label.lowercase() }
-                .toList()
-            val policy = runCatching { IntegrationPolicyStore(app).load() }
-                .getOrElse { com.sebrain.ingest.IntegrationPolicy.denyAll() }
+    private val privacyAudit by lazy { PrivacyAudit(app) }
+    @Volatile private var scanning = false
+
+    fun refreshPrivacy() {
+        thread(name = "privacy-audit") {
+            val access = privacyAudit.hasUsageAccess()
+            val apps = runCatching { sortPrivacy(privacyAudit.listApps()) }.getOrElse { emptyList() }
             val savedBrains = runCatching { BrainStore(app).load() }.getOrElse { emptyList() }
-            val enabledPackages = NotificationManagerCompat.getEnabledListenerPackages(app)
             onMain {
-                integrationApps = apps
-                notificationPackages = policy.packages()
+                usageAccess = access
+                if (!scanning) privacyApps = apps
                 brains = savedBrains
-                notificationAccessEnabled = app.packageName in enabledPackages
             }
-            app.vault({ db -> CaptureStore(db).sources() }) { result ->
-                onMain { graphSources = result.getOrDefault(emptyList()) }
+        }
+        app.vault({ db -> CaptureStore(db).sources() }) { result ->
+            onMain { graphSources = result.getOrDefault(emptyList()) }
+        }
+    }
+
+    /** Scans every listed app's APK for trackers, one at a time, off the main thread. */
+    fun scanTrackers() {
+        if (scanning) return
+        val apps = privacyApps
+        if (apps.isEmpty()) return
+        scanning = true
+        scanProgress = "0 / ${apps.size}"
+        thread(name = "tracker-scan", priority = Thread.MIN_PRIORITY) {
+            val scanner = DexTrackerScanner()
+            try {
+                apps.forEachIndexed { index, target ->
+                    val trackers = runCatching { privacyAudit.scanTrackers(target, scanner) }.getOrElse { emptyList() }
+                    onMain {
+                        privacyApps = privacyApps.map {
+                            if (it.packageName == target.packageName) it.copy(trackers = trackers) else it
+                        }
+                        scanProgress = "${index + 1} / ${apps.size}"
+                    }
+                }
+            } finally {
+                onMain {
+                    scanning = false
+                    scanProgress = null
+                    privacyApps = sortPrivacy(privacyApps)
+                }
             }
         }
     }
+
+    fun openUsageAccessSettings() = app.startActivity(privacyAudit.usageAccessSettings())
+
+    fun openAppSettings(packageName: String) = app.startActivity(privacyAudit.appSettings(packageName))
+
+    /** Most exposed first: trackers, then sensitive permissions, then data use. */
+    private fun sortPrivacy(apps: List<AppPrivacy>) = apps.sortedWith(
+        compareByDescending<AppPrivacy> { it.trackers?.size ?: 0 }
+            .thenByDescending { it.sensitive.size }
+            .thenByDescending { it.bytes ?: 0L }
+            .thenBy { it.label.lowercase() },
+    )
 
     fun exportBackup(uri: Uri, passphrase: CharArray) {
         app.background({
@@ -314,22 +339,6 @@ class AppState(private val app: SeBrainApp) {
         }) { result ->
             onMain { backupStatus = result.fold({ it }, { "Restore failed (${it.javaClass.simpleName})" }) }
         }
-    }
-
-    fun setNotificationPackageEnabled(packageName: String, enabled: Boolean) {
-        val updated = notificationPackages.toMutableSet().apply {
-            if (enabled) add(packageName) else remove(packageName)
-        }.toSet()
-        notificationPackages = updated
-        chatWorker.execute {
-            val policy = com.sebrain.ingest.IntegrationPolicy.fromPackages(updated)
-            IntegrationPolicyStore(app).save(policy)
-            NotificationCaptureService.configurePolicy(updated)
-        }
-    }
-
-    fun openNotificationSettings() {
-        app.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     fun open(id: Long) {

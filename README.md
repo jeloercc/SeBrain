@@ -23,7 +23,9 @@ The project is under active development and is not a release build.
 | Local AI chat with citations | Implemented and verified on the Pixel 10 |
 | Simple post-punk visual identity | Implemented in the app shell |
 | Link tracking-parameter removal | Built and unit-tested |
-| Notification capture, encrypted allowlist and source-filtered graph | Implemented; end-to-end Termux test passed on the Pixel 10 |
+| Privacy panel: trackers in each app, granted sensitive permissions, data use per app | Implemented 2026-11-12; not yet checked on the Pixel |
+| Source-filtered graph | Implemented; verified on the Pixel 10 |
+| Notification capture | Removed 2026-11-12 |
 | Saved mini-brains and source-aware graph relations | Implemented and verified on the Pixel 10 with a Termux source |
 | Obsidian Markdown import/export | Built; Pixel verification pending |
 | Encrypted backup container | Encrypted SAF export, temporary-vault restore validation and derived-index rebuild verified on the Pixel; activation UI pending |
@@ -42,11 +44,11 @@ The product plan and its priorities are in [`docs/roadmap.md`](docs/roadmap.md).
 - Import one Markdown document through SAF and export a selected note to an unencrypted `.md` file.
 - Import, verify, download and remove approved `.litertlm` model files.
 - SHA-256 verification for model files.
-- Capture notifications only from user-selected packages, with an encrypted allowlist.
-- Filter the graph by capture source, including `notification:<package>` sources.
+- Audit installed apps on the phone: trackers found in the APK (bundled Exodus-based signatures), granted sensitive permissions and 30-day data use.
+- Filter the graph by capture source.
 - Save encrypted mini-brains as named filters over one or more sources.
 - `FLAG_SECURE`, disabled Android backup and encrypted vault data.
-- Passphrase-encrypted backup container with authenticated metadata; export and temporary-vault validation controls are exposed in **Integrate**. SAF E2E is verified on the Pixel; active-vault activation is not complete.
+- Passphrase-encrypted backup container with authenticated metadata; export and temporary-vault validation controls are exposed in **Privacy**. SAF E2E is verified on the Pixel; active-vault activation is not complete.
 - No analytics, telemetry or crash-reporting SDKs.
 
 ## Architecture
@@ -56,7 +58,7 @@ The repository is split into focused Android modules:
 | Module | Responsibility |
 | --- | --- |
 | `:app` | Compose UI, navigation, chat orchestration and app wiring |
-| `:ingest` | Share intent, notification listener, normalization, encryption and deduplication |
+| `:ingest` | Share intent, normalization, encryption and deduplication |
 | `:cognition` | Inbox import, chunking, note markup and indexing |
 | `:core:crypto` | Keystore-backed keys, encrypted segments and payloads |
 | `:core:vault` | SQLCipher database, FTS5, sqlite-vec and vault schema |
@@ -69,8 +71,8 @@ The current UI has five sections:
 - **Graph** — inspect links and navigate between notes.
 - **Ask** — query the local model with vault context and citations.
 - **Models** — search Hugging Face, import/download models and manage installed files.
-- **Integrate** — review installed packages, choose notification sources and open Android's
-  notification-listener settings.
+- **Privacy** — scan launcher apps for trackers, see granted sensitive permissions and data use,
+  open each app's Android permission settings; encrypted backup; mini-brains.
 
 ## Security boundaries
 
@@ -81,7 +83,6 @@ The current UI has five sections:
 - Integration package policies are encrypted with an Android Keystore AES-GCM key.
 - Model files are accepted only after SHA-256 verification.
 - Notification capture is deny-all until the user selects exact package names.
-- The initial notification allowlist is empty; no package is enabled by default.
 - `QUERY_ALL_PACKAGES` is used for the current sideload/private development build so the
   integration screen can enumerate installed packages. Google Play distribution requires
   policy review for this permission.
@@ -192,5 +193,5 @@ The repository's security and architecture rules are documented in
 - Do not add analytics, telemetry or crash-reporting SDKs.
 - Do not change the key hierarchy or vault schema without documenting and approving the
   design first.
-- Do not enable notification capture without an explicit package allowlist.
+- Do not reintroduce notification capture or `QUERY_ALL_PACKAGES` without an approved design.
 - Keep code, comments, identifiers, documentation and system prompts in English.

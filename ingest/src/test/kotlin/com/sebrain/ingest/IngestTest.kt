@@ -127,24 +127,4 @@ class IngestTest {
         }
         assertTrue(ingestor().ingest(Capture("retry", "share")) is IngestResult.Stored)
     }
-
-    @Test
-    fun integrationPolicyDeniesPackagesByDefaultAndAllowsOnlyExactNames() {
-        val policy = IntegrationPolicy.fromPackages(listOf("com.example.mail", " com.example.calendar "))
-
-        assertTrue(policy.allows("com.example.mail"))
-        assertTrue(policy.allows("com.example.calendar"))
-        assertFalse(policy.allows("com.example.browser"))
-        assertFalse(IntegrationPolicy.denyAll().allows("com.example.mail"))
-    }
-
-    @Test
-    fun integrationPolicyRejectsWildcardsAndMalformedNames() {
-        assertThrows(IllegalArgumentException::class.java) {
-            IntegrationPolicy.fromPackages(listOf("*"))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            IntegrationPolicy.fromPackages(listOf("com"))
-        }
-    }
 }

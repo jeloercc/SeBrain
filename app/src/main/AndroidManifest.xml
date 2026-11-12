@@ -2,12 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Per-app network byte counts for the privacy panel. The user grants it in Settings. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway (HTTPS only). -->
 
     <queries>
         <!-- Code blocks can be sent to Termux, after the user confirms. -->
         <package android:name="com.termux" />
-        <!-- Launcher apps only, for the notification allowlist. No QUERY_ALL_PACKAGES. -->
+        <!-- Launcher apps only, for the privacy panel. No QUERY_ALL_PACKAGES. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

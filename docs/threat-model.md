@@ -9,14 +9,14 @@
 - Notification captures and integration provenance
 - Vault DEK and StrongBox-backed key material
 - Local model files and their trust hashes
-- Mini-brain definitions and integration allowlists
+- Mini-brain definitions
 
 ## Main threats
 
 | Threat | Existing control | Remaining work |
 | --- | --- | --- |
 | Lost or stolen unlocked phone | SQLCipher, wrapped DEK, lock/session close, `FLAG_SECURE` in release | Verify all release screens and timeout paths |
-| Malicious or over-broad integration | Deny-all notification policy, exact package names, encrypted policy, user pause path | Add provider-specific permission review |
+| Malicious or over-broad integration | Notification capture removed; launcher-only package visibility, no `QUERY_ALL_PACKAGES`; privacy audit is read-only and in memory | Add provider-specific permission review |
 | Plaintext capture on disk | Encrypted inbox segments and encrypted mini-brain/policy files | Audit every new integration payload |
 | Network exfiltration | Single `TailnetGateway`, HTTPS-only, no plaintext note upload | Add network privacy tests |
 | Untrusted model file | SHA-256 verification and user confirmation | Pin final release hashes |

@@ -13,7 +13,7 @@ SeBrain is a unifying personal app on the Pixel 10: an Obsidian-style second bra
 - **Network:** SeBrain has internet access. `TailnetGateway` is the single exit: HTTPS only, over the device's normal connection, which goes through Tailscale when the user has it on. A connection can be made to require Tailscale, for example to reach the user's own machines. Note content never leaves in plaintext; that still holds.
 - **Models from Hugging Face:** the app searches and downloads LiteRT-LM models, checks each file against the SHA-256 Hugging Face publishes, and the user confirms each model before it is trusted.
 - **Trackers:** SeBrain has no telemetry and no third-party network code, and it removes tracking parameters from links that enter it. It does not filter the traffic of other apps.
-- **Integration:** share into and out of SeBrain, capture notifications from chosen apps, and import or export Markdown compatible with Obsidian. Exported files are outside the vault and unencrypted; that is the user's explicit choice per export.
+- **Integration:** share into and out of SeBrain, and import or export Markdown compatible with Obsidian. Exported files are outside the vault and unencrypted; that is the user's explicit choice per export.
 - **Cryptography:** widely used modern algorithms now (AES-256-GCM, ECDH P-256 in StrongBox, HKDF-SHA256, HMAC-SHA256). Post-quantum protection is added when data leaves the device or is stored for the long term; see below.
 
 ## Plan and status
@@ -28,7 +28,7 @@ Updated 2026-11-10. "Built" means it compiles and its local tests pass; "verifie
 | 1c | Internet access and the Hugging Face model browser | Built and verified on Pixel |
 | 2 | Local AI chat: questions answered from the notes with citations, using the uncensored model; actions on notes (create, tag, link, search) | Built and verified on Pixel |
 | 3 | Link cleaning: strip tracking parameters from links that enter | Built, unit-tested |
-| 4 | Integrations and mini-brains: typed captures, provenance, source filters, and notification capture with a per-app allowlist | Implemented and verified on Pixel with Termux notification capture, provenance, source filtering and a saved mini-brain |
+| 4 | Integrations and mini-brains: typed captures, provenance, source filters. Notification capture was removed on 2026-11-12 | Implemented and verified on Pixel with Termux notification capture, provenance, source filtering and a saved mini-brain |
 | 5 | Obsidian import and export (Markdown) | Built, limitations documented |
 | 6 | Hardening: encrypted backup, post-quantum layer, privacy checks, threat model review | Privacy/dependency audit complete; encrypted export, temporary restore validation and derived-index rebuild implemented and SAF E2E verified on Pixel; PQC envelope design complete; provider benchmarks and activation remain pending |
 
@@ -51,7 +51,7 @@ Integration architecture is specified in `docs/design-integrations-and-mini-brai
 The graph/database contract must be approved before schema changes are applied.
 SeBrain is intentionally a privacy control plane rather than a container or
 traffic interceptor for other apps. It can monitor explicitly shared data,
-allowlisted notifications and approved providers, but Android remains the
+approved providers, but Android remains the
 authority for other apps' permissions and network behavior.
 The initial hardening audit is recorded in `docs/threat-model.md`.
 
@@ -62,7 +62,7 @@ integration or security behavior.
 
 - **Current branch:** `feature/integrations-mini-brains`.
 - **Worktree state:** all work is committed on this branch (last checked 2026-11-12); it is not merged into `main` yet.
-- **Verified 2026-11-12:** `assembleDebug`, `testDebugUnitTest`, `lintDebug` and `scripts/check-release-privacy.sh` pass. The notification allowlist now lists launcher apps through a `<queries>` intent instead of `QUERY_ALL_PACKAGES`.
+- **Verified 2026-11-12:** `assembleDebug`, `testDebugUnitTest`, `lintDebug` and `scripts/check-release-privacy.sh` pass. The release privacy check now rebuilds the release APK first and fails if `QUERY_ALL_PACKAGES` or a notification listener is declared.
 - **Completed:** `NoteIndexer.rebuildAll` rebuilds derived chunks, FTS/markup and
   available vectors in bounded batches.
 - **Backup validation:** restore targets a uniquely named temporary SQLCipher
@@ -75,6 +75,32 @@ integration or security behavior.
   active-vault replacement.
 - **Next safe action:** keep active-vault activation as a separately approved
   design decision; do not implement it as an implicit extension of validation.
+
+## Privacy panel (2026-11-12)
+
+The user wants control over what other apps do. Notification capture was removed because the
+app list it showed was confusing; its leftover encrypted allowlist and Keystore key are deleted
+at startup (`LegacyNotificationCleanup`). Notes already captured from notifications stay.
+
+The Privacy tab audits the apps in the launcher, read-only and on the device:
+
+- **Trackers:** `DexTrackerScanner` reads each APK's `classes*.dex` in 1 MiB blocks and looks
+  for the class descriptors of known SDKs (`TrackerSignatures`, about 60 trackers based on the
+  Exodus Privacy signatures, bundled). Obfuscated trackers are missed. Results are kept in
+  memory for the process, keyed by package, version and install time; nothing is written.
+- **Permissions:** sensitive permissions the user granted (location, microphone, camera,
+  contacts, SMS, and so on). The "Manage permissions" button opens Android's app settings,
+  which is where they are revoked.
+- **Data use:** Wi-Fi plus mobile bytes per app over 30 days from `NetworkStatsManager`. It
+  needs usage access (`PACKAGE_USAGE_STATS`), granted by the user in Settings.
+
+Package visibility comes from a `<queries>` launcher intent, not `QUERY_ALL_PACKAGES`.
+Not yet checked on the Pixel.
+
+**Next, needs an approved design:** a work profile managed by SeBrain (or a separate
+"SeBrain Shield" app) with a local `VpnService` firewall inside the profile, so Tailscale
+keeps working in the personal profile. It sees domains, apps and byte counts, never content.
+It changes the "does not filter other apps' traffic" decision above.
 
 ## Post-quantum cryptography
 
@@ -91,8 +117,8 @@ This changes the key hierarchy, so it is proposed and approved before it is impl
 The app is one Compose activity (`MainActivity`, Material 3 dark mode) with five tabs:
 Notes (search, filters, note cards, network preview, full-screen viewer and editor), Graph
 (force-directed network with source filters), Ask (chat with the local model, streaming replies,
-model picker), Models (Hugging Face search, download, import, remove), and Integrate (encrypted
-notification allowlist). Screen state lives in `ui/AppState`;
+model picker), Models (Hugging Face search, download, import, remove), and Privacy (privacy panel,
+encrypted backup, mini-brains). Screen state lives in `ui/AppState`;
 vault content is cleared from it in `onStop`.
 A model file is hashed once and the result is remembered for its exact size and modification
 time (`ModelFiles.verifyOnce`), so a multi-gigabyte model is not hashed on every load.
