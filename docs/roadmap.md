@@ -58,7 +58,17 @@ A model file is hashed once and the result is remembered for its exact size and 
 time (`ModelFiles.verifyOnce`), so a multi-gigabyte model is not hashed on every load.
 
 Checked on the Pixel 10 on 2026-11-11: the app starts, Gemma 4 E4B abliterated loads on GPU in
-20 to 30 s and answers a question citing a note. That model reports no native function
-calling, so note actions use a text protocol instead: the model writes `ACTION {json}` lines
-(`create_note`, `add_tags`, `link_notes`), and `AppState.runTextActions` runs and hides them.
-The text protocol has not been run on the phone yet.
+20 to 30 s and answers a question citing a note. That model reports no native function calling.
+
+## Chat and notes (2026-11-11, second pass)
+
+The `ACTION` text protocol was removed: on the phone the model wrote an action for every
+message and copied the user's request into the note. Now the model only ever answers.
+`AppState.wantsNote` detects a request to save (a "note" word plus a save verb, in Spanish or
+English); the prompt then asks for `# Title`, the content, and a `Tags:` line, and
+`createNoteFrom` stores the reply as an Obsidian-format note: `# Title`, body, `[[links]]` to
+the notes the reply cites, and inline `#tags`. Every answer also has a "Save as note" button.
+
+The Graph tab draws notes as nodes and `[[links]]` as edges with a force-directed layout
+(`ui/GraphScreen`); links to notes that do not exist yet are grey nodes. Pinch to zoom, drag to
+pan, tap a node to open the note. Not yet run on the phone.

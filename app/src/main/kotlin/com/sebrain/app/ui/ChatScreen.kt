@@ -64,7 +64,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 Text(
                     when {
                         state.loadingModel -> "The first load of a model can take a minute"
-                        model != null -> "On device · ${state.modelBackend} · answers and acts on notes"
+                        model != null -> "On device · ${state.modelBackend} · say “make a note about…” to save an answer"
                         else -> ""
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -98,7 +98,16 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            itemsIndexed(state.messages) { _, message -> Bubble(message) }
+            itemsIndexed(state.messages) { i, message ->
+                Bubble(message)
+                if (!message.fromUser && !message.isAction && message.text.isNotBlank()) {
+                    if (message.saved) {
+                        Text("✓ Saved as a note", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                    } else if (!state.generating) {
+                        TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
+                    }
+                }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(

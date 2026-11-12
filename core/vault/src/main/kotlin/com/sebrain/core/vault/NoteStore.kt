@@ -13,7 +13,39 @@ data class Note(
 )
 
 /** Notes, tags and links. Every capture is a note. Use it inside [VaultSession.withDatabase]. */
+/** Notes and the links between them. A node without an id is a link target that does not exist yet. */
+class NoteGraph(val nodes: List<Node>, val edges: List<Pair<Int, Int>>) {
+    class Node(val id: Long?, val title: String)
+}
+
 class NoteStore(private val db: SQLiteDatabase) {
+    /** The newest [limit] notes and every link between them, as indexes into the node list. */
+    fun graph(limit: Int = 2000): NoteGraph {
+        val nodes = ArrayList<NoteGraph.Node>()
+        val byId = HashMap<Long, Int>()
+        val byTitle = HashMap<String, Int>()
+        db.rawQuery("SELECT id, COALESCE(title, substr(text, 1, 40)) FROM capture ORDER BY id DESC LIMIT $limit").use { c ->
+            while (c.moveToNext()) {
+                val title = c.getString(1).orEmpty()
+                byId[c.getLong(0)] = nodes.size
+                byTitle.putIfAbsent(title.lowercase(), nodes.size)
+                nodes += NoteGraph.Node(c.getLong(0), title)
+            }
+        }
+        val edges = LinkedHashSet<Pair<Int, Int>>()
+        db.rawQuery("SELECT source_id, target_title FROM link").use { c ->
+            while (c.moveToNext()) {
+                val source = byId[c.getLong(0)] ?: continue
+                val target = byTitle.getOrPut(c.getString(1).lowercase()) {
+                    nodes += NoteGraph.Node(null, c.getString(1))
+                    nodes.size - 1
+                }
+                if (source != target) edges += source to target
+            }
+        }
+        return NoteGraph(nodes, edges.toList())
+    }
+
     /** Creates a note written in the app. Returns null if a note with the same content exists. */
     fun create(text: String, contentSha256: String, now: String, timeZone: String): Long? =
         CaptureStore(db).insertReturningId(

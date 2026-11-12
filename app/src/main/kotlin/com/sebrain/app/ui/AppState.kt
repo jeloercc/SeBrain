@@ -19,9 +19,9 @@ import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.CaptureSummary
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.Note
+import com.sebrain.core.vault.NoteGraph
 import com.sebrain.core.vault.NoteStore
 import java.time.Instant
-import org.json.JSONObject
 import java.time.ZoneId
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
@@ -31,7 +31,7 @@ class NoteDetail(val note: Note, val linksTo: List<CaptureSummary>, val linkedFr
 /** [id] is null for a new note. */
 class NoteDraft(val id: Long?, val text: String)
 
-data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false)
+data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false, val saved: Boolean = false)
 
 /**
  * Everything the screens show and do. State is only changed on the main thread; vault, model
@@ -57,6 +57,19 @@ class AppState(private val app: SeBrainApp) {
     var detail by mutableStateOf<NoteDetail?>(null)
         private set
     var draft by mutableStateOf<NoteDraft?>(null)
+    var tab by mutableStateOf(0)
+    var graph by mutableStateOf<NoteGraph?>(null)
+        private set
+
+    fun loadGraph() {
+        app.vault({ db -> NoteStore(db).graph() }) { result -> onMain { graph = result.getOrNull() } }
+    }
+
+    /** Opens a note from another tab. */
+    fun openFromGraph(id: Long) {
+        tab = 0
+        open(id)
+    }
 
     fun start() {
         app.onImported = { onMain { refreshNotes() } }
@@ -71,6 +84,7 @@ class AppState(private val app: SeBrainApp) {
         tags = emptyList()
         detail = null
         draft = null
+        graph = null
         messages.clear()
         app.chat.cancel()
         chatWorker.execute {
@@ -206,8 +220,7 @@ class AppState(private val app: SeBrainApp) {
                 val model = choice ?: models.firstOrNull { it.fileName == saved } ?: models.firstOrNull()
                 if (model != null) {
                     app.chat.load(model)
-                    // Models without native function calling get the actions as a text protocol.
-                    app.chat.startConversation(if (app.chat.supportsTools) SYSTEM else SYSTEM + TEXT_ACTIONS, listOf(tools))
+                    app.chat.startConversation(SYSTEM)
                     app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, model.fileName).apply()
                 }
                 models to model
@@ -242,23 +255,29 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    private class Source(val title: String, val text: String)
+
     private fun generate(question: String) {
         generating = true
         messages += ChatMessage(false, "")
         val index = messages.lastIndex
+        val asNote = wantsNote(question)
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
         app.search(question, { db, vector ->
             val captures = CaptureStore(db)
             HybridSearch(db).search(question, vector, CONTEXT_NOTES).mapNotNull { hit ->
-                captures.summaryOf(hit.captureId)?.let { "${it.title.orEmpty()}: ${hit.text}" }
+                captures.summaryOf(hit.captureId)?.let { Source(it.title.orEmpty(), hit.text) }
             }
         }) { found ->
             val context = found.getOrDefault(emptyList())
-            val prompt = if (context.isEmpty()) {
-                question
-            } else {
-                "Notes from the vault that may be relevant:\n" +
-                    context.mapIndexed { i, note -> "[${i + 1}] $note" }.joinToString("\n\n") + "\n\nQuestion: $question"
+            val prompt = buildString {
+                if (context.isNotEmpty()) {
+                    append("Notes from the vault that may be relevant:\n")
+                    append(context.mapIndexed { i, note -> "[${i + 1}] ${note.title}: ${note.text}" }.joinToString("\n\n"))
+                    append("\n\n")
+                }
+                append(if (asNote) "Request: " else "Question: ").append(question)
+                if (asNote) append(NOTE_FORMAT)
             }
             chatWorker.execute {
                 val result = runCatching {
@@ -266,12 +285,12 @@ class AppState(private val app: SeBrainApp) {
                         onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece) }
                     }
                 }
-                val visible = result.getOrNull()?.takeIf { !app.chat.supportsTools }?.let(::runTextActions)
+                val saved = result.getOrNull()?.takeIf { asNote }?.let { createNoteFrom(it, question, context) } == true
                 onMain {
-                    if (visible != null && index < messages.size) messages[index] = messages[index].copy(text = visible)
                     result.onFailure {
                         if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
                     }
+                    if (saved && index < messages.size) messages[index] = messages[index].copy(saved = true)
                     generating = false
                     refreshNotes()
                 }
@@ -281,34 +300,32 @@ class AppState(private val app: SeBrainApp) {
 
     fun stopGenerating() = app.chat.cancel()
 
-    /**
-     * Runs the `ACTION {json}` lines of a reply and returns the reply without them, followed by
-     * the outcome of the actions that did not succeed. Malformed lines are dropped.
-     */
-    private fun runTextActions(reply: String): String {
-        val kept = ArrayList<String>()
-        val notes = ArrayList<String>()
-        for (line in reply.lines()) {
-            val start = line.indexOf("ACTION")
-            val brace = line.indexOf('{')
-            if (start < 0 || brace < start) {
-                kept += line
-                continue
-            }
-            val outcome = runCatching {
-                val json = JSONObject(line.substring(brace, line.lastIndexOf('}') + 1))
-                fun list(key: String) = json.optJSONArray(key)?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty()
-                when (json.optString("action")) {
-                    "create_note" -> tools.createNote(json.getString("title"), json.optString("text"), list("tags"))
-                    "add_tags" -> tools.addTags(json.getString("title"), list("tags"))
-                    "link_notes" -> tools.linkNotes(json.getString("from"), json.getString("to"))
-                    else -> "Unknown action"
-                }
-            }.getOrElse { "The action could not be read" }
-            // Successful actions are already shown through the tools' own report.
-            if (!outcome.startsWith("Created") && !outcome.startsWith("Tagged") && !outcome.startsWith("Linked")) notes += outcome
+    /** Saves the answer at [index] as a note. */
+    fun saveAsNote(index: Int) {
+        val answer = messages.getOrNull(index) ?: return
+        val question = messages.take(index).lastOrNull { it.fromUser }?.text.orEmpty()
+        messages[index] = answer.copy(saved = true)
+        chatWorker.execute {
+            createNoteFrom(answer.text, question, emptyList())
+            onMain { refreshNotes() }
         }
-        return (kept.joinToString("\n").trim() + notes.joinToString("") { "\n($it)" }).trim()
+    }
+
+    /**
+     * Stores a reply as a note in Obsidian format: `# Title`, the body, `[[links]]` to the notes
+     * the reply cites, and `#tags`. Returns whether a note was created.
+     */
+    private fun createNoteFrom(reply: String, question: String, context: List<Source>): Boolean {
+        val (title, body, tags) = parseNote(reply, question)
+        if (body.isBlank()) return false
+        val related = Regex("\\[(\\d+)]").findAll(reply)
+            .mapNotNull { context.getOrNull(it.groupValues[1].toInt() - 1)?.title }
+            .filter { it.isNotBlank() && !it.equals(title, ignoreCase = true) }.distinct().toList()
+        val text = if (related.isEmpty()) body else body + "\n\nRelated: " + related.joinToString(" ") { "[[$it]]" }
+        val outcome = runCatching { tools.createNote(title, text, tags) }.getOrElse { "The note could not be saved: ${it.message}" }
+        val created = outcome.startsWith("Created")
+        if (!created) onMain { messages += ChatMessage(false, outcome) }
+        return created
     }
 
     // ---- Models ----
@@ -407,15 +424,41 @@ class AppState(private val app: SeBrainApp) {
         const val PREF_MODEL = "language_model"
         const val SYSTEM =
             "You are SeBrain, a private assistant that runs entirely on the user's phone. " +
-                "Answer directly and concisely, in the language of the question. " +
+                "Always answer the question itself, directly and completely, in the language of the question. " +
                 "When notes from the vault are given, use them if they are relevant and cite them as [1], [2]. " +
-                "If the notes do not contain the answer, say so and answer from your own knowledge. " +
-                "Act on notes only when the user asks you to create, tag or link notes."
-        const val TEXT_ACTIONS =
-            "\n\nTo act on notes, write one line per action, starting with ACTION and followed by JSON on the same line:\n" +
-                "ACTION {\"action\":\"create_note\",\"title\":\"...\",\"text\":\"...\",\"tags\":[\"...\"]}\n" +
-                "ACTION {\"action\":\"add_tags\",\"title\":\"title of an existing note\",\"tags\":[\"...\"]}\n" +
-                "ACTION {\"action\":\"link_notes\",\"from\":\"title of a note\",\"to\":\"title of another note\"}\n" +
-                "The app runs these lines and hides them. Never write an ACTION line unless the user asked for that action."
+                "If the notes do not contain the answer, answer from your own knowledge."
+        const val NOTE_FORMAT =
+            "\n\nThe answer will be saved as a note. Write the information that was asked for, complete and " +
+                "useful on its own. Do not repeat the request and do not say that you are creating a note. " +
+                "Use exactly this format:\n# A short title\n\nThe content, in Markdown\n\nTags: two to four lowercase one-word tags, separated by commas"
+
+        private val NOTE_WORD = Regex("\\b(notas?|notes?)\\b", RegexOption.IGNORE_CASE)
+        private val SAVE_WORD = Regex(
+            "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
+            RegexOption.IGNORE_CASE,
+        )
+        private val TAG_LINE = Regex("^[*_#\\s]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
+
+        /** True when the user asks for the answer to be stored as a note. */
+        fun wantsNote(question: String) = NOTE_WORD.containsMatchIn(question) && SAVE_WORD.containsMatchIn(question)
+
+        /** Splits a reply into title, body and tags. Without a `# Title` line, [fallbackTitle] is used. */
+        fun parseNote(reply: String, fallbackTitle: String): Triple<String, String, List<String>> {
+            val lines = reply.trim().lines().toMutableList()
+            var tags = emptyList<String>()
+            val tagIndex = lines.indexOfLast { TAG_LINE.matches(it.trim()) }
+            if (tagIndex >= 0) {
+                tags = TAG_LINE.find(lines[tagIndex].trim())!!.groupValues[1].split(',', ' ')
+                    .map { it.trim().trim('*', '_', '#', '.') }.filter { it.isNotEmpty() }
+                lines.removeAt(tagIndex)
+            }
+            val first = lines.indexOfFirst { it.isNotBlank() }
+            val title = if (first >= 0 && lines[first].trimStart().startsWith("#")) {
+                lines.removeAt(first).trim().trimStart('#').trim().trim('*').trim()
+            } else {
+                fallbackTitle.lineSequence().firstOrNull().orEmpty().take(60)
+            }
+            return Triple(title.ifBlank { "Note" }, lines.joinToString("\n").trim(), tags)
+        }
     }
 }

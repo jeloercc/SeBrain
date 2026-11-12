@@ -11,18 +11,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sebrain.app.ui.AppState
 import com.sebrain.app.ui.ChatScreen
+import com.sebrain.app.ui.GraphScreen
 import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.NotesScreen
 import com.sebrain.app.ui.SeBrainTheme
@@ -37,23 +35,25 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             SeBrainTheme {
-                var tab by rememberSaveable { mutableIntStateOf(0) }
+                val tab = state.tab
                 // The editor and the note view take the whole screen.
                 val fullScreen = tab == 0 && (state.draft != null || state.detail != null)
                 Scaffold(
                     bottomBar = {
                         if (!fullScreen) {
                             NavigationBar {
-                                NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Filled.Edit, null) }, label = { Text("Notes") })
-                                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Filled.Face, null) }, label = { Text("Ask") })
-                                NavigationBarItem(tab == 2, { tab = 2 }, { Icon(Icons.Filled.Settings, null) }, label = { Text("Models") })
+                                NavigationBarItem(tab == 0, { state.tab = 0 }, { Icon(Icons.Filled.Edit, null) }, label = { Text("Notes") })
+                                NavigationBarItem(tab == 1, { state.tab = 1 }, { Icon(Icons.Filled.Share, null) }, label = { Text("Graph") })
+                                NavigationBarItem(tab == 2, { state.tab = 2 }, { Icon(Icons.Filled.Face, null) }, label = { Text("Ask") })
+                                NavigationBarItem(tab == 3, { state.tab = 3 }, { Icon(Icons.Filled.Settings, null) }, label = { Text("Models") })
                             }
                         }
                     },
                 ) { padding ->
                     when (tab) {
                         0 -> if (fullScreen) NotesScreen(state) else NotesScreen(state, Modifier.padding(padding))
-                        1 -> ChatScreen(state, Modifier.padding(padding).consumeWindowInsets(padding))
+                        1 -> GraphScreen(state, Modifier.padding(padding))
+                        2 -> ChatScreen(state, Modifier.padding(padding).consumeWindowInsets(padding))
                         else -> ModelsScreen(state, Modifier.padding(padding))
                     }
                 }
