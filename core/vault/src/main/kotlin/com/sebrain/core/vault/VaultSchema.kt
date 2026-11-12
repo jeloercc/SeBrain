@@ -4,7 +4,7 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** Creates and upgrades the vault schema. The version is stored in `PRAGMA user_version`. */
 internal object VaultSchema {
-    const val VERSION = 4
+    const val VERSION = 5
 
     /** Dimensions of the stored embeddings (EmbeddingGemma, Matryoshka at 256). */
     const val EMBEDDING_DIMENSIONS = 256
@@ -22,6 +22,7 @@ internal object VaultSchema {
             if (current < 2) upgradeToV2(db)
             if (current < 3) upgradeToV3(db)
             if (current < 4) upgradeToV4(db)
+            if (current < 5) upgradeToV5(db)
             db.execSQL("PRAGMA user_version = $VERSION")
             db.setTransactionSuccessful()
         } finally {
@@ -105,5 +106,21 @@ internal object VaultSchema {
                 "from_user INTEGER NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)",
         )
         db.execSQL("CREATE INDEX message_by_conversation ON message(conversation_id, id)")
+    }
+
+    /**
+     * Search over past conversations and room for a conversation summary, approved 2026-11-12.
+     * `message_fts` indexes `message.text` the way `chunk_fts` indexes chunks; the code that
+     * writes messages keeps it in step. Messages written under v4 are indexed here.
+     */
+    private fun upgradeToV5(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE VIRTUAL TABLE message_fts USING fts5(" +
+                "text, content='message', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
+        )
+        db.execSQL("INSERT INTO message_fts(rowid, text) SELECT id, text FROM message")
+        db.execSQL("ALTER TABLE conversation ADD COLUMN summary TEXT")
+        // The id of the last message the summary covers.
+        db.execSQL("ALTER TABLE conversation ADD COLUMN summarized_until INTEGER")
     }
 }

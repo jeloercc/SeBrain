@@ -551,9 +551,21 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
-    fun loadConversations() {
-        app.vault({ db -> ConversationStore(db).list() }) { result ->
-            onMain { conversations = result.getOrDefault(emptyList()) }
+    /** What the Chats panel is filtered by; blank lists every conversation. */
+    var conversationQuery by mutableStateOf("")
+        private set
+
+    fun loadConversations() = searchConversations(conversationQuery)
+
+    /** Lists the conversations, or with [words] the ones that have a matching message. */
+    fun searchConversations(words: String) {
+        conversationQuery = words
+        val wanted = words.trim()
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            if (wanted.isEmpty()) store.list() else store.searchConversations(wanted)
+        }) { result ->
+            onMain { if (wanted == conversationQuery.trim()) conversations = result.getOrDefault(emptyList()) }
         }
     }
 
@@ -664,10 +676,11 @@ class AppState(private val app: SeBrainApp) {
         // a question, only what is still word for word in the history is left out, so nothing is lost.
         val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude) }) { found ->
+        val open = storedConversation
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
-            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.facts.orEmpty())
+            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.facts.orEmpty(), context?.past.orEmpty())
             chatWorker.execute {
                 val result = runCatching {
                     if (stopRequested) {

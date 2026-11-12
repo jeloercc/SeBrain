@@ -15,6 +15,9 @@ data class ContextNote(
     val via: String? = null,
 )
 
+/** A message from another saved conversation that matches the current one. */
+data class PastMessage(val conversation: String, val date: String, val fromUser: Boolean, val text: String)
+
 /** The prompts and text rules of the SeBrain assistant. Pure functions, no Android. */
 object Assistant {
     const val SYSTEM =
@@ -42,6 +45,7 @@ object Assistant {
     const val OUTLINE_CHARS = 200
     const val OUTLINE_LINES = 12
     const val MEMORY_CHARS = 300
+    const val PAST_CHARS = 260
 
     /** Context budget, so the prompt stays well inside the model's context window. */
     const val NOTE_CHARS = 900
@@ -142,13 +146,14 @@ object Assistant {
         tags: List<String>,
         memory: Memory = Memory(emptyList(), emptyList(), emptyList()),
         facts: List<String> = emptyList(),
+        past: List<PastMessage> = emptyList(),
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
-            built = compose(message, notes, asNote, tags, memory, facts, noteChars, withConnected, withOutline)
+            built = compose(message, notes, asNote, tags, memory, facts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
             if (fixed + built.length <= INPUT_CHARS) break
         }
         return built
@@ -161,6 +166,7 @@ object Assistant {
         tags: List<String>,
         memory: Memory,
         facts: List<String>,
+        past: List<PastMessage>,
         noteChars: Int,
         withConnected: Boolean,
         withOutline: Boolean,
@@ -188,6 +194,15 @@ object Assistant {
         if (connected.isNotEmpty()) {
             append("Connected notes, reached through links or shared tags:\n\n")
             connected.forEach { append(render(it, CONNECTED_CHARS)).append("\n\n") }
+        }
+        if (past.isNotEmpty()) {
+            append("From earlier conversations with the user:\n")
+            past.forEach {
+                append("- ").append(it.date.take(10)).append(", \"").append(it.conversation).append("\": ")
+                append(if (it.fromUser) "the user said: " else "you answered: ")
+                append(shorten(it.text.trim().replace(WHITESPACE, " "), PAST_CHARS)).append('\n')
+            }
+            append('\n')
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(noteFormat(notes.map { it.title }, tags))

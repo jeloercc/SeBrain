@@ -1,5 +1,6 @@
 package com.sebrain.app.chat
 
+import com.sebrain.core.vault.ConversationStore
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.NoteStore
 import net.zetetic.database.sqlcipher.SQLiteDatabase
@@ -7,7 +8,8 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 /**
  * Builds the assistant's context from the vault as a small graph: the notes that best match
  * the message (hybrid search, best chunks grouped by note), then their neighbours one step away
- * through `[[links]]`, backlinks and shared tags. Runs on the vault thread.
+ * through `[[links]]`, backlinks and shared tags. It also brings the standing `#memory` notes
+ * and the best matches from other saved conversations. Runs on the vault thread.
  */
 object VaultContext {
     private const val SEARCH_HITS = 16
@@ -20,13 +22,22 @@ object VaultContext {
     const val MEMORY_TAG = "memory"
     private const val MEMORY_NOTES = 8
 
-    class Result(val notes: List<ContextNote>, val tags: List<String>, val facts: List<String>)
+    private const val PAST_MESSAGES = 2
+
+    class Result(val notes: List<ContextNote>, val tags: List<String>, val facts: List<String>, val past: List<PastMessage>)
 
     /**
      * [exclude] holds titles to leave out: the notes already written in this conversation, when
      * the user asks for a new one, so the model cannot copy them.
      */
-    fun build(db: SQLiteDatabase, query: String, vector: FloatArray?, exclude: Collection<String> = emptyList()): Result {
+    fun build(
+        db: SQLiteDatabase,
+        query: String,
+        vector: FloatArray?,
+        exclude: Collection<String> = emptyList(),
+        /** The open conversation, which is not searched: the model already has it. */
+        conversationId: Long? = null,
+    ): Result {
         val store = NoteStore(db)
         val excluded = exclude.map { it.lowercase() }.toSet()
         // Several chunks of one note can match; keep the note once, with its best chunks in order.
@@ -68,6 +79,8 @@ object VaultContext {
         }
         val facts = store.withTag(MEMORY_TAG, MEMORY_NOTES).map { it.text.replace(Regex("(?m)^#\\s.*$|#$MEMORY_TAG\\b"), "").trim() }
             .filter { it.isNotEmpty() }
-        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, facts)
+        val past = ConversationStore(db).search(query, PAST_MESSAGES, conversationId)
+            .map { PastMessage(it.title, it.updatedAt, it.fromUser, it.text) }
+        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, facts, past)
     }
 }

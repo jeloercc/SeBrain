@@ -63,7 +63,7 @@ class SearchIndexTest {
         val version = session.withDatabase { db ->
             db.rawQuery("PRAGMA user_version", emptyArray<String>()).use { c -> c.moveToFirst(); c.getInt(0) }
         }
-        assertEquals(4, version)
+        assertEquals(5, version)
         val id = capture("hello")
         assertEquals(ChunkStore.STATUS_PENDING, session.withDatabase { ChunkStore(it).statusOf(id) })
     }

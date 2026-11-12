@@ -1,11 +1,9 @@
 # Plan: finish the assistant's memory
 
-**Status: steps 0 (item 1) and 1 done on 2026-11-12; step 2 is next and waits for schema v5 approval.**
-Results of step 1 are in `docs/benchmarks.md`: 4096-token limit, about 7.5 tokens/s written. The
-prompt is now cut to fit (`Assistant.INPUT_CHARS`). Items 2 to 5 of step 0 still need the user. It completes the memory architecture in
-`docs/roadmap.md` ("Memory architecture"). Three things are missing: search over past
-conversations, a model-written summary of long conversations, and learning facts about the
-user. Each step ends with something the user can try on the Pixel.
+**Status (2026-11-12):** step 1 done; step 0 item 1 done (items 2 to 5 need the user); step 2
+built, with schema v5 approved, but its vault test and the app install wait for an unlocked
+phone. Step 3 is next. Step 1 results are in `docs/benchmarks.md`: 4096-token limit, about
+7.5 tokens/s written; the prompt is cut to fit (`Assistant.INPUT_CHARS`).
 
 ## Step 0 — Check what is already built (no code)
 

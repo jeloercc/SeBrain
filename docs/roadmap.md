@@ -157,8 +157,15 @@ retrieved context (the model was copying it when asked for "the next one"), and 
 ends by asking for the language of the message, because notes in English pulled replies into
 English.
 
-Not built: a model-written summary of long conversations, search over past conversations, and
-automatic extraction of facts about the user. Not yet checked on the Pixel.
+Search over past conversations (schema v5, approved 2026-11-12): `message_fts` indexes every
+message; the assistant gets the best 2 matches from other conversations ("From earlier
+conversations with the user"), and the Chats panel has a search field. Words under four
+letters do not search. Schema v5 also adds `conversation.summary` and
+`conversation.summarized_until`, not used yet. Built and unit-tested; `ConversationStoreTest`
+has not run on the Pixel yet (the phone was locked), so the app with v5 is not installed.
+
+Not built: a model-written summary of long conversations and suggested facts about the user.
+The plan is in `docs/plan-memory.md`.
 
 ## Post-quantum cryptography
 

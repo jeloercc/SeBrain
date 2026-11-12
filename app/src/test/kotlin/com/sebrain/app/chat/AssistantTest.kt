@@ -137,4 +137,11 @@ class AssistantTest {
             (1..6).map { Assistant.Line(it % 2 == 1, "m".repeat(1000)) }
         assertTrue(Assistant.remember(earlier).outline.contains("- You answered: They are: * Monolithic * Exokernel"))
     }
+
+    @Test
+    fun pastConversationsAreQuotedWithTheirSource() {
+        val past = listOf(PastMessage("Kernels", "2026-11-10T09:00:00Z", fromUser = false, text = "The exokernel\nexposes hardware."))
+        val prompt = Assistant.prompt("what did we say about exokernels?", emptyList(), asNote = false, tags = emptyList(), past = past)
+        assertTrue(prompt.contains("From earlier conversations with the user:\n- 2026-11-10, \"Kernels\": you answered: The exokernel exposes hardware.\n"))
+    }
 }

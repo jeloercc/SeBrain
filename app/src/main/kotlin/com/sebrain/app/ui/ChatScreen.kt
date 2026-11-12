@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -24,12 +27,14 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -84,42 +89,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 )
             }
             Box {
-                TextButton(onClick = { state.loadConversations(); chatsOpen = true }, enabled = !state.generating) { Text("Chats") }
-                DropdownMenu(expanded = chatsOpen, onDismissRequest = { chatsOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("+ New chat") },
-                        onClick = { chatsOpen = false; state.newConversation() },
-                    )
-                    if (state.conversations.isEmpty()) {
-                        DropdownMenuItem(text = { Text("No saved chats yet") }, onClick = { chatsOpen = false }, enabled = false)
-                    }
-                    state.conversations.forEach { chat ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        chat.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = if (chat.id == state.conversationId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Text(
-                                        "${chat.messages} messages · ${chat.updatedAt.take(10)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            },
-                            onClick = { chatsOpen = false; state.openConversation(chat.id) },
-                            trailingIcon = {
-                                IconButton(onClick = { state.deleteConversation(chat.id) }) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Delete chat")
-                                }
-                            },
-                            modifier = Modifier.widthIn(min = 260.dp, max = 320.dp),
-                        )
-                    }
-                }
+                TextButton(onClick = { state.searchConversations(""); chatsOpen = true }, enabled = !state.generating) { Text("Chats") }
             }
             Box {
                 TextButton(onClick = { menuOpen = true }, enabled = !state.loadingModel && !state.generating) { Text("Model") }
@@ -190,6 +160,71 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                     Icon(Icons.Filled.Close, contentDescription = "Stop")
                 } else {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                }
+            }
+        }
+    }
+    if (chatsOpen) {
+        ChatsSheet(state) { chatsOpen = false }
+    }
+}
+
+/** Saved conversations: search them, open one to continue it, start a new one, or delete one. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatsSheet(state: AppState, onClose: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onClose) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Chats", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = { state.newConversation(); onClose() }) { Text("+ New chat") }
+            }
+            OutlinedTextField(
+                value = state.conversationQuery,
+                onValueChange = state::searchConversations,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search in past chats") },
+                singleLine = true,
+            )
+            if (state.conversations.isEmpty()) {
+                Text(
+                    if (state.conversationQuery.isBlank()) "No saved chats yet" else "No chat matches",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            }
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                items(state.conversations, key = { it.id }) { chat ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { state.openConversation(chat.id); onClose() }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                chat.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (chat.id == state.conversationId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                            chat.snippet?.let {
+                                Text(
+                                    it.replace('\n', ' '),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                "${chat.messages} messages · ${chat.updatedAt.take(10)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { state.deleteConversation(chat.id) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete chat")
+                        }
+                    }
                 }
             }
         }
