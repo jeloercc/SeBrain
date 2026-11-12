@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.sebrain.app.GenerationService
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
@@ -161,7 +162,15 @@ class AppState(private val app: SeBrainApp) {
         refreshInstalled()
         refreshPrivacy()
         loadConversations()
-        conversationId?.let(::openConversation)
+        started = true
+        main.removeCallbacks(releaseModel)
+        GenerationService.clearDone(app)
+        GenerationService.onScreenOff = { stopGenerating() }
+        // A reply still being written kept its messages on screen; otherwise reload them.
+        unsavedReply?.let { unsavedReply = null; persist(fromUser = false, text = it) }
+        if (!generating) conversationId?.let(::openConversation)
+        // Load the model now, so it is ready by the time the user opens the chat.
+        if (installed.any { !it.fileName.contains("embedding", ignoreCase = true) }) ensureModel()
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -176,15 +185,37 @@ class AppState(private val app: SeBrainApp) {
         graphFilterSources = null
         brains = emptyList()
         selectedBrain = null
-        messages.clear()
         conversations = emptyList()
-        stopRequested = true
-        app.chat.cancel()
-        chatWorker.execute {
-            app.chat.close()
-            onMain { currentModel = null; modelBackend = null }
+        started = false
+        // A reply in progress keeps running behind GenerationService, and its messages stay
+        // until it ends. The model stays loaded for a while, so coming back does not reload it.
+        if (!generating) {
+            messages.clear()
+            main.postDelayed(releaseModel, MODEL_IDLE_MS)
         }
         app.releaseModels()
+    }
+
+    /** True between onStart and onStop. */
+    private var started = false
+
+    /** Frees the language model after the app has been off screen for [MODEL_IDLE_MS]. */
+    private val releaseModel = Runnable {
+        if (started || generating) return@Runnable
+        chatWorker.execute {
+            app.chat.close()
+            onMain {
+                currentModel = null
+                modelBackend = null
+                if (started) ensureModel()
+            }
+        }
+    }
+
+    private fun markGenerating(value: Boolean) {
+        if (generating == value) return
+        generating = value
+        if (value) GenerationService.start(app) else GenerationService.stop(app)
     }
 
     fun search(text: String) {
@@ -507,14 +538,14 @@ class AppState(private val app: SeBrainApp) {
                     canAct = model != null
                     if (model == null) {
                         chatProblem = "No language model is installed. Download one in Models."
-                        generating = false
+                        markGenerating(false)
                     }
                     pendingQuestion?.let { pendingQuestion = null; if (model != null) generate(it) }
                 }.onFailure {
                     currentModel = null
                     chatProblem = "The model could not be loaded: ${it.message}"
                     pendingQuestion = null
-                    generating = false
+                    markGenerating(false)
                 }
             }
         }
@@ -558,7 +589,7 @@ class AppState(private val app: SeBrainApp) {
     fun ask(question: String) {
         val text = question.trim()
         if (text.isEmpty() || generating) return
-        generating = true
+        markGenerating(true)
         stopRequested = false
         messages += ChatMessage(true, text)
         persist(fromUser = true, text = text)
@@ -582,13 +613,17 @@ class AppState(private val app: SeBrainApp) {
         }) { result ->
             onMain {
                 result.onSuccess { conversationId = it }
-                loadConversations()
+                    // The vault is closed while the screen is off. Keep the reply and store it on return.
+                    .onFailure { if (!fromUser) unsavedReply = text }
+                if (started) loadConversations()
             }
         }
     }
 
+    /** A reply that could not be stored because the vault was closed; stored at the next start. */
+    private var unsavedReply: String? = null
+
     private fun generate(question: String) {
-        generating = true
         // The history is what came before this message, without the action lines.
         val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
         val history = earlier.takeLast(Assistant.HISTORY_MESSAGES)
@@ -627,9 +662,16 @@ class AppState(private val app: SeBrainApp) {
                     val final = (if (visible) messages[index].text else reply).ifBlank { if (stopRequested) "[stopped]" else "" }
                     if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
-                    generating = false
-                    if (!visible) conversationId?.let(::openConversation)
-                    refreshNotes()
+                    markGenerating(false)
+                    if (started) {
+                        if (!visible) conversationId?.let(::openConversation)
+                        refreshNotes()
+                    } else {
+                        // Finished off screen: the reply is stored, so clear it from memory like onStop does.
+                        messages.clear()
+                        if (!stopRequested) GenerationService.notifyDone(app)
+                        main.postDelayed(releaseModel, MODEL_IDLE_MS)
+                    }
                 }
             }
         }
@@ -641,7 +683,7 @@ class AppState(private val app: SeBrainApp) {
         // If the model was still loading, nothing will reply: free the input now.
         if (loadingModel) {
             pendingQuestion = null
-            generating = false
+            markGenerating(false)
         }
     }
 
@@ -765,5 +807,6 @@ class AppState(private val app: SeBrainApp) {
         const val PROGRESS_STEP = 8L * 1024 * 1024
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
+        const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }

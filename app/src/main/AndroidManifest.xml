@@ -7,6 +7,10 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- A reply keeps being written while the user is in another app; see GenerationService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- INTERNET comes from :core:net. All traffic goes through TailnetGateway (HTTPS only). -->
 
     <queries>
@@ -37,6 +41,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".GenerationService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
         <!-- GPU libraries of LiteRT; the NPU ones are merged from the Tensor runtime. -->
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />

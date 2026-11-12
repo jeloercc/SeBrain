@@ -1,5 +1,9 @@
 package com.sebrain.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -46,6 +51,10 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     var menuOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    // Asked once, on the first message: it lets SeBrain say when a reply finished in the background.
+    val context = LocalContext.current
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    var askedNotifications by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { state.ensureModel() }
     val lastLength = state.messages.lastOrNull()?.text?.length ?: 0
     LaunchedEffect(state.messages.size, lastLength) {
@@ -164,6 +173,12 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                     if (state.generating) {
                         state.stopGenerating()
                     } else {
+                        if (!askedNotifications &&
+                            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            askedNotifications = true
+                            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
                         state.ask(input)
                         input = ""
                     }

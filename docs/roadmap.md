@@ -122,6 +122,22 @@ It changes the "does not filter other apps' traffic" decision above.
   size (`EngineConfig.maxNumTokens`) is left at the model default; not measured.
 - Not yet checked on the Pixel: the v4 migration and the new chat.
 
+## Model lifetime and background replies (2026-11-12)
+
+- The language model is loaded when the app starts, not when the chat opens, and it stays
+  loaded when the app leaves the screen. It is released 5 minutes after leaving, if no reply
+  is being written. Measured on the Pixel: about 23 s to load Gemma 4 E4B on GPU at launch,
+  and no reload after going home and back.
+- `GenerationService` is a foreground service of type `shortService` that runs only while a
+  reply is being written, so Android does not freeze the process when the user switches apps.
+  It is not a resident service. Android limits a short service to about 3 minutes; a longer
+  reply loses the protection. When the reply ends off screen it is stored in the vault,
+  cleared from memory, and an "answer is ready" notification is shown (no vault content).
+- Screen off stops the reply, because the vault closes then and nothing is processed while
+  locked. The partial reply is kept in memory and stored at the next start.
+- Not yet checked on the Pixel: a reply finishing while another app is on screen, and GPU
+  speed in that state.
+
 ## Post-quantum cryptography
 
 Decided 2026-11-10: SeBrain uses native post-quantum cryptography instead of the user's TypeScript `pqc-sdk`, which a Kotlin app cannot run.
