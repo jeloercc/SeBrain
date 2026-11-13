@@ -124,36 +124,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                     if (message.saved) {
                         Text("✓ Saved as a note", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     } else if (!state.generating) {
-                        Row {
-                            TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
-                            // Only under the last reply: it looks at the whole conversation.
-                            if (i == state.messages.lastIndex) {
-                                TextButton(onClick = state::suggestMemories) { Text("Suggest memories") }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (state.memorySuggestions.isNotEmpty() || state.memoryNotice != null) {
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.medium)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    state.memoryNotice ?: "Remember this? Saved only if you accept.",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                state.memorySuggestions.forEach { fact ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(fact, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        TextButton(onClick = { state.acceptSuggestion(fact) }) { Text("Save") }
-                        IconButton(onClick = { state.dismissSuggestion(fact) }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Dismiss")
-                        }
+                        TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
                     }
                 }
             }

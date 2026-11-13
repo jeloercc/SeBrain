@@ -8,7 +8,7 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 /**
  * Builds the assistant's context from the vault as a small graph: the notes that best match
  * the message (hybrid search, best chunks grouped by note), then their neighbours one step away
- * through `[[links]]`, backlinks and shared tags. It also brings the standing `#memory` notes
+ * through `[[links]]`, backlinks and shared tags. It also brings the pinned notes
  * and the best matches from other saved conversations. Runs on the vault thread.
  */
 object VaultContext {
@@ -18,13 +18,12 @@ object VaultContext {
     private const val EXPANDED_FROM = 3
     private const val TAGS_SHOWN = 30
 
-    /** Notes with this tag are the user's standing instructions and facts; they go into every prompt. */
-    const val MEMORY_TAG = "memory"
-    const val MEMORY_NOTES = 8
+    /** Pinned notes read at most; the prompt keeps the ones that fit [Pins.BUDGET_CHARS]. */
+    private const val PINNED_NOTES = 20
 
     private const val PAST_MESSAGES = 2
 
-    class Result(val notes: List<ContextNote>, val tags: List<String>, val facts: List<String>, val past: List<PastMessage>)
+    class Result(val notes: List<ContextNote>, val tags: List<String>, val pinned: List<String>, val past: List<PastMessage>)
 
     /**
      * [exclude] holds titles to leave out: the notes already written in this conversation, when
@@ -51,7 +50,7 @@ object VaultContext {
             if (notes.size == MATCHED_NOTES) break
             val note = store.get(id) ?: continue
             included += id
-            if (note.title.lowercase() in excluded || MEMORY_TAG in note.tags) continue
+            if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
             notes += ContextNote(
                 number = notes.size + 1,
                 id = id,
@@ -73,14 +72,14 @@ object VaultContext {
                 if (notes.size - matched.size >= CONNECTED_NOTES) break
                 if (!included.add(summary.id)) continue
                 val note = store.get(summary.id) ?: continue
-                if (note.title.lowercase() in excluded || MEMORY_TAG in note.tags) continue
+                if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
                 notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), note.text, via)
             }
         }
-        val facts = store.withTag(MEMORY_TAG, MEMORY_NOTES).map { it.text.replace(Regex("(?m)^#\\s.*$|#$MEMORY_TAG\\b"), "").trim() }
-            .filter { it.isNotEmpty() }
+        // Newest first. A pinned note is not also listed as a search result above.
+        val pinned = store.withTag(Pins.TAG, PINNED_NOTES).map { Pins.line(it.title.orEmpty(), it.text) }
         val past = ConversationStore(db).search(query, PAST_MESSAGES, conversationId)
             .map { PastMessage(it.title, it.updatedAt, it.fromUser, it.text) }
-        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, facts, past)
+        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, pinned, past)
     }
 }

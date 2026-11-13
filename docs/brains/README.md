@@ -8,7 +8,7 @@ one document per phase, written so that any session can pick a phase up and fini
 
 | Phase | Document | Delivers | Size | Schema | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [One memory](phase-1-one-memory.md) | Pinned notes replace `#memory`, "Suggest memories" and "remember" | S | none | Not started |
+| 1 | [One memory](phase-1-one-memory.md) | Pinned notes replace `#memory`, "Suggest memories" and "remember" | S | none | **Built 2026-11-12**, on the Pixel; see its document for what is not verified |
 | 2 | [Obsidian data model](phase-2-obsidian-data-model.md) | Properties, aliases, heading and block links, embeds, folders, unlinked mentions, vault import and export | L | v6 | Not started; schema to approve |
 | 3 | [Brains](phase-3-brains.md) | Brains with scope, pins, instructions, model, own chats and graph | M | v6 | Not started |
 | 4 | [Graph retrieval](phase-4-graph-retrieval.md) | Chunk headers, ranking over the link graph, index note per brain | M | none | Not started |
@@ -45,7 +45,7 @@ assumed: Phase 6 does not start without an explicit answer.
 
 | # | Decision | Assumed | Confirm before |
 | --- | --- | --- | --- |
-| 1 | Pinned notes replace `#memory`, "Suggest memories" and "remember" | Yes | Phase 1 |
+| 1 | Pinned notes replace `#memory`, "Suggest memories" and "remember" | **Confirmed 2026-11-12** | Done |
 | 2 | The assistant proposes edits to existing notes; the user approves each one | Propose only | Phase 5 |
 | 3 | Where note content may be sent | **Not assumed** | Phase 6 |
 | 4 | The encrypted vault stays the source of truth; Obsidian folders are imported and exported | Yes | Phase 2 |

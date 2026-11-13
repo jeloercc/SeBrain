@@ -1,7 +1,6 @@
 package com.sebrain.app.ui
 
-import com.sebrain.app.chat.Assistant
-import com.sebrain.app.chat.VaultContext
+import com.sebrain.app.chat.Pins
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -170,12 +169,11 @@ private fun NoteList(state: AppState, modifier: Modifier) {
             val summary = when {
                 problem != null -> problem
                 state.query.isNotBlank() -> "${state.notes.size} results"
-                // Standing memory goes into every prompt, within a budget; say when it is exceeded.
-                state.selectedTag.equals(VaultContext.MEMORY_TAG, ignoreCase = true) -> {
-                    val cut = state.notes.size > VaultContext.MEMORY_NOTES ||
-                        state.notes.any { it.text.length > Assistant.MEMORY_CHARS + 60 }
-                    "${state.notes.size} memory notes · the assistant reads the ${VaultContext.MEMORY_NOTES} newest, " +
-                        "${Assistant.MEMORY_CHARS} characters each" + if (cut) " · over the limit: some are cut or left out" else ""
+                // Pinned notes go into every prompt, within a budget; say when some do not fit.
+                state.selectedTag.equals(Pins.TAG, ignoreCase = true) -> {
+                    val omitted = Pins.fit(state.notes.map { Pins.line(it.title.orEmpty(), it.text) }).second
+                    "${state.notes.size} pinned notes · the assistant reads them in every answer, newest first, " +
+                        "up to ${Pins.BUDGET_CHARS} characters" + if (omitted > 0) " · $omitted do not fit and are left out" else ""
                 }
                 state.selectedTag != null -> "${state.notes.size} notes with #${state.selectedTag}"
                 else -> "${state.noteCount} notes"
@@ -405,6 +403,8 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                     IconButton(onClick = state::closeDetail) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
+                    // Pinned: the assistant reads this note in every answer.
+                    TextButton(onClick = { state.togglePinned(note.id) }) { Text(if (Pins.TAG in note.tags) "UNPIN" else "PIN") }
                     IconButton(onClick = { state.draft = NoteDraft(note.id, note.text) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit") }
                     IconButton(onClick = { confirmShare = true }) { Icon(Icons.Filled.Share, contentDescription = "Share") }
                     TextButton(onClick = { exportPicker.launch(com.sebrain.cognition.MarkdownInterop.fileName(note.title)) }) {

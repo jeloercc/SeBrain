@@ -95,21 +95,6 @@ class AssistantTest {
     }
 
     @Test
-    fun factsToRememberAreRecognisedButQuestionsAreNot() {
-        assertEquals("prefiero respuestas cortas", Assistant.factToRemember("Recuerda que prefiero respuestas cortas"))
-        assertEquals("my server is called atlas", Assistant.factToRemember("remember that my server is called atlas"))
-        assertEquals(null, Assistant.factToRemember("¿recuerdas que hablamos de kernels?"))
-        assertEquals(null, Assistant.factToRemember("explícame qué recuerda un kernel"))
-    }
-
-    @Test
-    fun standingFactsOpenThePrompt() {
-        val prompt = Assistant.prompt("hola", emptyList(), asNote = false, tags = emptyList(), facts = listOf("Answer briefly."))
-        assertTrue(prompt.startsWith("What the user asked you to always remember:\n- Answer briefly.\n\nNo note from the vault matches"))
-        assertTrue(prompt.contains("do not cite any note.\n\nMessage: hola"))
-    }
-
-    @Test
     fun anOversizedContextIsCutToFitTheModel() {
         val text = "word ".repeat(400)
         val matched = (1..4).map { ContextNote(it, it.toLong(), "Note $it", emptyList(), emptyList(), emptyList(), text) }
@@ -165,27 +150,6 @@ class AssistantTest {
     }
 
     @Test
-    fun suggestedFactsAreParsedAndKnownOnesAreLeftOut() {
-        val reply = "Here are the facts:\n- Su servidor se llama atlas.\n* Prefiere Docker a Podman\n1. ok\n- su servidor se llama Atlas\n- NONE\n- Usa Debian 12 en atlas\n- A fourth fact that is long enough"
-        assertEquals(
-            listOf("Su servidor se llama atlas.", "Usa Debian 12 en atlas", "A fourth fact that is long enough"),
-            Assistant.parseFacts(reply, exclude = listOf("prefiere docker a podman")),
-        )
-        assertTrue(Assistant.parseFacts("NONE", emptyList()).isEmpty())
-    }
-
-    @Test
-    fun theFactsRequestUsesOnlyWhatTheUserWrote() {
-        val request = Assistant.factsRequest(
-            listOf(Assistant.Line(true, "mi servidor se llama atlas"), Assistant.Line(false, "Perfecto, atlas.")),
-            known = listOf("Prefiere respuestas cortas"),
-        )
-        assertTrue(request.contains("Already remembered, do not repeat:\n- Prefiere respuestas cortas\n"))
-        assertTrue(request.endsWith("Messages:\n- mi servidor se llama atlas\n"))
-        assertFalse(request.contains("Perfecto"))
-    }
-
-    @Test
     fun citationsToNotesThatWereNotGivenAreRemoved() {
         assertEquals(
             "Una IP identifica un dispositivo. Sirve para dirigir datos.",
@@ -207,5 +171,19 @@ class AssistantTest {
         assertEquals(null, Assistant.language("SSH"))
         assertTrue(Assistant.prompt("ok", emptyList(), false, emptyList()).contains("Write in the language of the message above, even if"))
         assertTrue(Assistant.prompt("¿qué es SSH?", emptyList(), false, emptyList()).contains("Write in Spanish, the language of the message above"))
+    }
+
+    @Test
+    fun pinnedNotesOpenThePrompt() {
+        val prompt = Assistant.prompt("hola", emptyList(), asNote = false, tags = emptyList(), pinned = listOf("Answer briefly."))
+        assertTrue(prompt.startsWith("Pinned notes, which the user wants you to keep in mind in every answer:\n- Answer briefly.\n\nNo note from the vault matches"))
+        assertTrue(prompt.contains("do not cite any note.\n\nMessage: hola"))
+    }
+
+    @Test
+    fun aMessageThatAsksToRememberIsAnOrdinaryMessage() {
+        val prompt = Assistant.prompt("recuerda que prefiero respuestas cortas", emptyList(), asNote = false, tags = emptyList())
+        assertTrue(prompt.contains("Message: recuerda que prefiero respuestas cortas"))
+        assertFalse(prompt.contains("Pinned notes"))
     }
 }

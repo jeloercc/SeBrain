@@ -18,7 +18,7 @@ import org.junit.runner.RunWith
 
 /**
  * The 20-conversation evaluation of `docs/plan-memory.md`, step 6, with the model installed on
- * the phone. The vault is simulated: each case brings its own notes, standing facts, past
+ * the phone. The vault is simulated: each case brings its own notes, pinned notes, past
  * messages or summary, and the app's own rules decide what reaches the model.
  *
  * Every turn has checks a program can make (a word that must appear, the language, the number
@@ -35,7 +35,7 @@ class AssistantEvalTest {
         val name: String,
         val turns: List<Turn>,
         val notes: List<ContextNote> = emptyList(),
-        val facts: List<String> = emptyList(),
+        val pinned: List<String> = emptyList(),
         val past: List<PastMessage> = emptyList(),
         val summary: String? = null,
         /** Messages before the first turn, for cases that start in the middle of a conversation. */
@@ -154,14 +154,14 @@ class AssistantEvalTest {
             notes = listOf(note(1, "Reunión banco", "La reunión con el banco es el martes. Llevar el contrato firmado.")),
         ),
         Case(
-            "09 standing instruction is obeyed",
+            "09 pinned instruction is obeyed",
             listOf(Turn("explica qué es DNS", listOf(spanish, shorterThan(420)))),
-            facts = listOf("Responde siempre en una sola frase corta."),
+            pinned = listOf("Responde siempre en una sola frase corta."),
         ),
         Case(
-            "10 standing fact is recalled",
+            "10 pinned fact is recalled",
             listOf(Turn("¿cómo se llama mi servidor y qué sistema usa?", listOf(has("atlas"), has("Debian"), spanish))),
-            facts = listOf("Mi servidor casero se llama atlas y usa Debian 12."),
+            pinned = listOf("Mi servidor casero se llama atlas y usa Debian 12."),
         ),
         Case(
             "11 past conversation is recalled",
@@ -239,7 +239,7 @@ class AssistantEvalTest {
                 // The notes of the case, then the notes written earlier in this conversation, as the vault would return them.
                 val context = (case.notes + written).filter { it.title.lowercase() !in exclude }
                     .mapIndexed { i, n -> n.copy(number = i + 1) }
-                val prompt = Assistant.prompt(turn.message, context, asNote, emptyList(), memory, case.facts, case.past)
+                val prompt = Assistant.prompt(turn.message, context, asNote, emptyList(), memory, case.pinned, case.past)
                 val start = System.nanoTime()
                 // As in the app: citations to notes that were not given are removed from the reply.
                 val reply = runCatching {

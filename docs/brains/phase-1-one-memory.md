@@ -1,6 +1,37 @@
 # Phase 1 — One memory
 
-**Status: not started.** Size S. No schema change. Confirms decision 1.
+**Status: built 2026-11-12 and installed on the Pixel.** Size S. No schema change. Decision
+1 confirmed by the user ("okay", then "empieza").
+
+## Resources verified before building (2026-11-12)
+
+| Needed | Found in the code | Result |
+| --- | --- | --- |
+| A place to store the pin without a schema change | Tags are not stored on their own: `NoteMarkup.parse` reads them from the note text | **Design changed:** the pin is the tag `#pinned` written in the note's text. There is no hidden tag |
+| How `#memory` reached the prompt | `VaultContext.build` read `withTag("memory", 8)`, 300 characters each | Replaced by the shared budget |
+| Changing a note's text safely | `NoteStore.updateText` + `NoteIndexer.index` in one transaction, as `AppState.save` does | Reused by `togglePinned` and by the migration |
+| A note view to put the toggle in | `NoteDetailScreen` in `NotesScreen.kt`, with the note's tags loaded | PIN / UNPIN button added |
+| A filter for pinned notes | Tag chips already filter by any tag | The `#pinned` chip is the filter; its summary line shows the budget |
+| Model cost | None: no model call is added or removed from a normal answer | "Suggest memories" (9 s per use) is gone |
+
+## What was built, and where it differs from the plan below
+
+- `chat/Pins.kt`: `pin`, `unpin`, `migrate`, `line` and `fit` (the shared budget of 1200
+  characters, 600 at most per note, newest first, with a count of what was left out).
+- The pin is **visible**: `#pinned` shows in the note and as a tag chip. The plan said the tag
+  would be hidden; with tags living in the text, hiding it would mean showing the user a note
+  that differs from what is stored.
+- There is no separate "Pinned" chip: the `#pinned` tag chip does that job.
+- `AppState.migratePins` runs once per install, when the vault can be opened: `#memory`
+  becomes `#pinned` in the text of each note that had it.
+- Removed: `factToRemember`, `factsRequest`, `parseFacts`, `rememberFact`, `suggestMemories`
+  and the suggestions card.
+
+Verified: 37 unit tests (6 new in `PinsTest`, among them ten long pinned notes staying inside
+the prompt budget); on the phone with the real model, evaluation cases 06, 09 and 10; the
+installed app opens the real vault. **Not verified:** the migration on a vault that has
+`#memory` notes (its text rule is unit-tested, its vault path is not), the PIN button by
+hand, and the full 20 conversations after this change.
 
 ## Goal
 

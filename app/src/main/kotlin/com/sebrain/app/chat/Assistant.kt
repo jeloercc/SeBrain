@@ -44,14 +44,7 @@ object Assistant {
     /** Older messages are kept only as one outline line each. */
     const val OUTLINE_CHARS = 200
     const val OUTLINE_LINES = 12
-    const val MEMORY_CHARS = 300
     const val PAST_CHARS = 260
-
-    /** Suggested facts about the user, proposed only when the user asks. */
-    const val FACTS_MAX = 3
-    const val FACTS_MESSAGES = 12
-    private const val FACT_MIN_CHARS = 8
-    private const val FACT_MAX_CHARS = 200
 
     /** The model-written summary of the oldest part of a long conversation. */
     const val SUMMARY_TRIGGER = 8
@@ -92,11 +85,6 @@ object Assistant {
     )
     private val CODE_FENCE = Regex("^\\s*(```|~~~)")
     private val CITATION = Regex("\\s?\\[(\\d+)](?!\\()")
-    private val REMEMBER = Regex(
-        "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
-        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
-    )
-    private val FACT_LINE = Regex("^(?:[-*•]|\\d+[.)])\\s+(.+)$")
     private val WHITESPACE = Regex("\\s+")
     private val WIKILINK = Regex("\\[\\[([^\\[\\]|]+)(?:\\|[^\\[\\]]*)?]]")
 
@@ -202,53 +190,6 @@ object Assistant {
     /** The first `# Title` of a reply: the note or topic it wrote. Section headings (`##`) do not count. */
     fun heading(text: String): String? = NoteFormat.titles(text).firstOrNull()
 
-    /**
-     * A fact the user asks SeBrain to keep, such as "recuerda que prefiero respuestas cortas".
-     * Null for anything else, including questions like "¿recuerdas que…?".
-     */
-    fun factToRemember(message: String): String? {
-        if ('?' in message) return null
-        return REMEMBER.find(message.trim())?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 3 }
-    }
-
-    const val FACTS_SYSTEM = "You extract lasting facts about a user from what the user wrote. You never invent facts."
-
-    /**
-     * Asks which lasting facts about the user are worth keeping, from the user's own messages.
-     * [known] are the facts already in standing memory, which must not be proposed again.
-     */
-    fun factsRequest(lines: List<Line>, known: List<String>): String = buildString {
-        append("Below are messages a user wrote to their assistant. List at most $FACTS_MAX lasting facts about the user ")
-        append("that would help in future conversations: preferences, the names of their things, ongoing projects, ")
-        append("constraints. Use only what the user stated. Leave out questions, one-off requests and anything the ")
-        append("assistant said. Write one fact per line, starting with \"- \", as a short sentence that stands on its ")
-        append("own, in the user's language. If there is nothing worth keeping, write only NONE.\n")
-        if (known.isNotEmpty()) {
-            append("\nAlready remembered, do not repeat:\n")
-            known.forEach { append("- ").append(shorten(it.replace(WHITESPACE, " "), MEMORY_CHARS)).append('\n') }
-        }
-        append("\nMessages:\n")
-        var budget = SUMMARY_INPUT_CHARS
-        for (line in lines.filter { it.fromUser }.takeLast(FACTS_MESSAGES)) {
-            val text = shorten(line.text.trim().replace(WHITESPACE, " "), SUMMARY_LINE_CHARS)
-            if (text.length > budget) break
-            budget -= text.length
-            append("- ").append(text).append('\n')
-        }
-    }
-
-    /** The facts in a reply to [factsRequest], without the ones in [exclude] (known or rejected). */
-    fun parseFacts(reply: String, exclude: Collection<String>): List<String> {
-        val seen = exclude.map { normalize(it) }.toMutableSet()
-        return reply.lines()
-            .mapNotNull { FACT_LINE.find(it.trim())?.groupValues?.get(1)?.trim()?.trim('*')?.trim() }
-            .filter { it.length in FACT_MIN_CHARS..FACT_MAX_CHARS && !it.equals("NONE", ignoreCase = true) }
-            .filter { seen.add(normalize(it)) }
-            .take(FACTS_MAX)
-    }
-
-    private fun normalize(text: String) = text.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
-
     /** The user message the model sees: its memory, the vault notes as a small graph, then the request. */
     fun prompt(
         message: String,
@@ -256,7 +197,7 @@ object Assistant {
         asNote: Boolean,
         tags: List<String>,
         memory: Memory = Memory(emptyList(), emptyList(), emptyList()),
-        facts: List<String> = emptyList(),
+        pinned: List<String> = emptyList(),
         past: List<PastMessage> = emptyList(),
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
@@ -264,7 +205,7 @@ object Assistant {
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
-            built = compose(message, notes, asNote, tags, memory, facts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
+            built = compose(message, notes, asNote, tags, memory, pinned, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
             if (fixed + built.length <= INPUT_CHARS) break
         }
         return built
@@ -276,16 +217,18 @@ object Assistant {
         asNote: Boolean,
         tags: List<String>,
         memory: Memory,
-        facts: List<String>,
+        pinned: List<String>,
         past: List<PastMessage>,
         noteChars: Int,
         withConnected: Boolean,
         withOutline: Boolean,
     ): String = buildString {
         val notes = if (withConnected) allNotes else allNotes.filter { it.via == null }
-        if (facts.isNotEmpty()) {
-            append("What the user asked you to always remember:\n")
-            facts.forEach { append("- ").append(shorten(it.replace('\n', ' '), MEMORY_CHARS)).append('\n') }
+        // Pinned notes come first and share one budget, so many of them cannot crowd out the rest.
+        val kept = Pins.fit(pinned).first
+        if (kept.isNotEmpty()) {
+            append("Pinned notes, which the user wants you to keep in mind in every answer:\n")
+            kept.forEach { append("- ").append(it).append('\n') }
             append('\n')
         }
         memory.summary?.let { append("Summary of this conversation so far:\n").append(shorten(it.trim(), SUMMARY_CHARS)).append("\n\n") }

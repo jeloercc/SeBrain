@@ -15,6 +15,7 @@ import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
 import com.sebrain.app.chat.NoteFormat
+import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.vault.ConversationStore
@@ -160,6 +161,7 @@ class AppState(private val app: SeBrainApp) {
     fun start() {
         app.onImported = { onMain { refreshNotes() } }
         app.requestImport()
+        migratePins()
         refreshInstalled()
         refreshPrivacy()
         loadConversations()
@@ -432,6 +434,65 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    /** Pins or unpins a note: the assistant reads pinned notes in every prompt. */
+    fun togglePinned(id: Long) {
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            val note = store.get(id) ?: return@vault false
+            val text = if (Pins.isPinned(note.text)) Pins.unpin(note.text) else Pins.pin(note.text)
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(id, text, NoteIndexer.sha256Hex(text), now)
+                if (changed) app.indexer.index(db, id, text)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                if (result.getOrDefault(false)) {
+                    refreshNotes()
+                    if (detail?.note?.id == id) open(id)
+                }
+            }
+        }
+    }
+
+    /**
+     * Notes tagged #memory before 2026-11-12 become pinned notes. Runs once, when the vault
+     * can be opened; a failure leaves the flag unset so it is tried again at the next start.
+     */
+    private fun migratePins() {
+        val prefs = app.getSharedPreferences(PREFS, 0)
+        if (prefs.getBoolean(PREF_PINS_MIGRATED, false)) return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            db.beginTransaction()
+            try {
+                var changed = 0
+                for (summary in store.withTag(Pins.LEGACY_TAG, LIMIT)) {
+                    val text = Pins.migrate(summary.text) ?: continue
+                    if (store.updateText(summary.id, text, NoteIndexer.sha256Hex(text), now)) {
+                        app.indexer.index(db, summary.id, text)
+                        changed++
+                    }
+                }
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            result.onSuccess {
+                prefs.edit().putBoolean(PREF_PINS_MIGRATED, true).apply()
+                if (it > 0) onMain { refreshNotes() }
+            }
+        }
+    }
+
     fun delete(id: Long) {
         app.vault({ db -> NoteStore(db).delete(id) }) {
             onMain {
@@ -579,7 +640,6 @@ class AppState(private val app: SeBrainApp) {
         }) { result ->
             onMain {
                 result.onSuccess { (stored, saved) ->
-                    if (id != conversationId) clearSuggestions()
                     storedConversation = id
                     conversationId = id
                     summary = saved?.first
@@ -634,7 +694,6 @@ class AppState(private val app: SeBrainApp) {
         conversationId = null
         summary = null
         summarized = 0
-        clearSuggestions()
         messages.clear()
     }
 
@@ -648,10 +707,6 @@ class AppState(private val app: SeBrainApp) {
     fun ask(question: String) {
         val text = question.trim()
         if (text.isEmpty() || generating) return
-        Assistant.factToRemember(text)?.let { fact ->
-            rememberFact(text, fact)
-            return
-        }
         if (summarizing) {
             // The user comes first: drop the summary being written and answer.
             summarizing = false
@@ -667,91 +722,6 @@ class AppState(private val app: SeBrainApp) {
         } else {
             generate(text)
         }
-    }
-
-    /**
-     * "Remember that…": the fact is saved as a note tagged #memory, without asking the model.
-     * Notes with that tag go into every prompt, and the user can edit or delete them in Notes.
-     */
-    private fun rememberFact(message: String, fact: String) {
-        messages += ChatMessage(true, message)
-        persist(fromUser = true, text = message)
-        chatWorker.execute {
-            val outcome = runCatching {
-                tools.createNote("Memory: " + Assistant.shorten(fact.lineSequence().first(), 40), fact, listOf(VaultContext.MEMORY_TAG))
-            }.getOrElse { "The memory could not be saved: ${it.message}" }
-            val reply = if (outcome.startsWith("Created")) {
-                "Remembered. It is saved as a note tagged #memory, and I will keep it in mind in every chat."
-            } else {
-                outcome
-            }
-            onMain {
-                messages += ChatMessage(false, reply)
-                persist(fromUser = false, text = reply)
-                refreshNotes()
-            }
-        }
-    }
-
-    /** Facts the model proposes to remember. Nothing is saved until the user accepts one. */
-    var memorySuggestions by mutableStateOf(emptyList<String>())
-        private set
-    var memoryNotice by mutableStateOf<String?>(null)
-        private set
-    private val rejectedFacts = mutableSetOf<String>()
-
-    /** Asks the model which facts about the user in this conversation are worth keeping. */
-    fun suggestMemories() {
-        if (generating || currentModel == null) return
-        val lines = lines()
-        if (lines.none { it.fromUser }) return
-        if (summarizing) {
-            summarizing = false
-            app.chat.cancel()
-        }
-        markGenerating(true)
-        stopRequested = false
-        memoryNotice = null
-        app.vault({ db -> NoteStore(db).withTag(VaultContext.MEMORY_TAG, 50).map { it.text } }) { stored ->
-            val known = stored.getOrDefault(emptyList())
-            chatWorker.execute {
-                val reply = runCatching {
-                    if (stopRequested) "" else app.chat.reply(Assistant.FACTS_SYSTEM, emptyList(), Assistant.factsRequest(lines, known)) {}
-                }.getOrDefault("")
-                // A fact already inside a stored memory note is not proposed again.
-                val facts = Assistant.parseFacts(reply, rejectedFacts)
-                    .filterNot { fact -> known.any { it.contains(fact, ignoreCase = true) } }
-                onMain {
-                    markGenerating(false)
-                    if (stopRequested) return@onMain
-                    memorySuggestions = facts
-                    memoryNotice = if (facts.isEmpty()) "Nothing new to remember in this chat." else null
-                }
-            }
-        }
-    }
-
-    /** Saves a suggested fact as a #memory note, like "remember that…". */
-    fun acceptSuggestion(fact: String) {
-        memorySuggestions = memorySuggestions - fact
-        chatWorker.execute {
-            runCatching {
-                tools.createNote("Memory: " + Assistant.shorten(fact, 40), fact, listOf(VaultContext.MEMORY_TAG))
-            }
-            onMain { refreshNotes() }
-        }
-    }
-
-    /** Drops a suggestion; it is not proposed again in this conversation. */
-    fun dismissSuggestion(fact: String) {
-        rejectedFacts += fact
-        memorySuggestions = memorySuggestions - fact
-    }
-
-    private fun clearSuggestions() {
-        memorySuggestions = emptyList()
-        memoryNotice = null
-        rejectedFacts.clear()
     }
 
     /** Stores a message in the open conversation, creating the conversation on its first message. */
@@ -793,7 +763,7 @@ class AppState(private val app: SeBrainApp) {
         app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
-            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.facts.orEmpty(), context?.past.orEmpty())
+            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty())
             chatWorker.execute {
                 val result = runCatching {
                     if (stopRequested) {
@@ -967,6 +937,7 @@ class AppState(private val app: SeBrainApp) {
         const val PROGRESS_STEP = 8L * 1024 * 1024
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
+        const val PREF_PINS_MIGRATED = "pins_migrated"
         const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }

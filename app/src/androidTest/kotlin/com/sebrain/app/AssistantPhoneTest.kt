@@ -112,17 +112,6 @@ class AssistantPhoneTest {
         }
     }
 
-    /** Asks for facts worth remembering from the scripted conversation, with one already known. */
-    @Test
-    fun facts() {
-        val request = Assistant.factsRequest(script, known = listOf("Prefiere Docker a Podman"))
-        val start = System.nanoTime()
-        val reply = chat.reply(Assistant.FACTS_SYSTEM, emptyList(), request) {}
-        log("facts seconds=%.1f stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))
-        log("facts raw=${reply.replace('\n', ' ')}")
-        log("facts parsed=${Assistant.parseFacts(reply, emptyList())}")
-    }
-
     private val script = listOf(
             true to "Estoy montando un servidor casero que se llama atlas, con Debian 12",
             false to "Perfecto. Para atlas con Debian 12 te recomiendo empezar por actualizar el sistema y crear un usuario sin privilegios.",

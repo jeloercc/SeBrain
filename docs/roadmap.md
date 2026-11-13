@@ -148,7 +148,7 @@ extra model call (`chat/Assistant.remember`, `chat/VaultContext`).
 | Working memory | The last messages word for word: up to 6, 1200 characters each, 3000 in total | Sent as chat history (`initialMessages`) |
 | Conversation outline | One line for each older message: what the user asked, the title of what was answered | In the prompt |
 | Covered topics | Titles (`# Heading`) of the notes and answers already written in this conversation | In the prompt, with "do not write them again" |
-| Standing memory | Facts the user asked to keep. "Recuerda que…" / "Remember that…" saves a note tagged `#memory` without calling the model; the user edits or deletes it in Notes | Vault notes, in every prompt |
+| Pinned notes | Any note with the tag `#pinned` (the PIN button in a note). They share 1200 characters of every prompt, newest first. This replaced `#memory`, "recuerda que…" and "Suggest memories" on 2026-11-12 (`docs/brains/phase-1-one-memory.md`) | Vault notes, in every prompt |
 | Knowledge | Notes matching the message, plus graph neighbours | Vault (hybrid search + links + tags) |
 | Episodes | Saved conversations | Vault, `conversation` and `message` tables |
 
