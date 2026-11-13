@@ -84,6 +84,7 @@ object Assistant {
         "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
         RegexOption.IGNORE_CASE,
     )
+    private val CODE_FENCE = Regex("^\\s*(```|~~~)")
     private val CITATION = Regex("\\s?\\[(\\d+)](?!\\()")
     private val REMEMBER = Regex(
         "^(?:recuerda|recuerde|acu[eé]rdate|ten en cuenta|remember|keep in mind)(?:\\s+(?:de\\s+)?(?:que|that))?[:,]?\\s+(.+)$",
@@ -312,6 +313,34 @@ object Assistant {
         )
         if (facts.isNotEmpty()) append('\n').append(facts.joinToString(" · "))
         append('\n').append(shorten(stripHeading(note.text, note.title), chars))
+    }
+
+    /**
+     * Removes citations to notes that were not given: any `[n]` when there are no notes, and any
+     * number above [count]. The model was told not to write them and still did (evaluation case
+     * 06), so the reply is corrected instead. Code blocks and inline code are left alone, where
+     * `[0]` is an index.
+     */
+    fun dropUnknownCitations(reply: String, count: Int): String {
+        var fenced = false
+        return reply.lines().joinToString("\n") { line ->
+            if (CODE_FENCE.containsMatchIn(line)) {
+                fenced = !fenced
+                line
+            } else if (fenced) {
+                line
+            } else {
+                var changed = false
+                val cleaned = line.split('`').mapIndexed { i, part ->
+                    // Odd parts are inside `inline code`.
+                    if (i % 2 == 1) part else CITATION.replace(part) { match ->
+                        if (match.groupValues[1].toIntOrNull() in 1..count) match.value else "".also { changed = true }
+                    }
+                }.joinToString("`")
+                // "red [1], [3]." leaves "red,." behind; tidy the punctuation of a changed line only.
+                if (changed) cleaned.replace(Regex("(\\s*,)+\\s*(?=[.;:])"), "").replace(Regex("(\\s*,){2,}"), ",") else cleaned
+            }
+        }
     }
 
     /**

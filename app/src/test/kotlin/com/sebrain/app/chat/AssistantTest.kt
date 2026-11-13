@@ -184,4 +184,17 @@ class AssistantTest {
         assertTrue(request.endsWith("Messages:\n- mi servidor se llama atlas\n"))
         assertFalse(request.contains("Perfecto"))
     }
+
+    @Test
+    fun citationsToNotesThatWereNotGivenAreRemoved() {
+        assertEquals(
+            "Una IP identifica un dispositivo. Sirve para dirigir datos.",
+            Assistant.dropUnknownCitations("Una IP identifica un dispositivo [1]. Sirve para dirigir datos [1], [3].", count = 0),
+        )
+        // With two notes, [1] and [2] stay and [3] goes.
+        assertEquals("Uno [1], dos [2] y tres.", Assistant.dropUnknownCitations("Uno [1], dos [2] y tres [3].", count = 2))
+        // Indexes in code are not citations.
+        val code = "Usa `lista[0]` así:\n```python\nprint(lista[0])\n```\nFin [2]."
+        assertEquals("Usa `lista[0]` así:\n```python\nprint(lista[0])\n```\nFin.", Assistant.dropUnknownCitations(code, count = 1))
+    }
 }

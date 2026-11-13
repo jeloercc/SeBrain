@@ -221,7 +221,10 @@ class AssistantEvalTest {
         var passed = 0
         var total = 0
         val failed = mutableListOf<String>()
-        for (case in cases) {
+        // `-e cases 06,13` runs only those conversations, for example after a lost connection.
+        val only = InstrumentationRegistry.getArguments().getString("cases")?.split(',')?.map { it.trim() }
+        val selected = cases.filter { case -> only == null || only.any { case.name.startsWith(it) } }
+        for (case in selected) {
             val earlier = case.before.toMutableList()
             val written = mutableListOf<ContextNote>()
             for ((index, turn) in case.turns.withIndex()) {
@@ -234,8 +237,12 @@ class AssistantEvalTest {
                     .mapIndexed { i, n -> n.copy(number = i + 1) }
                 val prompt = Assistant.prompt(turn.message, context, asNote, emptyList(), memory, case.facts, case.past)
                 val start = System.nanoTime()
+                // As in the app: citations to notes that were not given are removed from the reply.
                 val reply = runCatching {
-                    chat.reply(Assistant.SYSTEM, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt) {}
+                    Assistant.dropUnknownCitations(
+                        chat.reply(Assistant.SYSTEM, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt) {},
+                        context.size,
+                    )
                 }.getOrElse { "[error: ${it.message}]" }
                 val seconds = (System.nanoTime() - start) / 1e9
                 val notes = if (asNote) NoteFormat.parse(reply, turn.message) else emptyList()
@@ -259,7 +266,7 @@ class AssistantEvalTest {
                 }
             }
         }
-        log("RESULT checks passed $passed of $total; turns failed ${failed.size} of ${cases.sumOf { it.turns.size }}")
+        log("RESULT checks passed $passed of $total; turns failed ${failed.size} of ${selected.sumOf { it.turns.size }}")
         failed.forEach { log("FAILED $it") }
     }
 

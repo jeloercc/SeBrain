@@ -777,3 +777,24 @@ known fact was not repeated.
 The model followed the template in both cases, so the cleaning in `NoteFormat.parse` had
 nothing to fix here; its cases (introduction, closing question, code fence around the reply,
 `*` bullets, bold title, "Etiquetas:") are covered by unit tests only.
+
+### 20-conversation evaluation, first run (2026-11-12, incomplete)
+
+`AssistantEvalTest`, same phone and model, vault simulated. The USB connection dropped during
+case 13, so only cases 01 to 12 ran: 19 turns, 18 passed.
+
+| Cases | Result |
+| --- | --- |
+| 01, 02 "the next one" in Spanish and English (4 turns each) | Pass: different notes each time, right language, the missing item named |
+| 03 short follow-up, 04 and 05 note in the other language | Pass |
+| 06 no note in context | **Fail:** the reply cited `[1]` twice although the prompt said not to cite |
+| 07 unrelated note, 08 does not invent a time the note lacks | Pass |
+| 09 standing instruction, 10 standing fact | Pass |
+| 11 past conversation, 12 summary | Pass |
+| 13 to 20 | Not run |
+
+Turn times: 3 to 8 s for answers, 14 to 25 s for a note.
+
+After case 06, `Assistant.dropUnknownCitations` removes from a reply any citation to a note
+that was not given. Unit-tested; case 06 and cases 13 to 20 have not been run since. To run
+only those: `am instrument -w -e class com.sebrain.app.AssistantEvalTest -e cases 06,13,14,15,16,17,18,19,20 com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner`.

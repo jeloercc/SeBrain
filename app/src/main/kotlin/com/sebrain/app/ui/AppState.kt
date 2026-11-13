@@ -816,7 +816,8 @@ class AppState(private val app: SeBrainApp) {
                     }
                     // The screen may have been cleared by onStop meanwhile; the reply is still stored.
                     val visible = index < messages.size
-                    val final = (if (visible) messages[index].text else reply).ifBlank { if (stopRequested) "[stopped]" else "" }
+                    val final = Assistant.dropUnknownCitations(if (visible) messages[index].text else reply, notes.size)
+                        .ifBlank { if (stopRequested) "[stopped]" else "" }
                     if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
                     markGenerating(false)
