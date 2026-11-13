@@ -121,10 +121,12 @@ always `device`.
 - A scope that matches nothing gives an empty brain; the editor shows the count before
   saving.
 - `linkedFrom` with depth 3 on a hub note can cover most of the vault; the count shows it.
-- Vector search with a scope filter: `sqlite-vec` filters after the nearest-neighbour step,
-  so a narrow brain can get fewer than the wanted candidates. The search then asks for more
-  candidates (up to a cap) before filtering. To verify against the `sqlite-vec` version in
-  the build before coding.
+- Vector search with a scope filter. Checked on 2026-11-12: the build has `sqlite-vec`
+  v0.1.9, whose nearest-neighbour plan accepts `rowid IN (...)`, so the filter can apply
+  before the search instead of after it. `chunk_vec` is keyed by chunk id and a scope gives
+  note ids, so the query needs the chunk ids of the scoped notes; whether a subquery works
+  there, and how fast it is for a brain of thousands of notes, must be tested on the phone
+  before the search is written. Fallback: ask for more candidates and filter afterwards.
 
 ## Out of scope
 

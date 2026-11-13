@@ -3,6 +3,23 @@
 **Status: not started.** Size L. **Schema v6: proposed here, to be approved before any code.**
 Confirms decisions 4 and 5.
 
+## Resources verified against the code (2026-11-12, before any building)
+
+| Needed | Found | Result |
+| --- | --- | --- |
+| Links with an anchor and an embed flag | The `link` table is read and written in six places: `NoteStore` (graph, `setMarkup`, backlinks, `linkedFrom`, delete) and `VaultBackupSnapshot` | Rebuild is contained. `setMarkup` takes `List<String>` and must take a link type |
+| Parsing `[[Note#Heading]]`, `[[Note\|text]]`, `![[Note]]` | `NoteMarkup.LINK` already accepts the heading and the display text and throws them away; an embed is already counted as a link | Small change: keep what is now discarded |
+| A title for a note that starts with front matter | **Problem.** `NoteMarkup.titleOf` takes the first non-empty line, so such a note would be titled `---` | `titleOf`, `Chunker` and the tag parser must skip the front matter block. Added to the steps |
+| Importing notes with the same text | **Problem.** `capture.content_sha256` is `UNIQUE`. Two files with the same text (empty notes, templates, daily notes) cannot both be imported, and links to the second would dangle | Proposed below: for a note with a path, the hash covers path and text. Needs approval with the schema |
+| Reading a folder tree | No `androidx.documentfile` in the build | Use the framework's `DocumentsContract` with `OpenDocumentTree`. No new dependency |
+| A YAML parser | No YAML library in the build | The small parser of this plan stands. No new dependency |
+| Indexing a large import | EmbeddingGemma on the NPU: 41.3 texts/s sustained for 389-character texts, foreground only (`benchmarks.md`); `ChunkStore.chunksWithoutVector` already lets vectors be added later | 15,000 chunks is about 6 minutes at that rate; longer chunks will be slower (not measured). Words search works at once; vectors fill in while the app is open, and resume if it is closed |
+| Showing an embedded note | `MarkdownBody` renders from text alone and has `onLinkClick` and `LinkPill` | The note view must load the embedded notes first and pass them in. Medium work |
+| Unlinked mentions | `chunk_fts` with `unicode61 remove_diacritics 2` supports phrase queries | As planned; "Café" also matches "cafe" |
+| Partial unique index on `path` | SQLite supports `CREATE UNIQUE INDEX … WHERE` | As planned |
+
+Two changes to the proposal come out of this, both marked **(verified)** below.
+
 ## Goal
 
 A note in SeBrain can hold everything a note in Obsidian holds that matters for combining
@@ -71,6 +88,16 @@ CREATE TABLE link_v6(
 -- conversation.brain_id.
 ```
 
+**(verified) The content hash of a note with a path.** `content_sha256` stays `UNIQUE`, and
+its meaning changes for notes that have a path: it is the SHA-256 of the path, a newline and
+the text. Notes without a path (shared text, notes written in the app before v6) keep the
+hash of the text alone, so sharing the same text twice is still caught. The cost: text shared
+into the app is no longer recognised as a duplicate of an imported file with the same text.
+
+**(verified) Front matter is not chunked.** The YAML block stays in `capture.text` and is
+skipped by the title rule, the chunker and the inline tag parser. Its values are searchable
+through `property`, and Phase 4 puts tags and aliases in the chunk headers.
+
 Not stored: block ids and headings. They are found by reading the target note's text when
 the link is followed, which keeps one source of truth.
 
@@ -101,14 +128,15 @@ of Phase 3. Formats v1 and v2 are still read.
 2. `VaultSchema.upgradeToV6`; test vault tests for a fresh v6 and for v5 → v6 with links.
 3. `FrontMatter` parser in `:cognition` (pure Kotlin), with unit tests.
 4. `NoteMarkup.parse`: link syntax with `#anchor`, `^block`, `|display`, `!` embed; nested
-   tags; tags and aliases from properties.
+   tags; tags and aliases from properties. `titleOf` and `Chunker.chunk` skip the front
+   matter block.
 5. `NoteStore`: write properties, aliases and the new link fields in `setMarkup`; resolve a
    link through title, alias, path; `unlinkedMentions(id)`; `folders()` and `inFolder(path)`.
 6. `NoteIndexer.rebuildAll` fills the new tables for existing notes after the migration.
 7. UI: properties table in the note view and editor; folder browser in Notes; embeds and
    anchor links in `Markdown.kt`; unlinked mentions under backlinks.
 8. `VaultInterop` replacing `MarkdownInterop`: import a folder tree through SAF
-   (`OpenDocumentTree`), with a report of files imported, skipped as duplicates, and
+   (`OpenDocumentTree`, read with `DocumentsContract`; no new dependency), with a report of files imported, skipped as duplicates, and
    attachments ignored; export a folder tree.
 9. Backup format v3; restore validation test.
 10. `NoteFormat`: notes written by the assistant get front matter (`source: assistant`,
