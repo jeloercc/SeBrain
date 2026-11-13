@@ -66,7 +66,11 @@ class AssistantEvalTest {
     }
     private fun lacksPattern(name: String, pattern: String) = Check("lacks $name") { reply, _, _ -> !Regex(pattern).containsMatchIn(reply) }
     private val spanish = Check("in Spanish") { reply, _, _ -> count(reply, SPANISH) > count(reply, ENGLISH) }
-    private val english = Check("in English") { reply, _, _ -> count(reply, ENGLISH) > count(reply, SPANISH) }
+    // A short reply such as "SSH uses port 22 by default." has no common English word; it still
+    // counts as English when nothing in it is Spanish.
+    private val english = Check("in English") { reply, _, _ ->
+        count(reply, ENGLISH) > count(reply, SPANISH) || (count(reply, SPANISH) == 0 && reply.none { it in "¿¡ñáéíóú" })
+    }
     private val cites = Check("cites [1]") { reply, _, _ -> reply.contains("[1]") }
     private val citesNothing = lacksPattern("citation", "\\[\\d+]")
     private fun shorterThan(chars: Int) = Check("under $chars chars") { reply, _, _ -> reply.trim().length < chars }

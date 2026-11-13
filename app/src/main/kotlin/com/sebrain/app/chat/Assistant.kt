@@ -84,6 +84,12 @@ object Assistant {
         "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
         RegexOption.IGNORE_CASE,
     )
+    private val SPANISH_WORDS = Regex(
+        "\\b(el|la|los|las|de|del|que|qué|es|un|una|en|por|para|con|se|y|como|cómo|cuál|cual|mi|mis|haz|sobre|esto|está|son|más)\\b",
+    )
+    private val ENGLISH_WORDS = Regex(
+        "\\b(the|is|are|of|and|to|a|in|it|for|that|with|on|what|which|how|why|when|where|who|does|do|i|you|my|this|use|by|about|make|from|can|have|has|was)\\b",
+    )
     private val CODE_FENCE = Regex("^\\s*(```|~~~)")
     private val CITATION = Regex("\\s?\\[(\\d+)](?!\\()")
     private val REMEMBER = Regex(
@@ -175,6 +181,21 @@ object Assistant {
             if (text.length > budget) break
             budget -= text.length
             append(if (line.fromUser) "User: " else "Assistant: ").append(text).append('\n')
+        }
+    }
+
+    /**
+     * "Spanish" or "English" when the common words of [message] clearly belong to one of them,
+     * or null when it is too short or mixed to tell.
+     */
+    fun language(message: String): String? {
+        val text = message.lowercase()
+        val spanish = SPANISH_WORDS.findAll(text).count() + text.count { it in "¿¡ñáéíóú" }
+        val english = ENGLISH_WORDS.findAll(text).count()
+        return when {
+            spanish >= 2 && spanish > english -> "Spanish"
+            english >= 2 && english > spanish -> "English"
+            else -> null
         }
     }
 
@@ -300,7 +321,11 @@ object Assistant {
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(NoteFormat.instructions(message, notes.map { it.title }, tags))
         // Last, because a small model follows the most recent instruction best.
-        append("\n\nWrite in the language of the message above, even if the notes are in another language.")
+        // Naming the language works where "the language of the message" did not: after a Spanish
+        // turn, an English message was answered in Spanish (evaluation case 20).
+        val language = language(message)
+        append("\n\nWrite ").append(if (language != null) "in $language, the language of the message above" else "in the language of the message above")
+        append(", even if the notes or the earlier messages are in another language.")
     }
 
     fun render(note: ContextNote, chars: Int): String = buildString {

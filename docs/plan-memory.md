@@ -1,10 +1,9 @@
 # Plan: finish the assistant's memory
 
-**Status (2026-11-12):** steps 1 to 5 are done and on the Pixel. Step 6 is half done: the 20
-conversations are written (`AssistantEvalTest`) and cases 01 to 12 ran, 18 of 19 turns
-passing; the one failure (a citation with no note) is fixed in code but not rerun. Cases 13
-to 20 and case 06 still have to run; see `docs/benchmarks.md`. The app with the citation fix
-is not installed yet. Step 0 items 2 to 5 need the user.
+**Status (2026-11-12):** steps 1 to 6 are done and on the Pixel. The evaluation ended at 20
+of 20 conversations after two fixes found by it (see `docs/benchmarks.md`). What is left is
+step 0, items 2 to 5, and the in-app checks of steps 2 to 5: they need the user's hands on
+the app, because the tests drive the model, not the screens.
 
 ## Step 0 — Check what is already built (no code)
 

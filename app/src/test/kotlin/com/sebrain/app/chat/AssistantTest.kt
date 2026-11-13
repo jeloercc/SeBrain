@@ -15,7 +15,7 @@ class AssistantTest {
         assertTrue(prompt.contains("[1] Coffee\nTags: #drinks · Links to: Caffeine · Linked from: Mornings\nI drink it black."))
         assertTrue(prompt.contains("Connected notes"))
         assertTrue(prompt.contains("[2] Caffeine (linked from [1])\nA stimulant."))
-        assertTrue(prompt.contains("Message: Why do I drink coffee?\n\nWrite in the language of the message above"))
+        assertTrue(prompt.contains("Message: Why do I drink coffee?\n\nWrite in English, the language of the message above"))
     }
 
     @Test
@@ -196,5 +196,16 @@ class AssistantTest {
         // Indexes in code are not citations.
         val code = "Usa `lista[0]` así:\n```python\nprint(lista[0])\n```\nFin [2]."
         assertEquals("Usa `lista[0]` así:\n```python\nprint(lista[0])\n```\nFin.", Assistant.dropUnknownCitations(code, count = 1))
+    }
+
+    @Test
+    fun theLanguageOfAMessageIsNamedWhenItIsClear() {
+        assertEquals("English", Assistant.language("and what port does it use by default?"))
+        assertEquals("Spanish", Assistant.language("¿qué es SSH?"))
+        assertEquals("Spanish", Assistant.language("haz la nota del siguiente"))
+        assertEquals(null, Assistant.language("ok"))
+        assertEquals(null, Assistant.language("SSH"))
+        assertTrue(Assistant.prompt("ok", emptyList(), false, emptyList()).contains("Write in the language of the message above, even if"))
+        assertTrue(Assistant.prompt("¿qué es SSH?", emptyList(), false, emptyList()).contains("Write in Spanish, the language of the message above"))
     }
 }

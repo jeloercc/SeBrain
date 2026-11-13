@@ -798,3 +798,25 @@ Turn times: 3 to 8 s for answers, 14 to 25 s for a note.
 After case 06, `Assistant.dropUnknownCitations` removes from a reply any citation to a note
 that was not given. Unit-tested; case 06 and cases 13 to 20 have not been run since. To run
 only those: `am instrument -w -e class com.sebrain.app.AssistantEvalTest -e cases 06,13,14,15,16,17,18,19,20 com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner`.
+
+### 20-conversation evaluation, completed (2026-11-12)
+
+The remaining cases ran in a second session, and two cases were rerun after their fixes. The
+20 conversations were never run in one pass, so this is the last result of each case.
+
+| Cases | Result | Run |
+| --- | --- | --- |
+| 01 to 05, 07 to 12 | Pass (18 turns) | First run |
+| 06 no note, no citation | Pass after `dropUnknownCitations` | Second run |
+| 13 several notes in one request (49 s), 14 note format, 15 new note links to an existing one | Pass | Second run |
+| 16 uses the links between notes, 17 code in a fenced block, 18 "summarize it in one sentence" | Pass | Second run |
+| 19 a question is not saved as a note | Pass | Second run |
+| 20 language switch inside a conversation | Failed in the second run: an English message after a Spanish turn was answered in Spanish. Pass after the prompt names the detected language (`Assistant.language`) | Fourth run |
+
+Final state: 20 of 20 conversations, 32 of 32 turns. Two real defects were found and fixed
+(a citation with no note; the language of the history winning over the language of the
+message), and one check was wrong (a short English reply without common words was not
+recognised as English). Each case ran once per version; the model samples, so a pass is not a
+guarantee for every run. Rerun the whole set after any prompt change:
+`am instrument -w -e class com.sebrain.app.AssistantEvalTest com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner`
+(about 15 minutes; keep the USB connection and do not open the app meanwhile).
