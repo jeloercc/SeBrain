@@ -60,9 +60,17 @@ class NoteStore(private val db: SQLiteDatabase) {
                 nodes += NoteGraph.Node(c.getLong(0), title, c.getString(2))
             }
         }
-        // A link may name a note by one of its aliases.
+        // A link may also name a note by one of its aliases, or by its file name: the last part
+        // of its path. Titles win, then aliases, as in findByTitle.
         db.rawQuery("SELECT capture_id, name FROM alias").use { c ->
             while (c.moveToNext()) byId[c.getLong(0)]?.let { byTitle.putIfAbsent(c.getString(1).lowercase(), it) }
+        }
+        db.rawQuery("SELECT id, path FROM capture WHERE path IS NOT NULL").use { c ->
+            while (c.moveToNext()) byId[c.getLong(0)]?.let { node ->
+                val path = c.getString(1).lowercase()
+                byTitle.putIfAbsent(path.substringAfterLast('/'), node)
+                byTitle.putIfAbsent(path, node)
+            }
         }
         val edges = LinkedHashSet<Pair<Int, Int>>()
         db.rawQuery("SELECT DISTINCT source_id, target_title FROM link").use { c ->
