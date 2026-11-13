@@ -13,11 +13,12 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
  * are rebuilt after restore. Callers must encrypt the returned bytes before writing.
  *
  * Format version 2 (approved 2026-11-12) adds the saved conversations after the notes.
- * Version 1 snapshots are still read; they simply have no conversations.
+ * Version 3 adds each note's path in the folder tree; aliases and properties are not stored,
+ * because they are read again from the note's text. Older versions are still read.
  */
 object VaultBackupSnapshot {
     private val MAGIC = "SBSN".toByteArray(StandardCharsets.US_ASCII)
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val FIRST_VERSION = 1
     private const val MAX_RECORDS = 1_000_000
     private const val MAX_FIELD_BYTES = 16 * 1024 * 1024
@@ -28,6 +29,7 @@ object VaultBackupSnapshot {
         val updatedAt: String?,
         val tags: List<String>,
         val links: List<String>,
+        val path: String? = null,
     )
 
     data class Message(val fromUser: Boolean, val text: String, val createdAt: String)
@@ -75,19 +77,21 @@ object VaultBackupSnapshot {
     fun export(db: SQLiteDatabase): ByteArray {
         val records = mutableListOf<Record>()
         db.rawQuery(
-            "SELECT segment_id, content_sha256, captured_at, time_zone, source, subject, text, title, updated_at " +
+            "SELECT segment_id, content_sha256, captured_at, time_zone, source, subject, text, title, updated_at, path, id " +
                 "FROM capture ORDER BY id",
             emptyArray<String>(),
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                val id = cursor.getLong(0)
+                // The row id is the last column. It used to be read from column 0, the segment
+                // UUID, so tags and links were exported for the wrong note.
+                val id = cursor.getLong(10)
                 val tags = db.rawQuery(
                     "SELECT t.name FROM tag t JOIN capture_tag ct ON ct.tag_id = t.id " +
                         "WHERE ct.capture_id = ? ORDER BY t.name",
                     id as Any,
                 ).use { c -> strings(c) }
                 val links = db.rawQuery(
-                    "SELECT target_title FROM link WHERE source_id = ? ORDER BY target_title",
+                    "SELECT DISTINCT target_title FROM link WHERE source_id = ? ORDER BY target_title",
                     id as Any,
                 ).use { c -> strings(c) }
                 records += Record(
@@ -104,6 +108,7 @@ object VaultBackupSnapshot {
                     if (cursor.isNull(8)) null else cursor.getString(8),
                     tags,
                     links,
+                    if (cursor.isNull(9)) null else cursor.getString(9),
                 )
             }
         }
@@ -124,6 +129,7 @@ object VaultBackupSnapshot {
             for (record in records) {
                 val id = CaptureStore(db).insertReturningId(record.capture)
                     ?: error("Could not restore capture ${record.capture.segmentId}")
+                if (record.path != null) db.execSQL("UPDATE capture SET path = ? WHERE id = ?", arrayOf<Any>(record.path, id))
                 if (record.title != null || record.updatedAt != null) {
                     db.execSQL(
                         "UPDATE capture SET title = ?, updated_at = ? WHERE id = ?",
@@ -174,6 +180,7 @@ object VaultBackupSnapshot {
                 writeNullable(data, record.updatedAt)
                 writeStrings(data, record.tags)
                 writeStrings(data, record.links)
+                if (version >= 3) writeNullable(data, record.path)
             }
             if (version >= 2) {
                 data.writeInt(conversations.size)
@@ -215,7 +222,11 @@ object VaultBackupSnapshot {
                         readNullable(data),
                         readString(data),
                     )
-                    add(Record(capture, readNullable(data), readNullable(data), readStrings(data), readStrings(data)))
+                    val title = readNullable(data)
+                    val updatedAt = readNullable(data)
+                    val tags = readStrings(data)
+                    val links = readStrings(data)
+                    add(Record(capture, title, updatedAt, tags, links, if (version >= 3) readNullable(data) else null))
                 }
             }
             if (version < 2) return Snapshot(records, emptyList())

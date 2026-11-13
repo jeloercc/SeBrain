@@ -1,6 +1,8 @@
 package com.sebrain.cognition
 
 import com.sebrain.core.vault.ChunkStore
+import com.sebrain.core.vault.NoteLink
+import com.sebrain.core.vault.NoteProperty
 import com.sebrain.core.vault.NoteStore
 import java.security.MessageDigest
 import net.zetetic.database.sqlcipher.SQLiteDatabase
@@ -22,10 +24,19 @@ class NoteIndexer(
         markup(db, id, text, subject)
     }
 
-    /** Extracts title, tags and links only. */
+    /** Reads the title, tags, links, aliases and properties of a note, without touching its search chunks. */
     fun markup(db: SQLiteDatabase, id: Long, text: String, subject: String? = null) {
         val parsed = NoteMarkup.parse(text)
-        NoteStore(db).setMarkup(id, NoteMarkup.titleOf(text, subject), parsed.tags, parsed.links)
+        NoteStore(db).setMarkup(
+            id,
+            NoteMarkup.titleOf(text, subject),
+            parsed.tags,
+            parsed.linkDetails.map { NoteLink(it.target, it.anchor, it.embed) },
+            parsed.aliases,
+            // The lists of tags and aliases have their own tables; the rest are the note's properties.
+            parsed.properties.filterNot { it.key.lowercase() in STRUCTURAL }
+                .map { NoteProperty(it.key, it.type.name.lowercase(), it.values, it.numbers) },
+        )
     }
 
     /** A failing model must not block a write: the text is still stored and searchable. */
@@ -59,6 +70,11 @@ class NoteIndexer(
     }
 
     companion object {
+        private val STRUCTURAL = setOf("tags", "tag", "aliases", "alias")
+
+        /** See [NoteStore.contentHash]. */
+        fun contentHash(text: String, path: String?): String = NoteStore.contentHash(text, path)
+
         fun sha256Hex(text: String): String =
             MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }

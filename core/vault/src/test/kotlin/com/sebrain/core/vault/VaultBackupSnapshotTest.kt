@@ -20,6 +20,7 @@ class VaultBackupSnapshotTest {
         "2026-11-11T22:01:00Z",
         listOf("tag"),
         listOf("Target"),
+        "Redes/TCP",
     )
 
     private val conversation = VaultBackupSnapshot.Conversation(
@@ -47,8 +48,13 @@ class VaultBackupSnapshotTest {
         val old = VaultBackupSnapshot.encode(listOf(record), version = 1)
         val restored = VaultBackupSnapshot.decode(old)
 
-        assertEquals(listOf(record), restored.records)
+        // Version 1 has neither conversations nor paths.
+        assertEquals(listOf(record.copy(path = null)), restored.records)
         assertEquals(emptyList<VaultBackupSnapshot.Conversation>(), restored.conversations)
+
+        val v2 = VaultBackupSnapshot.decode(VaultBackupSnapshot.encode(listOf(record), listOf(conversation), version = 2))
+        assertEquals(listOf(record.copy(path = null)), v2.records)
+        assertEquals(listOf(conversation), v2.conversations)
     }
 
     @Test

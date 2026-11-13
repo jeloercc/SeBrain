@@ -16,7 +16,8 @@ object Chunker {
 
     fun chunk(text: String, maxChars: Int = DEFAULT_MAX_CHARS): List<Chunk> {
         require(maxChars > 0) { "maxChars must be positive" }
-        val pieces = split(text, 0, text.length, maxChars, listOf(PARAGRAPH, SENTENCE_END, SPACE))
+        // The front matter is not chunked: its values are indexed as properties instead.
+        val pieces = split(text, FrontMatter.parse(text).bodyStart, text.length, maxChars, listOf(PARAGRAPH, SENTENCE_END, SPACE))
         val chunks = ArrayList<Chunk>()
         var start = -1
         var end = -1
