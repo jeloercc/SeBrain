@@ -116,6 +116,10 @@ Local model  │  model on the user's own machine  │  external API (opt-in per
 
 ## Phases
 
+**Each phase has its own document in [`brains/`](brains/README.md)**, with its design, steps,
+tests and acceptance criteria; schema v6 is proposed in the Phase 2 and Phase 3 documents.
+What follows is the summary.
+
 Each phase ends with something to try on the Pixel and with the 20-conversation evaluation
 rerun. Size is relative: S about a day of work, M several days, L more than a week.
 

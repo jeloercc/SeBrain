@@ -201,6 +201,15 @@ Left in `docs/plan-memory.md`: the 20-conversation evaluation.
 - The titles written in a conversation (all of them, for a reply with several notes) feed the
   "already written" list, so "the next one" skips them.
 
+## Next direction: one memory, several brains (proposed 2026-11-12)
+
+The user asked for one kind of memory (the notes), several brains that combine data, full
+Obsidian-style combining of concepts, and memory that can feed the local model or an
+external one. The research and architecture are in `docs/plan-brains.md`; the seven phases,
+each with design, steps, tests and acceptance criteria, are in `docs/brains/`. Nothing is
+built. Phase 6 (other models) changes the hard rule that note content never leaves the
+device and waits for an explicit decision.
+
 ## Post-quantum cryptography
 
 Decided 2026-11-10: SeBrain uses native post-quantum cryptography instead of the user's TypeScript `pqc-sdk`, which a Kotlin app cannot run.

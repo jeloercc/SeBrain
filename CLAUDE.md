@@ -99,6 +99,7 @@ Still pending from the original phases: the extraction-model benchmark (Gemma 3 
 - Confirm the ML Kit exception: LiteRT-LM is the default engine and ML Kit stays optional behind a setting, pending closure with the telemetry analysis in `docs/benchmarks.md`.
 - Distribution: sideload only or private Play.
 - Work profile + local VPN firewall for other apps (see `docs/roadmap.md`, Privacy panel).
+- Brains plan (`docs/brains/README.md`): its decisions table lists what is assumed and what is not. Sending note content to another machine (Phase 6) is never assumed.
 
 ## Way of working
 
