@@ -17,6 +17,9 @@ object NoteSections {
         val label: String get() = display ?: if (anchor.isEmpty()) target else "$target › ${anchor.removePrefix("^")}"
     }
 
+    /** The key under which the text of an embedded note is handed to the screen that shows it. */
+    fun embedKey(target: String, anchor: String): String = target.trim().lowercase() + "#" + anchor.trim().lowercase()
+
     fun reference(inner: String): Reference {
         val display = inner.substringAfter('|', "").trim().takeIf { '|' in inner && it.isNotEmpty() }
         val address = inner.substringBefore('|')

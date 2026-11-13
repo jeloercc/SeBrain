@@ -183,6 +183,14 @@ class NoteStore(private val db: SQLiteDatabase) {
         if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
     }
 
+    /** The note at [path] in the folder tree, if there is one. */
+    fun idAtPath(path: String): Long? = first("SELECT id FROM capture WHERE path = ? COLLATE NOCASE LIMIT 1", path)
+
+    /** Notes with an id above [afterId], oldest first, for walking the whole vault in pages. */
+    fun page(afterId: Long, limit: Int): List<Note> = db.rawQuery(
+        "SELECT id FROM capture WHERE id > ? ORDER BY id LIMIT $limit", afterId as Any,
+    ).use { c -> generateSequence { if (c.moveToNext()) c.getLong(0) else null }.toList() }.mapNotNull(::get)
+
     /** Places a note in the folder tree. Returns false if another note already has that path. */
     fun setPath(id: Long, path: String?): Boolean {
         if (path != null) {

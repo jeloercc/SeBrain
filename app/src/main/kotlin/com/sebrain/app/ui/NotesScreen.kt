@@ -1,5 +1,8 @@
 package com.sebrain.app.ui
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.app.chat.Pins
 import android.content.Intent
 import androidx.activity.compose.BackHandler
@@ -96,6 +99,13 @@ private fun NoteList(state: AppState, modifier: Modifier) {
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(state::importMarkdown)
     }
+    val vaultImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(state::importVault)
+    }
+    val vaultExportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(state::exportVault)
+    }
+    var confirmExport by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { state.loadGraph() }
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -122,8 +132,27 @@ private fun NoteList(state: AppState, modifier: Modifier) {
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = { importPicker.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) {
-                    Text("IMPORT MARKDOWN")
+                    Text("IMPORT FILE")
                 }
+                // A whole Obsidian vault folder, in and out.
+                TextButton(onClick = { vaultImportPicker.launch(null) }) { Text("IMPORT VAULT") }
+                TextButton(onClick = { confirmExport = true }) { Text("EXPORT VAULT") }
+            }
+            state.vaultTransfer?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Neon.Coral,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                )
+            }
+            if (confirmExport) {
+                Confirm(
+                    "Export the whole vault?",
+                    "Every note is written as a Markdown file in the folder you choose. Those files are outside the vault and not encrypted.",
+                    "Choose folder",
+                    onDismiss = { confirmExport = false },
+                ) { vaultExportPicker.launch(null) }
             }
             OutlinedTextField(
                 value = state.query,
@@ -145,7 +174,7 @@ private fun NoteList(state: AppState, modifier: Modifier) {
             ) {
                 item {
                     FilterChip(
-                        selected = state.selectedTag == null && state.query.isBlank(),
+                        selected = state.selectedTag == null && state.selectedFolder == null && state.query.isBlank(),
                         onClick = { state.selectTag(null) },
                         label = { Text("ALL") },
                     )
@@ -165,6 +194,17 @@ private fun NoteList(state: AppState, modifier: Modifier) {
                     }
                 }
             }
+            if (state.folders.isNotEmpty()) {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.folders, key = { "folder-" + it.first }) { (folder, count) ->
+                        FilterChip(
+                            selected = state.selectedFolder == folder,
+                            onClick = { state.selectFolder(if (state.selectedFolder == folder) null else folder) },
+                            label = { Text("▸ $folder  $count") },
+                        )
+                    }
+                }
+            }
             val problem = state.vaultProblem
             val summary = when {
                 problem != null -> problem
@@ -176,6 +216,7 @@ private fun NoteList(state: AppState, modifier: Modifier) {
                         "up to ${Pins.BUDGET_CHARS} characters" + if (omitted > 0) " · $omitted do not fit and are left out" else ""
                 }
                 state.selectedTag != null -> "${state.notes.size} notes with #${state.selectedTag}"
+                state.selectedFolder != null -> "${state.notes.size} notes in ${state.selectedFolder}"
                 else -> "${state.noteCount} notes"
             }
             Text(
@@ -247,8 +288,10 @@ private fun EmptyVaultState(onNewNote: () -> Unit, onImport: () -> Unit) {
 
 @Composable
 private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
-    val title = note.title ?: note.text.lineSequence().firstOrNull().orEmpty()
-    val body = note.text.lineSequence().drop(1).joinToString(" ").trim().ifEmpty { note.text }
+    // The card shows the note's own text, not its properties block.
+    val text = FrontMatter.body(note.text)
+    val title = note.title ?: text.lineSequence().firstOrNull().orEmpty()
+    val body = text.lineSequence().drop(1).joinToString(" ").trim().ifEmpty { text }
     val priority = title.contains("PROT-01", ignoreCase = true)
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -418,12 +461,39 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
         Column(Modifier.padding(padding).padding(horizontal = 20.dp).verticalScroll(rememberScrollState())) {
             Text(note.title.ifEmpty { "Untitled" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
-                "${formatDate(note.capturedAt)} · ${note.source}",
+                listOfNotNull("${formatDate(note.capturedAt)} · ${note.source}", note.path).joinToString(" · "),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = if (note.aliases.isEmpty()) 16.dp else 2.dp),
             )
-            MarkdownBody(note.text, note.title, onLinkClick = state::openByTitle)
+            if (note.aliases.isNotEmpty()) {
+                Text(
+                    "Also: " + note.aliases.joinToString(", "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
+            }
+            detail.problem?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (note.properties.isNotEmpty()) {
+                // The note's front matter. It is edited in the note's text, with the pencil.
+                Column(
+                    Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), MaterialTheme.shapes.small)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    note.properties.forEach { property ->
+                        Row {
+                            Text(property.key, style = MaterialTheme.typography.labelMedium, color = Neon.Dim, modifier = Modifier.width(110.dp))
+                            Text(property.values.joinToString(", "), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            MarkdownBody(FrontMatter.body(note.text), note.title, embeds = detail.embeds, onLinkClick = state::openByTitle)
             if (note.tags.isNotEmpty()) {
                 Section("Tags")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -434,6 +504,16 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
             }
             LinkSection("Links to", detail.linksTo, state)
             LinkSection("Linked from", detail.linkedFrom, state)
+            if (detail.mentions.isNotEmpty()) {
+                Section("Mentioned without a link")
+                detail.mentions.forEach { other ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(onClick = { state.open(other.id) }, label = { Text(other.title.orEmpty()) })
+                        // Turns the first mention in that note into a link to this one.
+                        TextButton(onClick = { state.linkMention(other.id) }) { Text("LINK") }
+                    }
+                }
+            }
             Spacer(Modifier.height(32.dp))
         }
     }

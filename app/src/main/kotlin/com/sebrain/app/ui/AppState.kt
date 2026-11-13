@@ -25,6 +25,10 @@ import com.sebrain.app.privacy.DexTrackerScanner
 import com.sebrain.app.privacy.PrivacyAudit
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.cognition.MarkdownInterop
+import com.sebrain.cognition.NoteMarkup
+import com.sebrain.cognition.NoteSections
+import com.sebrain.app.VaultFolder
+import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.ml.KnownModel
 import com.sebrain.core.net.HubFile
 import com.sebrain.core.net.HubModel
@@ -51,7 +55,17 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
-class NoteDetail(val note: Note, val linksTo: List<CaptureSummary>, val linkedFrom: List<CaptureSummary>)
+class NoteDetail(
+    val note: Note,
+    val linksTo: List<CaptureSummary>,
+    val linkedFrom: List<CaptureSummary>,
+    /** Notes that name this one without linking to it. */
+    val mentions: List<CaptureSummary> = emptyList(),
+    /** The text of each note or section this note embeds, by [NoteSections.embedKey]. */
+    val embeds: Map<String, String> = emptyMap(),
+    /** Why the note's properties could not be read in full, if they could not. */
+    val problem: String? = null,
+)
 
 /** [id] is null for a new note. */
 class NoteDraft(val id: Long?, val text: String)
@@ -181,6 +195,7 @@ class AppState(private val app: SeBrainApp) {
         app.onImported = null
         notes = emptyList()
         tags = emptyList()
+        folders = emptyList()
         detail = null
         draft = null
         graph = null
@@ -228,13 +243,31 @@ class AppState(private val app: SeBrainApp) {
 
     fun selectTag(tag: String?) {
         selectedTag = tag
+        selectedFolder = null
         query = ""
         refreshNotes()
     }
 
+    /** Folders that hold notes, with how many each holds, subfolders included. */
+    var folders by mutableStateOf(emptyList<Pair<String, Int>>())
+        private set
+    var selectedFolder by mutableStateOf<String?>(null)
+        private set
+
+    fun selectFolder(folder: String?) {
+        selectedFolder = folder
+        selectedTag = null
+        query = ""
+        refreshNotes()
+    }
+
+    /** Set on the vault thread by [refreshNotes], read on the main thread right after. */
+    @Volatile private var loadedFolders = emptyList<Pair<String, Int>>()
+
     fun refreshNotes() {
         val wanted = query.trim()
         val tag = selectedTag
+        val folder = selectedFolder
         app.search(wanted, { db, vector ->
             val captures = CaptureStore(db)
             val store = NoteStore(db)
@@ -242,18 +275,20 @@ class AppState(private val app: SeBrainApp) {
                 wanted.isNotEmpty() ->
                     HybridSearch(db).search(wanted, vector, LIMIT).mapNotNull { captures.summaryOf(it.captureId) }.distinctBy { it.id }
                 tag != null -> store.withTag(tag, LIMIT)
+                folder != null -> store.inFolder(folder, LIMIT)
                 else -> captures.recent(LIMIT)
             }
-
+            loadedFolders = store.folders()
             Triple(captures.count(), found, store.tags())
         }) { result ->
             onMain {
                 // A slower, older query must not replace the results of a newer one.
-                if (wanted != query.trim() || tag != selectedTag) return@onMain
+                if (wanted != query.trim() || tag != selectedTag || folder != selectedFolder) return@onMain
                 result.onSuccess { (count, found, allTags) ->
                     noteCount = count
                     notes = found
                     tags = allTags
+                    folders = loadedFolders
                     vaultProblem = null
                 }.onFailure {
                     notes = emptyList()
@@ -388,8 +423,36 @@ class AppState(private val app: SeBrainApp) {
     fun open(id: Long) {
         app.vault({ db ->
             val store = NoteStore(db)
-            store.get(id)?.let { NoteDetail(it, store.linkedFrom(id), store.backlinks(id)) }
+            store.get(id)?.let { note ->
+                val parsed = NoteMarkup.parse(note.text)
+                // An embedded note is read here, off the main thread, and only one level deep.
+                val embeds = parsed.linkDetails.filter { it.embed }.mapNotNull { link ->
+                    val text = store.findByTitle(link.target)?.let(store::get)?.let { NoteSections.extract(it.text, link.anchor) }
+                    text?.let { NoteSections.embedKey(link.target, link.anchor) to Assistant.shorten(it, EMBED_CHARS) }
+                }.toMap()
+                NoteDetail(note, store.linkedFrom(id), store.backlinks(id), store.unlinkedMentions(id), embeds, parsed.problem)
+            }
         }) { result -> onMain { detail = result.getOrNull() } }
+    }
+
+    /** Turns the first mention of the open note inside the note [sourceId] into a link to it. */
+    fun linkMention(sourceId: Long) {
+        val target = detail?.note ?: return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            val source = store.get(sourceId) ?: return@vault false
+            val text = NoteSections.linkMention(source.text, target.title, listOf(target.title) + target.aliases) ?: return@vault false
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(sourceId, text, NoteIndexer.sha256Hex(text), now)
+                if (changed) app.indexer.index(db, sourceId, text)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { onMain { open(target.id) } }
     }
 
     fun openByTitle(title: String) {
@@ -542,6 +605,124 @@ class AppState(private val app: SeBrainApp) {
                 result.onSuccess { refreshNotes() }
                     .onFailure { vaultProblem = "Markdown import failed (${it.message ?: it.javaClass.simpleName})" }
             }
+        }
+    }
+
+    /** What a vault import or export is doing, or its report when it ends. */
+    var vaultTransfer by mutableStateOf<String?>(null)
+        private set
+    @Volatile private var transferring = false
+
+    /** Runs [block] on the vault thread and waits for it, so a long job can go in small steps. */
+    private fun <T> vaultStep(block: (net.zetetic.database.sqlcipher.SQLiteDatabase) -> T): Result<T> {
+        val done = java.util.concurrent.CountDownLatch(1)
+        var outcome: Result<T>? = null
+        app.vault(block) { outcome = it; done.countDown() }
+        done.await()
+        return outcome!!
+    }
+
+    /**
+     * Imports an Obsidian vault folder: every Markdown file becomes a note with its path, its
+     * properties, tags and links. A file whose path is already in the vault updates that note.
+     * It runs in small batches so search and the chat keep working meanwhile.
+     */
+    fun importVault(tree: Uri) {
+        if (transferring) return
+        transferring = true
+        vaultTransfer = "Reading the folder…"
+        thread(name = "vault-import") {
+            var created = 0; var updated = 0; var unchanged = 0; var unreadable = 0; var problems = 0
+            val report = runCatching {
+                val folder = VaultFolder(app.contentResolver, tree)
+                val listing = folder.list()
+                val zone = ZoneId.systemDefault().id
+                listing.notes.chunked(IMPORT_BATCH).forEachIndexed { batch, files ->
+                    onMain { vaultTransfer = "Importing ${batch * IMPORT_BATCH} of ${listing.notes.size} notes…" }
+                    val texts = files.map { it to folder.read(it) }
+                    unreadable += texts.count { it.second == null }
+                    val now = Instant.now().toString()
+                    vaultStep { db ->
+                        db.beginTransaction()
+                        try {
+                            val store = NoteStore(db)
+                            for ((file, text) in texts) {
+                                if (text == null) continue
+                                val path = MarkdownInterop.notePath(file.relative) ?: continue
+                                val subject = path.substringAfterLast('/')
+                                if (NoteMarkup.parse(text).problem != null) problems++
+                                val existing = store.idAtPath(path)
+                                if (existing != null) {
+                                    if (store.get(existing)?.text == text) {
+                                        unchanged++
+                                    } else if (store.updateText(existing, text, NoteIndexer.sha256Hex(text), now)) {
+                                        app.indexer.index(db, existing, text, subject)
+                                        updated++
+                                    }
+                                    continue
+                                }
+                                val id = CaptureStore(db).insertReturningId(
+                                    CaptureRecord(UUID.randomUUID(), NoteStore.contentHash(text, path), now, zone, NoteStore.SOURCE_VAULT, subject, text),
+                                ) ?: continue
+                                store.setPath(id, path)
+                                app.indexer.index(db, id, text, subject)
+                                created++
+                            }
+                            db.setTransactionSuccessful()
+                        } finally {
+                            db.endTransaction()
+                        }
+                    }.getOrThrow()
+                }
+                buildString {
+                    append("Imported $created notes")
+                    if (updated > 0) append(", updated $updated")
+                    if (unchanged > 0) append(", $unchanged unchanged")
+                    if (unreadable > 0) append(" · $unreadable could not be read or are over 2 MB")
+                    if (listing.ignored > 0) append(" · ${listing.ignored} other files ignored (attachments are not imported)")
+                    if (problems > 0) append(" · $problems with properties that could not be read in full")
+                }
+            }.getOrElse { "Import stopped after $created notes: ${it.message ?: it.javaClass.simpleName}" }
+            transferring = false
+            onMain {
+                vaultTransfer = report
+                refreshNotes()
+                loadGraph()
+            }
+        }
+    }
+
+    /** Writes every note as a Markdown file under [tree], in its folder. The files are plain text. */
+    fun exportVault(tree: Uri) {
+        if (transferring) return
+        transferring = true
+        vaultTransfer = "Exporting…"
+        thread(name = "vault-export") {
+            var written = 0; var failed = 0
+            val report = runCatching {
+                val folder = VaultFolder(app.contentResolver, tree)
+                val used = HashSet<String>()
+                var after = 0L
+                while (true) {
+                    val notes = vaultStep { db -> NoteStore(db).page(after, IMPORT_BATCH) }.getOrThrow()
+                    if (notes.isEmpty()) break
+                    after = notes.last().id
+                    for (note in notes) {
+                        var parts = MarkdownInterop.exportFile(note.path, note.title)
+                        // Two notes without a path can share a title; the second gets a number.
+                        var n = 2
+                        while (!used.add(parts.joinToString("/").lowercase())) {
+                            parts = parts.dropLast(1) + (parts.last().removeSuffix(".md") + " ($n).md")
+                            n++
+                        }
+                        if (folder.write(parts, note.text)) written++ else failed++
+                    }
+                    onMain { vaultTransfer = "Exported $written notes…" }
+                }
+                "Exported $written notes as plain Markdown" + if (failed > 0) " · $failed could not be written" else ""
+            }.getOrElse { "Export stopped after $written notes: ${it.message ?: it.javaClass.simpleName}" }
+            transferring = false
+            onMain { vaultTransfer = report }
         }
     }
 
@@ -938,6 +1119,8 @@ class AppState(private val app: SeBrainApp) {
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
         const val PREF_PINS_MIGRATED = "pins_migrated"
+        const val IMPORT_BATCH = 20
+        const val EMBED_CHARS = 1500
         const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }

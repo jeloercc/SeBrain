@@ -1,5 +1,6 @@
 package com.sebrain.app.chat
 
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.cognition.NoteMarkup
 
 /**
@@ -44,7 +45,7 @@ object Pins {
 
     /** What the model reads of a pinned note: its title and its text on one line, without the pin. */
     fun line(title: String, text: String): String {
-        val body = unpin(HEADING.replace(text, "")).replace(SPACE, " ").trim()
+        val body = unpin(HEADING.replace(FrontMatter.body(text), "")).replace(SPACE, " ").trim()
         val name = title.trim().removePrefix("Memory:").trim()
         // A title cut with "…" that only repeats the start of the text adds nothing.
         val stem = name.trimEnd('…', '.', ' ')

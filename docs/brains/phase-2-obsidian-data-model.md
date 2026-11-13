@@ -1,7 +1,40 @@
 # Phase 2 — Obsidian's data model
 
-**Status: not started.** Size L. **Schema v6: proposed here, to be approved before any code.**
-Confirms decisions 4 and 5.
+**Status: built on 2026-11-12, schema v6 approved by the user ("quiero dejarlo así,
+implementa"). Not installed on the Pixel yet:** the vault test for the migration needs an
+unlocked phone, and the app is not installed over the real vault until that test passes.
+
+## What was built
+
+| Part | Where | Verified |
+| --- | --- | --- |
+| Front matter parser, no library | `cognition/FrontMatter.kt` | 6 unit tests |
+| Links with anchor and embed, nested tags, tags and aliases from properties, title and chunks that skip the front matter | `cognition/NoteMarkup.kt`, `Chunker.kt` | 8 unit tests |
+| Sections and blocks a link points to; turning a mention into a link; vault file paths | `cognition/NoteSections.kt`, `MarkdownInterop.kt` | 7 unit tests |
+| Schema v6: `path`, `property`, `alias`, rebuilt `link`, and the brain tables of Phase 3 | `core/vault/VaultSchema.kt` | **Not run** (`NoteModelTest`, phone locked) |
+| Notes read and written with path, aliases, properties; a link resolved by title, alias, then end of path; backlinks and graph through aliases; unlinked mentions; folders | `core/vault/NoteStore.kt` | **Not run** (`NoteModelTest`) |
+| Hash of a note with a path covers path and text, applied inside `updateText` | `NoteStore.contentHash` | **Not run** (`NoteModelTest`) |
+| Backup format v3 with the path; v1 and v2 still read | `VaultBackupSnapshot.kt` | 3 unit tests; restore **not run** |
+| Note view: path, aliases, properties table, embedded notes, links to a heading or block, "Mentioned without a link" with a LINK button | `ui/NotesScreen.kt`, `ui/Markdown.kt` | Compiles; **not used on the phone** |
+| Folder chips in Notes | `ui/NotesScreen.kt`, `AppState.selectFolder` | Compiles; not used |
+| Import and export of a vault folder, in batches of 20 with a progress line and a report | `app/VaultFolder.kt`, `AppState.importVault`, `exportVault` | Compiles; **not run with a real folder** |
+| Notes written by the assistant start with `source: assistant` and `created` | `NoteTools.createNote` | Compiles |
+
+A bug found on the way: the backup export read the note's row id from the wrong column (the
+segment UUID), so tags and links were exported for another note. It went unnoticed because a
+restore reads them again from the text. Fixed.
+
+Differences from the plan below:
+
+- **Properties are shown, not edited in place.** They are edited in the note's text, which
+  holds the front matter. Cell editing belongs with the tables of Phase 7.
+- **A nested tag is stored with its parents** (`#redes/tcp` also adds `redes`), so the tag
+  filter finds it under the parent without a prefix query.
+- **Import indexes each batch as it goes**, vectors included, instead of storing everything
+  first. A batch of 20 notes is one transaction; search and chat run between batches.
+- **`MarkdownInterop` was kept** and extended, not replaced by a `VaultInterop`.
+- **The import fixture vault is not written yet**, so "its links resolve as Obsidian resolves
+  them" is not measured.
 
 ## Resources verified against the code (2026-11-12, before any building)
 

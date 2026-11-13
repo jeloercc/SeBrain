@@ -3,12 +3,14 @@ package com.sebrain.app
 import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.NoteStore
 import com.sebrain.core.vault.VaultSession
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
@@ -28,6 +30,8 @@ class NoteTools(
         @ToolParam(description = "Tags without the # sign. Use an empty list for none") tags: List<String>,
     ): String {
         val body = buildString {
+            // Properties that say where the note came from, so it can be told apart and filtered.
+            append(FrontMatter.render(listOf("source" to listOf("assistant"), "created" to listOf(LocalDate.now().toString()))))
             append("# ").append(title.trim()).append("\n\n").append(text.trim())
             val clean = cleanTags(tags)
             if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })

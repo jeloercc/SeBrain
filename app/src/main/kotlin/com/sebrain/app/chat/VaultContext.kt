@@ -1,5 +1,6 @@
 package com.sebrain.app.chat
 
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.core.vault.ConversationStore
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.NoteStore
@@ -59,7 +60,8 @@ object VaultContext {
                 linksTo = store.linkedFrom(id).mapNotNull { it.title },
                 linkedFrom = store.backlinks(id).mapNotNull { it.title },
                 // A short note is given whole; a long one by its matching chunks.
-                text = if (note.text.length <= Assistant.NOTE_CHARS) note.text else chunks.distinct().joinToString("\n…\n"),
+                // The model reads the note's own text; its properties block is left out.
+                text = FrontMatter.body(note.text).let { body -> if (body.length <= Assistant.NOTE_CHARS) body else chunks.distinct().joinToString("\n…\n") },
             )
         }
 
@@ -73,7 +75,7 @@ object VaultContext {
                 if (!included.add(summary.id)) continue
                 val note = store.get(summary.id) ?: continue
                 if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
-                notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), note.text, via)
+                notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text), via)
             }
         }
         // Newest first. A pinned note is not also listed as a search result above.
