@@ -58,7 +58,7 @@ class VaultFolder(private val resolver: ContentResolver, private val tree: Uri) 
         return runCatching {
             resolver.openInputStream(file.uri)?.use { input ->
                 val bytes = input.readNBytes(MAX_BYTES + 1)
-                if (bytes.size > MAX_BYTES) null else bytes.toString(Charsets.UTF_8).removePrefix("﻿")
+                if (bytes.size > MAX_BYTES) null else bytes.toString(Charsets.UTF_8).removePrefix(BOM)
             }
         }.getOrNull()
     }
@@ -101,5 +101,8 @@ class VaultFolder(private val resolver: ContentResolver, private val tree: Uri) 
     private companion object {
         /** A note larger than this is almost certainly not a note; it is skipped and reported. */
         const val MAX_BYTES = 2 * 1024 * 1024
+
+        /** The byte-order mark some editors put at the start of a file; it is not part of the note. */
+        const val BOM = "\uFEFF"
     }
 }
