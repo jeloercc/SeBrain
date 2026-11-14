@@ -30,6 +30,7 @@ import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.Neon
 import com.sebrain.app.ui.NotesScreen
 import com.sebrain.app.ui.PrivacyScreen
+import com.sebrain.app.ui.ProposalScreen
 import com.sebrain.app.ui.SeBrainTheme
 
 /** The whole app: notes, the local assistant and models. */
@@ -59,6 +60,8 @@ class MainActivity : ComponentActivity() {
                         else -> PrivacyScreen(state, Modifier.padding(padding))
                     }
                 }
+                // A change the assistant proposes to a note is reviewed over whatever tab is open.
+                state.proposal?.let { ProposalScreen(state, it) }
             }
         }
     }

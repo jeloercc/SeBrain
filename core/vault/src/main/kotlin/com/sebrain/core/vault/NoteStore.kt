@@ -191,6 +191,17 @@ class NoteStore(private val db: SQLiteDatabase) {
         if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
     }
 
+    /**
+     * Every name a note goes by: its title and each alias, as (note id, title, name). Used to
+     * find which note a message names and which notes a text mentions.
+     */
+    fun names(limit: Int = 5000): List<Triple<Long, String, String>> = db.rawQuery(
+        "SELECT id, title, title FROM capture WHERE title IS NOT NULL AND title != '' " +
+            "UNION ALL SELECT a.capture_id, c.title, a.name FROM alias a JOIN capture c ON c.id = a.capture_id " +
+            "WHERE c.title IS NOT NULL LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) Triple(c.getLong(0), c.getString(1), c.getString(2)) else null }.toList() }
+
     /** The note at [path] in the folder tree, if there is one. */
     fun idAtPath(path: String): Long? = first("SELECT id FROM capture WHERE path = ? COLLATE NOCASE LIMIT 1", path)
 

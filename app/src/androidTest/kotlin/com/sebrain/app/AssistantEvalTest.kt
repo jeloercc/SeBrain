@@ -244,7 +244,10 @@ class AssistantEvalTest {
                 // As in the app: citations to notes that were not given are removed from the reply.
                 val reply = runCatching {
                     Assistant.dropUnknownCitations(
-                        chat.reply(Assistant.SYSTEM, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt) {},
+                        chat.reply(
+                            Assistant.SYSTEM, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt,
+                            if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS,
+                        ) {},
                         context.size,
                     )
                 }.getOrElse { "[error: ${it.message}]" }

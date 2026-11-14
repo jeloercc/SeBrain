@@ -48,6 +48,15 @@ object Assistant {
 
     /** The model-written summary of the oldest part of a long conversation. */
     const val SUMMARY_TRIGGER = 8
+
+    /**
+     * The most tokens a reply may have. An answer of 1000 tokens is about 3500 characters and
+     * two minutes of writing on the phone; a request for several notes needs more; a summary of
+     * 120 words needs about 250.
+     */
+    const val ANSWER_TOKENS = 1000
+    const val NOTE_TOKENS = 1400
+    const val SUMMARY_TOKENS = 300
     const val SUMMARY_WORDS = 120
     const val SUMMARY_CHARS = 1000
     const val SUMMARY_LINE_CHARS = 500

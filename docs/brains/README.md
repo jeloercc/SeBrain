@@ -9,12 +9,16 @@ one document per phase, written so that any session can pick a phase up and fini
 | Phase | Document | Delivers | Size | Schema | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [One memory](phase-1-one-memory.md) | Pinned notes replace `#memory`, "Suggest memories" and "remember" | S | none | **Built 2026-11-12**, on the Pixel; see its document for what is not verified |
-| 2 | [Obsidian data model](phase-2-obsidian-data-model.md) | Properties, aliases, heading and block links, embeds, folders, unlinked mentions, vault import and export | L | v6 | **Built 2026-11-12, not installed:** its vault test needs an unlocked phone |
+| 2 | [Obsidian data model](phase-2-obsidian-data-model.md) | Properties, aliases, heading and block links, embeds, folders, unlinked mentions, vault import and export | L | v6 | **Built and on the Pixel 2026-11-13.** `NoteModelTest` 9 of 9 on the phone, real vault opened with v6. Not done: the import fixture, a real folder import, the 20 conversations |
 | 3 | [Brains](phase-3-brains.md) | Brains with scope, pins, instructions, model, own chats and graph | M | v6 | Not started |
 | 4 | [Graph retrieval](phase-4-graph-retrieval.md) | Chunk headers, ranking over the link graph, index note per brain | M | none | Not started |
 | 5 | [Wiki operations](phase-5-wiki-operations.md) | Ingest, lint, log, with approval of every change | L | v7 (small) | Not started |
 | 6 | [Other models](phase-6-other-models.md) | Model on the user's machine over Tailscale; external API per brain | M | none | Not started; changes a hard rule |
 | 7 | [Views](phase-7-views.md) | Local graph with depth and groups, Bases-like tables, Canvas | L | none | Not started |
+
+Outside the phases: [tools on existing notes](note-tools.md) (fix, improve, edit, tag, link),
+built 2026-11-13 at the user's request. It delivers part of Phase 5: proposals reviewed
+before and after, and linking by mention.
 
 Size: S about a day of work, M several days, L more than a week. These are estimates, not
 measurements.
@@ -46,7 +50,7 @@ assumed: Phase 6 does not start without an explicit answer.
 | # | Decision | Assumed | Confirm before |
 | --- | --- | --- | --- |
 | 1 | Pinned notes replace `#memory`, "Suggest memories" and "remember" | **Confirmed 2026-11-12** | Done |
-| 2 | The assistant proposes edits to existing notes; the user approves each one | Propose only | Phase 5 |
+| 2 | The assistant proposes edits to existing notes; the user approves each one | **Confirmed 2026-11-13** | Done |
 | 3 | Where note content may be sent | **Not assumed** | Phase 6 |
 | 4 | The encrypted vault stays the source of truth; Obsidian folders are imported and exported | **Confirmed 2026-11-12** | Done |
 | 5 | Schema v6 as written in the Phase 2 document | **Approved 2026-11-12** | Done |

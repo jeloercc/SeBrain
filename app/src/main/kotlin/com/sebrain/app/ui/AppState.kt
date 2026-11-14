@@ -14,6 +14,7 @@ import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.VaultContext
@@ -24,6 +25,7 @@ import com.sebrain.app.privacy.AppPrivacy
 import com.sebrain.app.privacy.DexTrackerScanner
 import com.sebrain.app.privacy.PrivacyAudit
 import com.sebrain.cognition.NoteIndexer
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.cognition.MarkdownInterop
 import com.sebrain.cognition.NoteMarkup
 import com.sebrain.cognition.NoteSections
@@ -78,7 +80,9 @@ data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Bo
  */
 class AppState(private val app: SeBrainApp) {
     private val main = Handler(Looper.getMainLooper())
-    private fun onMain(block: () -> Unit) = main.post(block)
+    private fun onMain(block: () -> Unit) {
+        main.post(block)
+    }
 
     // ---- Notes ----
     var query by mutableStateOf("")
@@ -196,6 +200,7 @@ class AppState(private val app: SeBrainApp) {
         notes = emptyList()
         tags = emptyList()
         folders = emptyList()
+        proposal = null
         detail = null
         draft = null
         graph = null
@@ -853,7 +858,7 @@ class AppState(private val app: SeBrainApp) {
         summarizing = true
         chatWorker.execute {
             if (!summarizing) return@execute
-            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request) {} }.getOrNull()?.trim()
+            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request, Assistant.SUMMARY_TOKENS) {} }.getOrNull()?.trim()
             val finished = summarizing
             summarizing = false
             // A cancelled summary is partial text; it is dropped.
@@ -893,16 +898,185 @@ class AppState(private val app: SeBrainApp) {
             summarizing = false
             app.chat.cancel()
         }
-        markGenerating(true)
-        stopRequested = false
         messages += ChatMessage(true, text)
         persist(fromUser = true, text = text)
+        // "Corrige la nota X": a tool on an existing note, if the message names one.
+        val tool = NoteEdits.kindOf(text)
+        if (tool != null) {
+            app.vault({ db -> NoteEdits.mentioned(text, NoteStore(db).names().map { it.first to it.third }) }) { found ->
+                onMain {
+                    val id = found.getOrNull()
+                    if (id != null) proposeEdit(id, tool, text, fromChat = true) else answer(text)
+                }
+            }
+            return
+        }
+        answer(text)
+    }
+
+    /** Answers a message that is already in the conversation. */
+    private fun answer(text: String) {
+        if (generating) return
+        markGenerating(true)
+        stopRequested = false
         if (currentModel == null) {
             pendingQuestion = text
             ensureModel()
         } else {
             generate(text)
         }
+    }
+
+    /**
+     * How fast the loaded model writes, in tokens per second, taken from its last replies. It
+     * starts at the speed measured for the first model and follows whatever model is loaded.
+     */
+    @Volatile private var writingSpeed = 7.5
+
+    /** Runs a model call and updates [writingSpeed] from how long its reply took. */
+    private fun timed(call: () -> String): String {
+        val start = System.nanoTime()
+        val reply = call()
+        val seconds = (System.nanoTime() - start) / 1e9
+        val tokens = reply.length / 3.6
+        // Short replies are mostly waiting for the first token; they say little about speed.
+        if (tokens >= 20 && seconds > 1) writingSpeed = (writingSpeed + tokens / seconds) / 2
+        return reply
+    }
+
+    // ---- Tools on an existing note ----
+
+    /** A change to a note that waits for the user: nothing is written until it is applied. */
+    class NoteProposal(
+        val noteId: Long,
+        val title: String,
+        val kind: NoteEdits.Kind,
+        val before: String,
+        val after: String,
+        val warnings: List<String>,
+        val changes: List<Pair<NoteEdits.Change, String>>,
+    )
+
+    var proposal by mutableStateOf<NoteProposal?>(null)
+        private set
+
+    /** What a tool is doing, or why it produced nothing. */
+    var editStatus by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Runs a tool on a note and shows its result as a proposal. Linking uses retrieval and no
+     * language model; the others make one model call, short for a fix or tags, as long as the
+     * note for a rewrite.
+     */
+    fun proposeEdit(noteId: Long, kind: NoteEdits.Kind, instruction: String = "", fromChat: Boolean = false) {
+        if (generating) return
+        fun say(status: String) {
+            editStatus = status
+            if (fromChat) messages += ChatMessage(false, status, isAction = true)
+        }
+        if (kind.usesModel && currentModel == null) return say("The model is still loading. Try again in a moment.")
+        app.vault({ db -> NoteStore(db).get(noteId) }) { loaded ->
+            val note = loaded.getOrNull() ?: return@vault onMain { say("That note could not be opened.") }
+            val body = FrontMatter.body(note.text)
+            if (kind == NoteEdits.Kind.LINK) return@vault proposeLinks(note, body, ::say)
+            val limit = if (kind == NoteEdits.Kind.IMPROVE || kind == NoteEdits.Kind.EDIT) NoteEdits.MAX_CHARS else NoteEdits.MAX_CHARS * 2
+            if (body.length > limit) {
+                return@vault onMain { say("\"${note.title}\" is too long for the phone model to ${kind.label.lowercase()} (${body.length} characters, limit $limit).") }
+            }
+            val tags = if (kind == NoteEdits.Kind.TAGS) runCatching { app.session.withDatabase { NoteStore(it).tags().take(40).map { t -> t.first } } }.getOrDefault(emptyList()) else emptyList()
+            onMain {
+                if (generating) return@onMain
+                if (summarizing) {
+                    summarizing = false
+                    app.chat.cancel()
+                }
+                markGenerating(true)
+                stopRequested = false
+                val addition = kind == NoteEdits.Kind.EDIT && NoteEdits.isAddition(instruction)
+                say("${kind.label}: \"${note.title}\" · about ${NoteEdits.secondsFor(kind, body.length, writingSpeed, addition)} s")
+                val system = when (kind) {
+                    NoteEdits.Kind.FIX -> NoteEdits.FIX_SYSTEM
+                    NoteEdits.Kind.TAGS -> NoteEdits.TAGS_SYSTEM
+                    else -> NoteEdits.SYSTEM
+                }
+                val prompt = NoteEdits.prompt(kind, if (kind == NoteEdits.Kind.TAGS) Assistant.shorten(body, 3000) else body, instruction, tags)
+                chatWorker.execute {
+                    val limit = if (addition) NoteEdits.ADDITION_TOKENS else NoteEdits.maxTokens(kind, body.length)
+                    val reply = runCatching { timed { app.chat.reply(system, emptyList(), prompt, limit) {} } }
+                    val result = reply.getOrNull()?.takeIf { !stopRequested }?.let {
+                        when (kind) {
+                            NoteEdits.Kind.FIX -> NoteEdits.corrected(note.text, it)
+                            NoteEdits.Kind.TAGS -> NoteEdits.tagged(note.text, it)
+                            else -> if (addition) NoteEdits.appended(note.text, it) else NoteEdits.rewritten(kind, note.text, it)
+                        }
+                    }
+                    onMain {
+                        markGenerating(false)
+                        when {
+                            reply.isFailure -> say("The model failed: ${reply.exceptionOrNull()?.message}")
+                            stopRequested -> say("Stopped.")
+                            else -> offer(note, kind, result, ::say)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Links by name, then related notes by retrieval: the note's own start is the search query. */
+    private fun proposeLinks(note: Note, body: String, say: (String) -> Unit) {
+        val query = note.title + "\n" + Assistant.shorten(body, 400)
+        app.search(query, { db, vector ->
+            val store = NoteStore(db)
+            val others = store.names().filter { it.first != note.id }.groupBy({ it.second }, { it.third }).map { it.key to it.value }
+            // Close in meaning: found by the vector search, near its top. Without an embedding model, none.
+            val related = if (vector == null) emptyList() else HybridSearch(db).search(query, vector, 12)
+                .filter { it.captureId != note.id && (it.vectorRank ?: Int.MAX_VALUE) <= RELATED_RANK }
+                .mapNotNull { CaptureStore(db).summaryOf(it.captureId)?.title }.distinct()
+            NoteEdits.linked(note.text, others, related)
+        }) { result -> onMain { offer(note, NoteEdits.Kind.LINK, result.getOrNull(), say) } }
+    }
+
+    private fun offer(note: Note, kind: NoteEdits.Kind, result: NoteEdits.Result?, say: (String) -> Unit) {
+        if (result == null || result.text.trimEnd() == note.text.trimEnd()) return say("${kind.label}: nothing to change in \"${note.title}\".")
+        proposal = NoteProposal(note.id, note.title, kind, note.text, result.text, result.warnings, NoteEdits.diff(note.text, result.text))
+        say("${kind.label}: a change to \"${note.title}\" is ready to review.")
+    }
+
+    /** Writes the proposal, unless the note changed since it was made. */
+    fun applyProposal() {
+        val change = proposal ?: return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            if (store.get(change.noteId)?.text != change.before) return@vault false
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(change.noteId, change.after, NoteIndexer.sha256Hex(change.after), now)
+                if (changed) app.indexer.index(db, change.noteId, change.after)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                proposal = null
+                editStatus = if (result.getOrDefault(false)) {
+                    "${change.kind.label}: applied to \"${change.title}\"."
+                } else {
+                    "Not applied: \"${change.title}\" changed meanwhile. Run the tool again."
+                }
+                refreshNotes()
+                if (detail?.note?.id == change.noteId) open(change.noteId)
+            }
+        }
+    }
+
+    fun discardProposal() {
+        proposal = null
+        editStatus = null
     }
 
     /** Stores a message in the open conversation, creating the conversation on its first message. */
@@ -950,11 +1124,11 @@ class AppState(private val app: SeBrainApp) {
                     if (stopRequested) {
                         ""
                     } else {
-                        app.chat.reply(Assistant.SYSTEM, history, prompt) { piece ->
+                        timed { app.chat.reply(Assistant.SYSTEM, history, prompt, if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS) { piece ->
                             onMain {
                                 if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece)
                             }
-                        }
+                        } }
                     }
                 }
                 val reply = result.getOrNull().orEmpty()
@@ -1121,6 +1295,7 @@ class AppState(private val app: SeBrainApp) {
         const val PREF_PINS_MIGRATED = "pins_migrated"
         const val IMPORT_BATCH = 20
         const val EMBED_CHARS = 1500
+        const val RELATED_RANK = 5
         const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }

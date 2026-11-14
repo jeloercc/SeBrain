@@ -104,11 +104,23 @@ class ChatEngine(
      * never reused, which is what used to leave the chat unable to send another message.
      * Creating a conversation without constrained decoding costs about 3 ms (Phase 0).
      */
-    fun reply(systemInstruction: String, history: List<Turn>, text: String, onText: (String) -> Unit): String {
+    fun reply(
+        systemInstruction: String,
+        history: List<Turn>,
+        text: String,
+        /**
+         * The most tokens the reply may have. Without a limit a reply that does not stop runs to
+         * the end of the context: one answer of about 1750 tokens took 14 minutes on a busy phone
+         * (2026-11-13). Every caller states what its task can need.
+         */
+        maxTokens: Int? = null,
+        onText: (String) -> Unit,
+    ): String {
         val engine = checkNotNull(engine) { "No model is loaded" }
         val config = ConversationConfig(
             systemInstruction = Contents.of(systemInstruction),
             initialMessages = history.map { if (it.fromUser) Message.user(it.text) else Message.model(it.text) },
+            maxOutputToken = maxTokens,
         )
         val conversation = engine.createConversation(config)
         cancelled = false

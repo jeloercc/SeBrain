@@ -1,5 +1,6 @@
 package com.sebrain.app.ui
 
+import com.sebrain.app.chat.NoteEdits
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.border
 import com.sebrain.cognition.FrontMatter
@@ -472,6 +473,43 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 16.dp),
+                )
+            }
+            // The assistant's tools for this note. Each one ends in a proposal to review.
+            var editing by remember(note.id) { mutableStateOf(false) }
+            var instruction by remember(note.id) { mutableStateOf("") }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                NoteEdits.Kind.entries.filter { it != NoteEdits.Kind.EDIT }.forEach { kind ->
+                    TextButton(onClick = { state.proposeEdit(note.id, kind) }, enabled = !state.generating) { Text(kind.label.uppercase()) }
+                }
+                TextButton(onClick = { editing = true }, enabled = !state.generating) { Text("EDIT…") }
+            }
+            state.editStatus?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = Neon.Coral, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (editing) {
+                AlertDialog(
+                    onDismissRequest = { editing = false },
+                    title = { Text("What should change?") },
+                    text = {
+                        OutlinedTextField(
+                            value = instruction,
+                            onValueChange = { instruction = it },
+                            placeholder = { Text("Add that the default port is 22") },
+                            minLines = 2,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                editing = false
+                                state.proposeEdit(note.id, NoteEdits.Kind.EDIT, instruction)
+                                instruction = ""
+                            },
+                            enabled = instruction.isNotBlank(),
+                        ) { Text("Propose") }
+                    },
+                    dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
                 )
             }
             detail.problem?.let {

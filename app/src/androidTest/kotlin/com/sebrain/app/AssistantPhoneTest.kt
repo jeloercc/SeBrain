@@ -112,6 +112,50 @@ class AssistantPhoneTest {
         }
     }
 
+    /** What the engine does when a reply reaches its token limit: stop quietly, or fail. */
+    @Test
+    fun outputCap() {
+        val start = System.nanoTime()
+        val result = runCatching { chat.reply("You are a storyteller.", emptyList(), "Tell a very long story about a lighthouse keeper.", 40) {} }
+        log("cap seconds=%.1f outcome=${result.fold({ "ok chars=${it.length} text=${it.replace('\n', ' ').take(200)}" }, { "FAILED ${it.javaClass.simpleName}: ${it.message?.take(200)}" })} stats: ${chat.lastStats}".format((System.nanoTime() - start) / 1e9))
+    }
+
+    /** The tools on an existing note: what the model returns and what the app would propose. */
+    @Test
+    fun noteTools() {
+        val note = "---\nstatus: active\n---\n# Protocolo SSH\n\nSSH es un protocolo para conectarse a otra maquina de forma segura. " +
+            "Usa cifrado asimetrico para el intercanbio de claves y despues cifrado simetrico. Ver [[Criptografía]].\n\n" +
+            "Se usa mucho para administrar servidores y para copiar archibos con scp.\n\n```bash\nssh usuario@servidor\n```\n\n#redes #pinned\n"
+        val body = com.sebrain.cognition.FrontMatter.body(note)
+        fun run(kind: com.sebrain.app.chat.NoteEdits.Kind, instruction: String = "") {
+            val system = when (kind) {
+                com.sebrain.app.chat.NoteEdits.Kind.FIX -> com.sebrain.app.chat.NoteEdits.FIX_SYSTEM
+                com.sebrain.app.chat.NoteEdits.Kind.TAGS -> com.sebrain.app.chat.NoteEdits.TAGS_SYSTEM
+                else -> com.sebrain.app.chat.NoteEdits.SYSTEM
+            }
+            val start = System.nanoTime()
+            val reply = chat.reply(
+                system, emptyList(), com.sebrain.app.chat.NoteEdits.prompt(kind, body, instruction, listOf("redes", "seguridad", "protocolos")),
+                if (com.sebrain.app.chat.NoteEdits.isAddition(instruction)) com.sebrain.app.chat.NoteEdits.ADDITION_TOKENS else com.sebrain.app.chat.NoteEdits.maxTokens(kind, body.length),
+            ) {}
+            val seconds = (System.nanoTime() - start) / 1e9
+            val result = when (kind) {
+                com.sebrain.app.chat.NoteEdits.Kind.FIX -> com.sebrain.app.chat.NoteEdits.corrected(note, reply)
+                com.sebrain.app.chat.NoteEdits.Kind.TAGS -> com.sebrain.app.chat.NoteEdits.tagged(note, reply)
+                else -> if (com.sebrain.app.chat.NoteEdits.isAddition(instruction)) com.sebrain.app.chat.NoteEdits.appended(note, reply) else com.sebrain.app.chat.NoteEdits.rewritten(kind, note, reply)
+            }
+            log("tool ${kind.name} seconds=%.1f estimate=${com.sebrain.app.chat.NoteEdits.secondsFor(kind, body.length)} stats: ${chat.lastStats}".format(seconds))
+            log("tool ${kind.name} raw=${reply.replace("\n", "⏎").take(900)}")
+            log("tool ${kind.name} warnings=${result?.warnings} changed=${result != null}")
+            log("tool ${kind.name} result=${result?.text?.replace("\n", "⏎")?.take(1100)}")
+        }
+        run(com.sebrain.app.chat.NoteEdits.Kind.FIX)
+        run(com.sebrain.app.chat.NoteEdits.Kind.TAGS)
+        run(com.sebrain.app.chat.NoteEdits.Kind.EDIT, "añade a la nota Protocolo SSH que el puerto por defecto es el 22")
+        run(com.sebrain.app.chat.NoteEdits.Kind.EDIT, "cambia el ejemplo para que use el puerto 2222")
+        run(com.sebrain.app.chat.NoteEdits.Kind.IMPROVE)
+    }
+
     private val script = listOf(
             true to "Estoy montando un servidor casero que se llama atlas, con Debian 12",
             false to "Perfecto. Para atlas con Debian 12 te recomiendo empezar por actualizar el sistema y crear un usuario sin privilegios.",

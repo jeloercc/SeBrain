@@ -201,6 +201,14 @@ Left in `docs/plan-memory.md`: the 20-conversation evaluation.
 - The titles written in a conversation (all of them, for a reply with several notes) feed the
   "already written" list, so "the next one" skips them.
 
+## Tools on notes and a limit on replies (2026-11-13)
+
+The assistant can fix, improve, edit, tag and link an existing note. The app starts each tool
+(a button on the note, or a chat message that names the note), the model does one small task,
+and the result is a proposal reviewed before and after; see `docs/brains/note-tools.md`.
+Every model reply now has a token limit. The model selected on the phone that day was
+`gemma-4-E2B-it-Uncensored-MAX`, which wrote about 2 tokens/s with the phone in use.
+
 ## Next direction: one memory, several brains (proposed 2026-11-12)
 
 The user asked for one kind of memory (the notes), several brains that combine data, full

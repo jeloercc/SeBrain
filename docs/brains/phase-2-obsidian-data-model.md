@@ -1,8 +1,14 @@
 # Phase 2 — Obsidian's data model
 
-**Status: built on 2026-11-12, schema v6 approved by the user ("quiero dejarlo así,
-implementa"). Not installed on the Pixel yet:** the vault test for the migration needs an
-unlocked phone, and the app is not installed over the real vault until that test passes.
+**Status: built, and installed on the Pixel on 2026-11-13.** Schema v6 approved by the user
+("quiero dejarlo así, implementa"). On the phone: `NoteModelTest` 9 of 9 on a test vault (the
+v5 to v6 migration keeps the links), the other vault tests pass with v6, and the real vault
+opened with 8 notes and no error. One bug was found by that test and fixed: a link by file
+name showed as an unresolved node in the graph.
+
+Still not verified: the note view, folders, and vault import and export used by hand; the
+import fixture; the 20 conversations after this phase. The rows marked "Not run" below ran
+on 2026-11-13 and pass.
 
 ## What was built
 
