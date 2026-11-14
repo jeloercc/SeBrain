@@ -139,6 +139,13 @@ private fun NoteList(state: AppState, modifier: Modifier) {
                 TextButton(onClick = { vaultImportPicker.launch(null) }) { Text("IMPORT VAULT") }
                 TextButton(onClick = { confirmExport = true }) { Text("EXPORT VAULT") }
             }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
+                // Every note that names another note without linking it, one proposal per note.
+                TextButton(onClick = { state.reviewVaultLinks() }) { Text("REVIEW LINKS") }
+            }
+            state.editStatus?.takeIf { state.detail == null }?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = Neon.Coral, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            }
             state.vaultTransfer?.let {
                 Text(
                     it,

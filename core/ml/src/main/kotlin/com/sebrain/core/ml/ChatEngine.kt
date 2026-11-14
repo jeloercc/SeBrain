@@ -71,6 +71,11 @@ class ChatEngine(
 
     @Volatile private var active: Conversation? = null
     @Volatile private var cancelled = false
+    @Volatile private var looped = false
+
+    /** True if the last reply was cut because the model had started to repeat itself. */
+    @Volatile var lastLooped = false
+        private set
 
     /**
      * What the last reply cost. [contextTokens] is everything in the conversation when it ended:
@@ -124,6 +129,7 @@ class ChatEngine(
         )
         val conversation = engine.createConversation(config)
         cancelled = false
+        looped = false
         active = conversation
         val done = CountDownLatch(1)
         val reply = StringBuilder()
@@ -133,11 +139,20 @@ class ChatEngine(
                 text,
                 object : MessageCallback {
                     override fun onMessage(message: Message) {
-                        if (cancelled) return
+                        if (cancelled || looped) return
                         val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
                         if (piece.isNotEmpty()) {
-                            synchronized(reply) { reply.append(piece) }
-                            onText(piece)
+                            val cut = synchronized(reply) {
+                                reply.append(piece)
+                                LoopGuard.cut(reply.toString()).also { if (it >= 0) reply.setLength(it) }
+                            }
+                            if (cut >= 0) {
+                                // The model is repeating itself: keep what came before and stop it.
+                                looped = true
+                                runCatching { conversation.cancelProcess() }
+                            } else {
+                                onText(piece)
+                            }
                         }
                     }
 
@@ -151,7 +166,7 @@ class ChatEngine(
             )
             // The native side may not call back after a cancel, so the wait never depends on it.
             while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
-                if (cancelled) {
+                if (cancelled || looped) {
                     done.await(CANCEL_GRACE_MS, TimeUnit.MILLISECONDS)
                     break
                 }
@@ -162,7 +177,8 @@ class ChatEngine(
             lastStats?.let { Log.i(TAG, "reply $it") }
             runCatching { conversation.close() }
         }
-        if (!cancelled) failure?.let { throw it }
+        lastLooped = looped
+        if (!cancelled && !looped) failure?.let { throw it }
         return synchronized(reply) { reply.toString() }
     }
 

@@ -202,6 +202,20 @@ class NoteStore(private val db: SQLiteDatabase) {
         emptyArray<String>(),
     ).use { c -> generateSequence { if (c.moveToNext()) Triple(c.getLong(0), c.getString(1), c.getString(2)) else null }.toList() }
 
+    /**
+     * Link targets that no note answers to, by title, alias or file name, with how many notes
+     * link to each. They are the concepts the vault names but has not written yet.
+     */
+    fun unresolvedLinks(limit: Int = 20): List<Pair<String, Int>> = db.rawQuery(
+        "SELECT l.target_title, count(DISTINCT l.source_id) FROM link l " +
+            "WHERE NOT EXISTS (SELECT 1 FROM capture c WHERE c.title = l.target_title) " +
+            "AND NOT EXISTS (SELECT 1 FROM alias a WHERE a.name = l.target_title) " +
+            "AND NOT EXISTS (SELECT 1 FROM capture c WHERE c.path IS NOT NULL AND (c.path = l.target_title " +
+            "OR substr(c.path, -(length(l.target_title) + 1)) = '/' || l.target_title)) " +
+            "GROUP BY l.target_title ORDER BY count(DISTINCT l.source_id) DESC, l.target_title LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) to c.getInt(1) else null }.toList() }
+
     /** The note at [path] in the folder tree, if there is one. */
     fun idAtPath(path: String): Long? = first("SELECT id FROM capture WHERE path = ? COLLATE NOCASE LIMIT 1", path)
 

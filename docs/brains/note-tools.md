@@ -74,6 +74,45 @@ The time shown before a tool runs is an estimate from the speed of the model's l
 - The 20 conversations were not rerun after Phase 2 or after this: a full run was started,
   the phone was in use, and one answer took 14 minutes; it was stopped.
 
+## Added on 2026-11-14, after a screenshot from the user
+
+The user asked in the chat "revisa conceptos no enlazados en todas nuestras notas" with
+`gemma-4-E2B-it-Uncensored-MAX` loaded. The model wrote its system instruction back and then
+repeated one line until it was stopped. Two separate causes, two fixes. **Neither has run on
+the phone: it was not connected.** Both pass their unit tests.
+
+**1. The request had no tool.** It asks about the whole vault, and the tools worked on one
+named note.
+
+- `AppState.reviewVaultLinks`, started by the REVIEW LINKS button in Notes or by a chat
+  message that speaks of links and of all the notes (`NoteEdits.wantsVaultReview`).
+- It walks every note in pages of 20 and proposes links for the other notes each one names.
+  A name index (`NoteEdits.Names`) offers only the notes whose name starts with a word of
+  the text, so it does not test every name against every note.
+- No language model is used. Related notes by meaning are left to the per-note tool, since
+  they need a search for each note.
+- The result is a queue of proposals, one per note, reviewed one by one: APPLY, SKIP, or
+  STOP REVIEW. At most 40 notes are queued per run.
+- The report also lists the links that point to no note (`NoteStore.unresolvedLinks`): the
+  concepts the vault names but has not written.
+
+**2. A model that writes its instructions back, or loops.**
+
+- `LoopGuard` (in `:core:ml`): a reply is stopped and cut when its last three lines start
+  alike, or when its last 50 characters were already written twice. The reply ends with a
+  notice. Lists and code are not taken for loops (unit tests).
+- Echo: the first 40 characters of a reply are held back. If they are the start of the
+  system instruction, the reply is cancelled and tried once more with
+  `Assistant.SYSTEM_COMPACT`, four plain sentences. The model's file name is remembered, so
+  later messages use the compact instruction from the start. If it still echoes, the user is
+  told the model is probably too small.
+- The library's repetition penalty was not used: it penalizes repeating words of the
+  context, which is what a rewrite of a note must do.
+
+The compact instruction drops rules the long one has (say how notes connect, never repeat an
+earlier answer, code in a fenced block). How a small model answers with it has not been
+evaluated.
+
 ## Where the code is
 
 `app/.../chat/NoteEdits.kt` (pure: prompts, parsing, guards, diff; 16 unit tests),

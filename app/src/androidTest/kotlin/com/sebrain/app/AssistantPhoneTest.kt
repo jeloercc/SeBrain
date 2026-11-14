@@ -112,6 +112,17 @@ class AssistantPhoneTest {
         }
     }
 
+    /** The long system instruction against the compact one, on the message that made a small model write its instructions back. */
+    @Test
+    fun echo() {
+        val prompt = Assistant.prompt("dime qué conceptos de redes debería estudiar primero", emptyList(), false, emptyList())
+        for ((name, system) in listOf("long" to Assistant.SYSTEM, "compact" to Assistant.SYSTEM_COMPACT)) {
+            val start = System.nanoTime()
+            val reply = chat.reply(system, emptyList(), prompt, 160) {}
+            log("echo $name seconds=%.1f echoes=${Assistant.echoes(reply)} looped=${chat.lastLooped} chars=${reply.length} text=${reply.replace('\n', ' ').take(260)}".format((System.nanoTime() - start) / 1e9))
+        }
+    }
+
     /** What the engine does when a reply reaches its token limit: stop quietly, or fail. */
     @Test
     fun outputCap() {

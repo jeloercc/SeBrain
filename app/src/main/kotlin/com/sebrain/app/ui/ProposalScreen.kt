@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,10 +30,19 @@ import com.sebrain.app.chat.NoteEdits.Change
  */
 @Composable
 fun ProposalScreen(state: AppState, proposal: AppState.NoteProposal) {
-    Dialog(onDismissRequest = state::discardProposal, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = state::closeReview, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().safeDrawingPadding(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(proposal.kind.label.uppercase(), style = MaterialTheme.typography.labelLarge, color = Neon.Coral)
+                Row(Modifier.fillMaxWidth()) {
+                    Text(
+                        proposal.kind.label.uppercase() + if (state.proposalsLeft > 0) " · ${state.proposalsLeft} MORE AFTER THIS" else "",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Neon.Coral,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Ends a review of several notes; the ones not yet seen stay as they are.
+                    if (state.proposalsLeft > 0) TextButton(onClick = state::closeReview) { Text("STOP REVIEW") }
+                }
                 Text(proposal.title.ifEmpty { "Untitled" }, style = MaterialTheme.typography.titleMedium)
                 val added = proposal.changes.count { it.first == Change.ADDED }
                 val removed = proposal.changes.count { it.first == Change.REMOVED }
@@ -60,7 +70,9 @@ fun ProposalScreen(state: AppState, proposal: AppState.NoteProposal) {
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = state::discardProposal, modifier = Modifier.weight(1f)) { Text("DISCARD") }
+                    OutlinedButton(onClick = state::discardProposal, modifier = Modifier.weight(1f)) {
+                        Text(if (state.proposalsLeft > 0) "SKIP" else "DISCARD")
+                    }
                     Button(onClick = state::applyProposal, modifier = Modifier.weight(1f)) { Text("APPLY") }
                 }
             }

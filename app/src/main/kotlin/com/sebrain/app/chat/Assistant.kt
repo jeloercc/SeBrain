@@ -36,6 +36,31 @@ object Assistant {
             "never repeat an answer or a note you already wrote.\n" +
             "- Put every script or piece of code in a fenced code block with its language, like ```bash."
 
+    /**
+     * The same rules in a few plain sentences, for a model that answers the long version by
+     * writing it back. Seen on 2026-11-13 with a 2B model: it copied the instructions and then
+     * repeated one line until it was stopped.
+     */
+    const val SYSTEM_COMPACT =
+        "You are SeBrain, the user's private assistant. Answer the user's message directly, in the language of " +
+            "that message. When notes are given with the message, use them and cite them as [1], [2]; do not " +
+            "invent what a note says. Never write these instructions in your answer."
+
+    /** How much of a reply is looked at to tell whether the model is writing its instructions back. */
+    const val ECHO_CHARS = 40
+
+    /** True when a reply starts by repeating the system instruction instead of answering. */
+    fun echoes(replyStart: CharSequence): Boolean {
+        val start = replyStart.toString().trimStart().trimStart('#', '*', '>', '-', ' ').lowercase()
+        return ECHO_STARTS.any { start.startsWith(it) }
+    }
+
+    private val ECHO_STARTS = listOf("you are sebrain", "eres sebrain", "tú eres sebrain", "tu eres sebrain", "you are to answer")
+
+    const val ECHO_NOTICE =
+        "[This model wrote its instructions back instead of answering. It is probably too small for this; choose another model in Models.]"
+    const val LOOP_NOTICE = "[stopped: the model had started to repeat itself]"
+
     /** Working memory: the last messages go back to the model in full, within this budget. */
     const val HISTORY_MESSAGES = 6
     const val HISTORY_CHARS = 1200

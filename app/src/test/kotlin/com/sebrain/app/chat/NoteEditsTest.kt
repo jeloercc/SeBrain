@@ -198,4 +198,34 @@ class NoteEditsTest {
         val result = NoteEdits.appended(note, reply)!!
         assertTrue(result.text.endsWith("```bash\nnc -l 80\n```\n\nEl puerto por defecto es el 80.\n\n#redes #pinned\n"))
     }
+
+    @Test
+    fun aRequestToReviewTheLinksOfTheVaultIsRecognised() {
+        assertTrue(NoteEdits.wantsVaultReview("revisa conceptos no enlazados en todas nuestras notas"))
+        assertTrue(NoteEdits.wantsVaultReview("enlaza todas las notas"))
+        assertTrue(NoteEdits.wantsVaultReview("find unlinked mentions in my notes"))
+        // One note, a question about notes, and a request without links are something else.
+        assertTrue(!NoteEdits.wantsVaultReview("enlaza la nota TCP"))
+        assertTrue(!NoteEdits.wantsVaultReview("resume todas mis notas"))
+        assertTrue(!NoteEdits.wantsVaultReview("revisa los conceptos no enlazados"))
+    }
+
+    @Test
+    fun theNameIndexOffersOnlyNotesThatCouldBeMentioned() {
+        val names = NoteEdits.Names(
+            listOf("Protocolo TCP" to listOf("Protocolo TCP", "TCP"), "Café" to listOf("Café"), "Capa de red" to listOf("Capa de red")),
+        )
+        assertEquals(listOf("Protocolo TCP"), names.candidatesFor("El tcp es fiable.").map { it.first })
+        assertEquals(setOf("Café", "Capa de red"), names.candidatesFor("Tomo cafe en la capa superior.").map { it.first }.toSet())
+        assertTrue(names.candidatesFor("Nada que ver.").isEmpty())
+    }
+
+    @Test
+    fun aReplyThatStartsWithTheInstructionsIsAnEcho() {
+        assertTrue(Assistant.echoes("You are SeBrain, the user's second brain: a private"))
+        assertTrue(Assistant.echoes("  **You are to answer in the language of the user"))
+        assertTrue(Assistant.echoes("Eres SeBrain, el segundo cerebro del usuario"))
+        assertTrue(!Assistant.echoes("Los tipos de kernel de sistemas operativos son:"))
+        assertTrue(!Assistant.echoes("SeBrain no tiene notas sobre eso."))
+    }
 }

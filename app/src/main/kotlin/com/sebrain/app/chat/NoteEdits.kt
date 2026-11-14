@@ -94,6 +94,41 @@ object NoteEdits {
         return VERBS.firstOrNull { it.second.containsMatchIn(text) }?.first
     }
 
+    private val LINK_WORD = Regex("enlaz|enlac|vincul|conect|\\blinks?\\b|\\blinked\\b|unlinked", RegexOption.IGNORE_CASE)
+    private val WHOLE_VAULT = Regex(
+        "\\b(todas|todos|toda|cada|all|every|each|b[oó]veda|vault|nuestras notas|mis notas|las notas|my notes|our notes|the notes)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * True when a message asks to look for missing links across the vault, such as "revisa
+     * conceptos no enlazados en todas nuestras notas". That is a review of every note, done
+     * without the language model.
+     */
+    fun wantsVaultReview(message: String): Boolean =
+        NOTE_WORD.containsMatchIn(message) && LINK_WORD.containsMatchIn(message) && WHOLE_VAULT.containsMatchIn(message)
+
+    /**
+     * The other notes a text could mention, indexed by the first word of each of their names,
+     * so reviewing a whole vault does not test every name against every note.
+     */
+    class Names(others: List<Pair<String, List<String>>>) {
+        private val byFirstWord = HashMap<String, MutableList<Pair<String, List<String>>>>()
+
+        init {
+            for (other in others) {
+                for (name in other.second) {
+                    val first = fold(name).substringBefore(' ')
+                    if (first.isNotEmpty()) byFirstWord.getOrPut(first) { ArrayList() }.add(other)
+                }
+            }
+        }
+
+        /** The notes whose name could appear in [text]: those with a name starting with a word of it. */
+        fun candidatesFor(text: String): List<Pair<String, List<String>>> =
+            fold(text).split(' ').toSet().flatMap { byFirstWord[it].orEmpty() }.distinct()
+    }
+
     /**
      * Which of the existing notes [message] names: the longest title or alias that appears in it
      * as whole words, ignoring case and accents. [names] pairs a note id with one of its names.

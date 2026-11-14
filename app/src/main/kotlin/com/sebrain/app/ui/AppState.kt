@@ -200,6 +200,8 @@ class AppState(private val app: SeBrainApp) {
         notes = emptyList()
         tags = emptyList()
         folders = emptyList()
+        proposalQueue.clear()
+        proposalsLeft = 0
         proposal = null
         detail = null
         draft = null
@@ -900,6 +902,11 @@ class AppState(private val app: SeBrainApp) {
         }
         messages += ChatMessage(true, text)
         persist(fromUser = true, text = text)
+        // "Revisa conceptos no enlazados en todas nuestras notas": a review of the whole vault.
+        if (NoteEdits.wantsVaultReview(text)) {
+            reviewVaultLinks(fromChat = true)
+            return
+        }
         // "Corrige la nota X": a tool on an existing note, if the message names one.
         val tool = NoteEdits.kindOf(text)
         if (tool != null) {
@@ -925,6 +932,15 @@ class AppState(private val app: SeBrainApp) {
         } else {
             generate(text)
         }
+    }
+
+    /** Models that write the long system instruction back; they get the compact one. Kept across starts. */
+    private fun compactModels(): Set<String> = app.getSharedPreferences(PREFS, 0).getStringSet(PREF_COMPACT, emptySet()).orEmpty()
+
+    private fun rememberCompact(model: String) {
+        if (model.isEmpty()) return
+        val prefs = app.getSharedPreferences(PREFS, 0)
+        prefs.edit().putStringSet(PREF_COMPACT, compactModels() + model).apply()
     }
 
     /**
@@ -1024,6 +1040,93 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    /** Proposals still waiting behind the one on screen, from a review of the whole vault. */
+    private val proposalQueue = ArrayDeque<NoteProposal>()
+    var proposalsLeft by mutableStateOf(0)
+        private set
+
+    /**
+     * Looks in every note for other notes it names without linking them, and queues one proposal
+     * per note to review. It also reports the links that point to notes that do not exist. No
+     * language model is used, so it takes seconds and works with any model loaded, or none.
+     */
+    fun reviewVaultLinks(fromChat: Boolean = false) {
+        if (transferring || generating) return
+        transferring = true
+        fun say(status: String) {
+            editStatus = status
+            if (fromChat) {
+                messages += ChatMessage(false, status)
+                persist(fromUser = false, text = status)
+            }
+        }
+        editStatus = "Reviewing the links of every note…"
+        thread(name = "vault-links") {
+            val found = ArrayList<NoteProposal>()
+            var links = 0
+            var reviewed = 0
+            val outcome = runCatching {
+                val names = vaultStep { db -> NoteStore(db).names() }.getOrThrow()
+                val byNote = names.groupBy({ it.first }, { it.second to it.third })
+                val all = byNote.map { (id, pairs) -> id to (pairs.first().first to pairs.map { it.second }) }
+                val index = NoteEdits.Names(all.map { it.second })
+                val titleOf = all.associate { it.first to it.second.first }
+                var after = 0L
+                while (found.size < REVIEW_MAX) {
+                    val notes = vaultStep { db -> NoteStore(db).page(after, IMPORT_BATCH) }.getOrThrow()
+                    if (notes.isEmpty()) break
+                    after = notes.last().id
+                    for (note in notes) {
+                        reviewed++
+                        val own = titleOf[note.id]
+                        val candidates = index.candidatesFor(FrontMatter.body(note.text)).filter { it.first != own }
+                        val result = NoteEdits.linked(note.text, candidates) ?: continue
+                        val before = NoteMarkup.parse(note.text).links.size
+                        links += NoteMarkup.parse(result.text).links.size - before
+                        found += NoteProposal(note.id, note.title, NoteEdits.Kind.LINK, note.text, result.text, result.warnings, NoteEdits.diff(note.text, result.text))
+                        if (found.size == REVIEW_MAX) break
+                    }
+                }
+                vaultStep { db -> NoteStore(db).unresolvedLinks() }.getOrDefault(emptyList())
+            }
+            transferring = false
+            onMain {
+                val missing = outcome.getOrDefault(emptyList())
+                val report = buildString {
+                    if (outcome.isFailure) {
+                        append("The review stopped: ${outcome.exceptionOrNull()?.message ?: "the vault is not available"}.")
+                    } else if (found.isEmpty()) {
+                        append("Reviewed $reviewed notes: every note that names another one already links to it.")
+                    } else {
+                        append("Reviewed $reviewed notes: $links mention(s) without a link in ${found.size} note(s). Review them one by one; nothing changes until you apply.")
+                        if (found.size == REVIEW_MAX) append(" Only the first $REVIEW_MAX notes are queued; run it again after these.")
+                    }
+                    if (missing.isNotEmpty()) {
+                        append("\n\nLinked but not written yet: ")
+                        append(missing.joinToString(", ") { (title, count) -> if (count > 1) "$title ($count notes)" else title })
+                        append('.')
+                    }
+                }
+                say(report)
+                proposalQueue.clear()
+                proposalQueue.addAll(found)
+                nextProposal()
+            }
+        }
+    }
+
+    private fun nextProposal() {
+        proposal = proposalQueue.removeFirstOrNull()
+        proposalsLeft = proposalQueue.size
+    }
+
+    /** Ends a review of the vault, leaving the notes not yet reviewed as they are. */
+    fun closeReview() {
+        proposalQueue.clear()
+        proposalsLeft = 0
+        proposal = null
+    }
+
     /** Links by name, then related notes by retrieval: the note's own start is the search query. */
     private fun proposeLinks(note: Note, body: String, say: (String) -> Unit) {
         val query = note.title + "\n" + Assistant.shorten(body, 400)
@@ -1062,7 +1165,7 @@ class AppState(private val app: SeBrainApp) {
             }
         }) { result ->
             onMain {
-                proposal = null
+                nextProposal()
                 editStatus = if (result.getOrDefault(false)) {
                     "${change.kind.label}: applied to \"${change.title}\"."
                 } else {
@@ -1074,9 +1177,10 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    /** Leaves the note as it is, and moves to the next one if a review is under way. */
     fun discardProposal() {
-        proposal = null
-        editStatus = null
+        nextProposal()
+        if (proposal == null) editStatus = null
     }
 
     /** Stores a message in the open conversation, creating the conversation on its first message. */
@@ -1119,30 +1223,64 @@ class AppState(private val app: SeBrainApp) {
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
             val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty())
+            val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
+                val limit = if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS
+                var echoed = false
+
+                /** One reply. Its first characters are held back until they are known not to be the instructions. */
+                fun attempt(system: String): String {
+                    val streamed = StringBuilder()
+                    var checked = false
+                    return timed {
+                        app.chat.reply(system, history, prompt, limit) { piece ->
+                            streamed.append(piece)
+                            val show = if (checked) piece else if (streamed.length >= Assistant.ECHO_CHARS) {
+                                checked = true
+                                if (Assistant.echoes(streamed)) {
+                                    echoed = true
+                                    app.chat.cancel()
+                                }
+                                streamed.toString()
+                            } else {
+                                ""
+                            }
+                            if (!echoed && show.isNotEmpty()) {
+                                onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + show) }
+                            }
+                        }
+                    }
+                }
+                var looped = false
                 val result = runCatching {
                     if (stopRequested) {
                         ""
                     } else {
-                        timed { app.chat.reply(Assistant.SYSTEM, history, prompt, if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS) { piece ->
-                            onMain {
-                                if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece)
-                            }
-                        } }
+                        val compact = model in compactModels()
+                        var text = attempt(if (compact) Assistant.SYSTEM_COMPACT else Assistant.SYSTEM)
+                        if (echoed && !stopRequested && !compact) {
+                            // This model copies the long instructions. Use the short ones, now and from here on.
+                            rememberCompact(model)
+                            echoed = false
+                            text = attempt(Assistant.SYSTEM_COMPACT)
+                        }
+                        looped = app.chat.lastLooped
+                        if (echoed || Assistant.echoes(text)) "" else text
                     }
                 }
                 val reply = result.getOrNull().orEmpty()
-                val saved = reply.isNotBlank() && asNote && !stopRequested && createNoteFrom(reply, question, notes)
+                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped && createNoteFrom(reply, question, notes)
                 onMain {
-                    result.onFailure {
-                        if (index < messages.size) {
-                            messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
-                        }
-                    }
                     // The screen may have been cleared by onStop meanwhile; the reply is still stored.
                     val visible = index < messages.size
-                    val final = Assistant.dropUnknownCitations(if (visible) messages[index].text else reply, notes.size)
-                        .ifBlank { if (stopRequested) "[stopped]" else "" }
+                    // The returned reply is what counts: it is the text after any loop was cut.
+                    val body = when {
+                        result.isFailure -> (if (visible) messages[index].text else "") + "\n[error: ${result.exceptionOrNull()?.message}]"
+                        echoed -> Assistant.ECHO_NOTICE
+                        looped -> reply.trimEnd() + "\n\n" + Assistant.LOOP_NOTICE
+                        else -> reply
+                    }
+                    val final = Assistant.dropUnknownCitations(body, notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
                     if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
                     markGenerating(false)
@@ -1293,9 +1431,11 @@ class AppState(private val app: SeBrainApp) {
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
         const val PREF_PINS_MIGRATED = "pins_migrated"
+        const val PREF_COMPACT = "compact_prompt_models"
         const val IMPORT_BATCH = 20
         const val EMBED_CHARS = 1500
         const val RELATED_RANK = 5
+        const val REVIEW_MAX = 40
         const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }
