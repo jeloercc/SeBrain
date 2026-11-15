@@ -109,6 +109,14 @@ named note.
 - The library's repetition penalty was not used: it penalizes repeating words of the
   context, which is what a rewrite of a note must do.
 
+Checked on the phone on 2026-11-14 with the same model (`AssistantPhoneTest#echo`, one run,
+no vault notes in the prompt): the app is installed and starts; neither the long nor the
+compact instruction made the model write its instructions back, on the message of the
+screenshot or on another one, so **the echo was not reproduced and the two guards are still
+verified by unit tests only**. The screenshot's prompt carried notes from the real vault,
+which this test does not have. In both runs the model only restated the request, which is why
+that message now goes to the review tool instead of the model. It wrote about 2 tokens/s.
+
 The compact instruction drops rules the long one has (say how notes connect, never repeat an
 earlier answer, code in a fenced block). How a small model answers with it has not been
 evaluated.

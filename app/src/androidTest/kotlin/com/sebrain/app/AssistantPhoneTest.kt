@@ -115,10 +115,11 @@ class AssistantPhoneTest {
     /** The long system instruction against the compact one, on the message that made a small model write its instructions back. */
     @Test
     fun echo() {
-        val prompt = Assistant.prompt("dime qué conceptos de redes debería estudiar primero", emptyList(), false, emptyList())
+        // The message of the screenshot of 2026-11-13, which the model answered with its instructions.
+        val prompt = Assistant.prompt("revisa conceptos no enlazados en todas nuestras notas", emptyList(), false, emptyList())
         for ((name, system) in listOf("long" to Assistant.SYSTEM, "compact" to Assistant.SYSTEM_COMPACT)) {
             val start = System.nanoTime()
-            val reply = chat.reply(system, emptyList(), prompt, 160) {}
+            val reply = chat.reply(system, emptyList(), prompt, 120) {}
             log("echo $name seconds=%.1f echoes=${Assistant.echoes(reply)} looped=${chat.lastLooped} chars=${reply.length} text=${reply.replace('\n', ' ').take(260)}".format((System.nanoTime() - start) / 1e9))
         }
     }
