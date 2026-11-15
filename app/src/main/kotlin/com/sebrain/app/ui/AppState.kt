@@ -30,6 +30,10 @@ import com.sebrain.cognition.MarkdownInterop
 import com.sebrain.cognition.NoteMarkup
 import com.sebrain.cognition.NoteSections
 import com.sebrain.app.VaultFolder
+import com.sebrain.app.ProviderStore
+import com.sebrain.core.net.RemoteChat
+import com.sebrain.core.net.RemoteMessage
+import com.sebrain.core.net.RemoteProvider
 import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.ml.KnownModel
 import com.sebrain.core.net.HubFile
@@ -179,6 +183,7 @@ class AppState(private val app: SeBrainApp) {
     fun start() {
         app.onImported = { onMain { refreshNotes() } }
         reindexIfNeeded()
+        loadProviders()
         app.requestImport()
         migratePins()
         refreshInstalled()
@@ -845,6 +850,8 @@ class AppState(private val app: SeBrainApp) {
         }) { result ->
             onMain {
                 result.onSuccess { (stored, saved) ->
+                    // Earlier turns with an external model belong to the conversation they were in.
+                    if (id != storedConversation) remoteHistory.clear()
                     storedConversation = id
                     conversationId = id
                     summary = saved?.first
@@ -897,6 +904,7 @@ class AppState(private val app: SeBrainApp) {
         if (generating) return
         storedConversation = null
         conversationId = null
+        remoteHistory.clear()
         summary = null
         summarized = 0
         messages.clear()
@@ -941,6 +949,10 @@ class AppState(private val app: SeBrainApp) {
     /** Answers a message that is already in the conversation. */
     private fun answer(text: String) {
         if (generating) return
+        remoteProvider?.let { provider ->
+            prepareRemote(provider, text)
+            return
+        }
         markGenerating(true)
         stopRequested = false
         if (currentModel == null) {
@@ -1320,6 +1332,7 @@ class AppState(private val app: SeBrainApp) {
     fun stopGenerating() {
         stopRequested = true
         app.chat.cancel()
+        remoteChat.cancel()
         // If the model was still loading, nothing will reply: free the input now.
         if (loadingModel) {
             pendingQuestion = null
@@ -1345,15 +1358,190 @@ class AppState(private val app: SeBrainApp) {
      * body with each citation turned into a `[[link]]` to the cited note, only links to notes
      * that exist, and `#tags`. Returns whether at least one note was created.
      */
-    private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>): Boolean {
+    private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>, source: String = "assistant"): Boolean {
         var created = false
         for (note in NoteFormat.parse(reply, question)) {
             val text = Assistant.linkify(note.body, context, note.title)
-            val outcome = runCatching { tools.createNote(note.title, text, note.tags) }
+            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source) }
                 .getOrElse { "The note could not be saved: ${it.message}" }
             if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
         }
         return created
+    }
+
+    // ---- External AI over an API ----
+
+    private val providerStore by lazy { ProviderStore(app) }
+    private val remoteChat by lazy { RemoteChat(gateway) }
+
+    /** The providers the user added. Their keys stay in [ProviderStore]. */
+    var providers by mutableStateOf(emptyList<RemoteProvider>())
+        private set
+
+    /** The external model answering in the chat, or null for the model on the phone. */
+    var remoteProvider by mutableStateOf<RemoteProvider?>(null)
+        private set
+
+    /** Notes the user attached to the next message for the external model, as (id, title). */
+    var attachedNotes by mutableStateOf(emptyList<Pair<Long, String>>())
+        private set
+
+    /** What is about to leave the phone, waiting for the user to confirm it. */
+    class OutgoingRequest(
+        val provider: RemoteProvider,
+        val question: String,
+        val messages: List<RemoteMessage>,
+        val notes: List<ContextNote>,
+        val asNote: Boolean,
+    ) {
+        val characters: Int get() = messages.sumOf { it.content.length }
+        val text: String get() = messages.joinToString("\n\n") { "[${it.role}]\n${it.content}" }
+    }
+
+    var outgoing by mutableStateOf<OutgoingRequest?>(null)
+        private set
+
+    var providerProblem by mutableStateOf<String?>(null)
+        private set
+
+    /** What this conversation said to and heard from external models; nothing local is in it. */
+    private val remoteHistory = ArrayList<RemoteMessage>()
+
+    fun loadProviders() {
+        thread(name = "providers") {
+            val list = runCatching { providerStore.list() }.getOrDefault(emptyList())
+            val chosen = app.getSharedPreferences(PREFS, 0).getString(PREF_ENGINE, null)
+            onMain {
+                providers = list
+                remoteProvider = list.firstOrNull { it.id == chosen }
+            }
+        }
+    }
+
+    fun saveProvider(provider: RemoteProvider, apiKey: String) {
+        thread(name = "providers") {
+            val result = runCatching { providerStore.save(provider, apiKey) }
+            onMain {
+                providerProblem = result.exceptionOrNull()?.message
+                if (result.isSuccess) loadProviders()
+            }
+        }
+    }
+
+    fun removeProvider(id: String) {
+        thread(name = "providers") {
+            runCatching { providerStore.remove(id) }
+            if (app.getSharedPreferences(PREFS, 0).getString(PREF_ENGINE, null) == id) useLocalModel()
+            loadProviders()
+        }
+    }
+
+    /** Answers with an external model from now on. Notes stay on the phone unless attached. */
+    fun useProvider(provider: RemoteProvider) {
+        remoteProvider = provider
+        app.getSharedPreferences(PREFS, 0).edit().putString(PREF_ENGINE, provider.id).apply()
+    }
+
+    fun useLocalModel() {
+        onMain {
+            remoteProvider = null
+            attachedNotes = emptyList()
+        }
+        app.getSharedPreferences(PREFS, 0).edit().remove(PREF_ENGINE).apply()
+    }
+
+    fun attachNote(id: Long, title: String) {
+        if (attachedNotes.none { it.first == id }) attachedNotes = attachedNotes + (id to title)
+    }
+
+    fun detachNote(id: Long) {
+        attachedNotes = attachedNotes.filterNot { it.first == id }
+    }
+
+    /** Notes whose title or text matches [words], to choose what to attach. */
+    var attachCandidates by mutableStateOf(emptyList<Pair<Long, String>>())
+        private set
+
+    fun searchAttachable(words: String) {
+        val wanted = words.trim()
+        app.vault({ db ->
+            val captures = CaptureStore(db)
+            if (wanted.isEmpty()) captures.recent(20) else HybridSearch(db).search(wanted, null, 20).mapNotNull { captures.summaryOf(it.captureId) }
+        }) { result ->
+            onMain { attachCandidates = result.getOrDefault(emptyList()).distinctBy { it.id }.map { it.id to (it.title ?: it.text.take(40)) } }
+        }
+    }
+
+    /**
+     * Builds what will be sent: the instruction, this conversation's earlier turns with external
+     * models, the attached notes, and the message. It is shown before anything leaves.
+     */
+    private fun prepareRemote(provider: RemoteProvider, question: String) {
+        val attached = attachedNotes
+        app.vault({ db ->
+            val store = NoteStore(db)
+            attached.mapIndexedNotNull { i, (id, _) ->
+                store.get(id)?.let { ContextNote(i + 1, it.id, it.title, it.tags, emptyList(), emptyList(), FrontMatter.body(it.text), focus = true) }
+            }
+        }) { found ->
+            onMain {
+                val notes = found.getOrDefault(emptyList())
+                val asNote = Assistant.wantsNote(question)
+                val previous = remoteHistory.lastOrNull { it.role == "assistant" }?.content
+                val prompt = Assistant.prompt(question, notes, asNote, emptyList(), previousAnswer = previous)
+                val messages = listOf(RemoteMessage("system", Assistant.REMOTE_SYSTEM)) +
+                    remoteHistory.takeLast(REMOTE_HISTORY) + RemoteMessage("user", prompt)
+                outgoing = OutgoingRequest(provider, question, messages, notes, asNote)
+            }
+        }
+    }
+
+    /** The user saw what leaves and agreed: send it. */
+    fun confirmOutgoing() {
+        val request = outgoing ?: return
+        outgoing = null
+        val key = runCatching { providerStore.apiKey(request.provider.id) }.getOrNull()
+        if (key.isNullOrEmpty()) {
+            messages += ChatMessage(false, "No API key is stored for ${request.provider.name}.", isAction = true)
+            return
+        }
+        markGenerating(true)
+        stopRequested = false
+        attachedNotes = emptyList()
+        messages += ChatMessage(false, "")
+        val index = messages.lastIndex
+        val limit = if (request.asNote) REMOTE_NOTE_TOKENS else REMOTE_ANSWER_TOKENS
+        thread(name = "remote-chat") {
+            val result = runCatching {
+                remoteChat.reply(request.provider, key, request.messages, limit) { piece ->
+                    onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece) }
+                }
+            }
+            val reply = result.getOrNull().orEmpty()
+            val source = "${request.provider.name} · ${request.provider.model}"
+            val saved = reply.isNotBlank() && request.asNote && !stopRequested && createNoteFrom(reply, request.question, request.notes, source)
+            onMain {
+                val visible = index < messages.size
+                val body = when {
+                    result.isFailure -> "[${request.provider.name}: ${result.exceptionOrNull()?.message ?: "the request failed"}]"
+                    else -> Assistant.dropPreamble(reply)
+                }
+                val final = Assistant.dropUnknownCitations(body, request.notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
+                if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
+                if (final.isNotBlank()) persist(fromUser = false, text = final)
+                if (result.isSuccess && reply.isNotBlank()) {
+                    remoteHistory += RemoteMessage("user", request.question)
+                    remoteHistory += RemoteMessage("assistant", reply)
+                }
+                markGenerating(false)
+                refreshNotes()
+            }
+        }
+    }
+
+    /** Nothing was sent. The message stays in the conversation without an answer. */
+    fun cancelOutgoing() {
+        outgoing = null
     }
 
     // ---- Models ----
@@ -1452,6 +1640,10 @@ class AppState(private val app: SeBrainApp) {
         const val PREF_PINS_MIGRATED = "pins_migrated"
         const val PREF_COMPACT = "compact_prompt_models"
         const val PREF_INDEX_VERSION = "index_version"
+        const val PREF_ENGINE = "chat_engine"
+        const val REMOTE_HISTORY = 8
+        const val REMOTE_ANSWER_TOKENS = 2000
+        const val REMOTE_NOTE_TOKENS = 4000
         const val IMPORT_BATCH = 20
         const val EMBED_CHARS = 1500
         const val RELATED_RANK = 5

@@ -28,10 +28,13 @@ class NoteTools(
         @ToolParam(description = "Short title of the note") title: String,
         @ToolParam(description = "Body of the note, in Markdown") text: String,
         @ToolParam(description = "Tags without the # sign. Use an empty list for none") tags: List<String>,
-    ): String {
+    ): String = createNoteFrom(title, text, tags, "assistant")
+
+    /** Creates a note and records in its properties who wrote it: the local assistant, or an external model. */
+    fun createNoteFrom(title: String, text: String, tags: List<String>, source: String): String {
         val body = buildString {
             // Properties that say where the note came from, so it can be told apart and filtered.
-            append(FrontMatter.render(listOf("source" to listOf("assistant"), "created" to listOf(LocalDate.now().toString()))))
+            append(FrontMatter.render(listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString()))))
             append("# ").append(title.trim()).append("\n\n").append(text.trim())
             val clean = cleanTags(tags)
             if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })

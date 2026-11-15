@@ -75,6 +75,7 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
                 keyboardActions = KeyboardActions(onSearch = { state.searchHub(words) }),
             )
         }
+        item { ProvidersSection(state) }
         if (state.hubBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.downloadProgress?.let { progress ->
             item {

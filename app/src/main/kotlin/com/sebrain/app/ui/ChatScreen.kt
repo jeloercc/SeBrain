@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenuItem
@@ -55,6 +56,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
+    var attachOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     // Asked once, on the first message: it lets SeBrain say when a reply finished in the background.
     val context = LocalContext.current
@@ -69,9 +71,11 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             val model = state.currentModel
+            val remote = state.remoteProvider
             Column(Modifier.weight(1f)) {
                 Text(
                     when {
+                        remote != null -> "${remote.name} · ${remote.model}"
                         state.loadingModel -> "Loading the model…"
                         model != null -> model.description
                         else -> "No model loaded"
@@ -80,12 +84,13 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 )
                 Text(
                     when {
+                        remote != null -> "External API · only your message and attached notes leave the phone"
                         state.loadingModel -> "The first load of a model can take a minute"
                         model != null -> "On device · ${state.modelBackend} · say “make a note about…” to save an answer"
                         else -> ""
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (remote != null) Neon.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
@@ -98,7 +103,17 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                         DropdownMenuItem(text = { Text("None installed") }, onClick = { menuOpen = false })
                     }
                     state.languageModels.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.description) }, onClick = { menuOpen = false; state.ensureModel(option) })
+                        DropdownMenuItem(
+                            text = { Text("On device · " + option.description) },
+                            onClick = { menuOpen = false; state.useLocalModel(); state.ensureModel(option) },
+                        )
+                    }
+                    // External models, added in the Models tab.
+                    state.providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text("API · ${provider.name} · ${provider.model}", color = Neon.Coral) },
+                            onClick = { menuOpen = false; state.useProvider(provider) },
+                        )
                     }
                 }
             }
@@ -129,6 +144,17 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 }
             }
         }
+        if (state.remoteProvider != null) {
+            // Notes go to the external model only when attached here, one by one.
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { attachOpen = true }, enabled = !state.generating) { Text("ATTACH NOTES") }
+                state.attachedNotes.forEach { (id, title) ->
+                    AssistChip(onClick = { state.detachNote(id) }, label = { Text("$title ✕", maxLines = 1) }, modifier = Modifier.padding(start = 4.dp))
+                }
+            }
+        }
+        if (attachOpen) AttachNotesDialog(state) { attachOpen = false }
+        state.outgoing?.let { OutgoingDialog(state, it) }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
                 value = input,
