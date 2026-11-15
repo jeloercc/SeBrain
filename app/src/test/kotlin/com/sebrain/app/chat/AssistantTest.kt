@@ -186,4 +186,41 @@ class AssistantTest {
         assertTrue(prompt.contains("Message: recuerda que prefiero respuestas cortas"))
         assertFalse(prompt.contains("Pinned notes"))
     }
+
+    @Test
+    fun aLanguageAskedForByNameWinsOverTheLanguageOfTheMessage() {
+        assertEquals("English", Assistant.requestedLanguage("perfect haz una nota en Ingles de tu sujerencia"))
+        assertEquals("Spanish", Assistant.requestedLanguage("answer in Spanish please"))
+        assertEquals(null, Assistant.requestedLanguage("explícame el inglés técnico"))
+        val prompt = Assistant.prompt("haz una nota en inglés sobre TCP", emptyList(), asNote = true, tags = emptyList())
+        assertTrue(prompt.endsWith("Write in English, as the message above asks, even if the notes or the earlier messages are in another language."))
+        // The section names of the note follow the language asked for.
+        assertTrue(prompt.contains("## Key points"))
+        assertFalse(prompt.contains("## Puntos clave"))
+    }
+
+    @Test
+    fun aNoteAboutThePreviousAnswerCarriesThatAnswer() {
+        val answer = "Se podría comparar la delegación de servicios en un Microkernel y en un kernel monolítico."
+        assertTrue(Assistant.refersToPrevious("perfect haz una nota en Ingles de tu sujerencia"))
+        assertTrue(Assistant.refersToPrevious("guarda lo anterior como nota"))
+        assertTrue(Assistant.refersToPrevious("make a note of your answer"))
+        assertFalse(Assistant.refersToPrevious("haz una nota sobre TCP"))
+        val prompt = Assistant.prompt("haz una nota en inglés de tu sugerencia", emptyList(), asNote = true, tags = emptyList(), previousAnswer = answer)
+        assertTrue(prompt.contains("The request below is about your previous answer."))
+        assertTrue(prompt.contains("Your previous answer was:\n$answer\n\nRequest: haz una nota en inglés de tu sugerencia"))
+        // A question, or a note about something else, does not carry it.
+        assertFalse(Assistant.prompt("haz una nota sobre TCP", emptyList(), asNote = true, tags = emptyList(), previousAnswer = answer).contains("previous answer"))
+        assertFalse(Assistant.prompt("explica tu sugerencia", emptyList(), asNote = false, tags = emptyList(), previousAnswer = answer).contains("Your previous answer was"))
+    }
+
+    @Test
+    fun anOpeningThatDescribesTheMessageIsRemoved() {
+        val reply = "El usuario pregunta: \"¿Qué más nos hace falta para de kernels?\"\n\n**Respuesta:**\n\nPara mejorar la conversación, se podría añadir un enfoque más detallado."
+        assertEquals("Para mejorar la conversación, se podría añadir un enfoque más detallado.", Assistant.dropPreamble(reply))
+        assertEquals("Here is the list.", Assistant.dropPreamble("The user asks for a list.\n\nHere is the list."))
+        // An ordinary answer, and a reply that is only the description, are left as they are.
+        assertEquals("Los kernels pueden ser monolíticos.", Assistant.dropPreamble("Los kernels pueden ser monolíticos."))
+        assertEquals("El usuario pregunta por kernels.", Assistant.dropPreamble("El usuario pregunta por kernels."))
+    }
 }

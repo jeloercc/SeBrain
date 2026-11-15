@@ -28,7 +28,12 @@ object NoteFormat {
 
     /** What the model is told when its answer will be saved. [message] decides the language of the section names. */
     fun instructions(message: String, linkable: List<String>, tags: List<String>): String = buildString {
-        val spanish = SPANISH.findAll(message).count() >= 2
+        // The section names follow the language the note will be in: the one asked for by name, or the message's.
+        val spanish = when (Assistant.requestedLanguage(message)) {
+            "English" -> false
+            "Spanish" -> true
+            else -> SPANISH.findAll(message).count() >= 2
+        }
         val points = if (spanish) "Puntos clave" else "Key points"
         val details = if (spanish) "Detalles" else "Details"
         append("\n\nThe answer will be saved in the vault as a note. If the request asks for several notes, write one ")

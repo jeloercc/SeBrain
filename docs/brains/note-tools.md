@@ -121,6 +121,22 @@ The compact instruction drops rules the long one has (say how notes connect, nev
 earlier answer, code in a fenced block). How a small model answers with it has not been
 evaluated.
 
+## Three chat defects from the user's screenshots (2026-11-14)
+
+The vault review worked on the phone: "Reviewed 8 notes: 7 mention(s) without a link in 5
+note(s)", in seconds. The same screenshots, with `gemma-4-E2B-it-Uncensored-MAX`, showed three
+defects in the ordinary chat. Each is fixed in the app, not left to the model. **Unit-tested;
+not run on the phone, which was disconnected again.**
+
+| Seen | Cause | Fix |
+| --- | --- | --- |
+| "haz una nota en Ingles de tu sujerencia" gave a note in Spanish | The prompt ended with "write in Spanish, the language of the message" | `Assistant.requestedLanguage`: a language asked for by name wins, and the note's section names follow it |
+| That note was about the first message of the chat, not about the suggestion | The request points at the previous answer, and the model picked another topic. The review's report was also stored as something the assistant had said | `Assistant.refersToPrevious`: for a note request that points at the answer just given, the prompt carries that answer and says the note is about it. Tool reports are now action lines, kept out of the model's history |
+| An answer opened with `El usuario pregunta: "…"` and `**Respuesta:**` | The small model describes the message before answering | `Assistant.dropPreamble` removes that opening; the compact instruction also says not to restate the message |
+
+A phone test for the second case exists (`AssistantPhoneTest#noteOfPreviousAnswer`) and has
+not run.
+
 ## Where the code is
 
 `app/.../chat/NoteEdits.kt` (pure: prompts, parsing, guards, diff; 16 unit tests),

@@ -124,6 +124,28 @@ class AssistantPhoneTest {
         }
     }
 
+    /** The conversation of the screenshots of 2026-11-14: a note, in English, about the answer just given. */
+    @Test
+    fun noteOfPreviousAnswer() {
+        val answer = "Para mejorar la conversación entre los conceptos, se podría añadir un enfoque más detallado sobre cómo las arquitecturas " +
+            "de kernel (como el Monolithic Kernel frente al Microkernel) interactúan en escenarios prácticos, especialmente en cómo se " +
+            "implementa la delegación de servicios (como la asignación de memoria o la gestión de drivers) en un entorno Microkernel.\n\n" +
+            "Se podría introducir una comparativa más explícita entre la implementación de la delegación en ambos tipos de kernel."
+        val earlier = listOf(
+            Assistant.Line(true, "revisa conceptos no enlazados en todas nuestras notas"),
+            Assistant.Line(true, "que mas nos hace falta hablar de kernels"),
+            Assistant.Line(false, answer),
+        )
+        val memory = Assistant.remember(earlier)
+        val request = "perfect haz una nota en Ingles de tu sujerencia"
+        val prompt = Assistant.prompt(request, emptyList(), true, listOf("kernel", "os"), memory, previousAnswer = answer)
+        val start = System.nanoTime()
+        val reply = chat.reply(Assistant.SYSTEM_COMPACT, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt, Assistant.NOTE_TOKENS) {}
+        log("previous seconds=%.1f language=${Assistant.language(reply.take(600))} looped=${chat.lastLooped}".format((System.nanoTime() - start) / 1e9))
+        log("previous raw=${reply.replace("\n", "⏎").take(900)}")
+        NoteFormat.parse(reply, request).forEach { log("previous note title=\"${it.title}\" tags=${it.tags} body=${it.body.replace("\n", "⏎").take(500)}") }
+    }
+
     /** What the engine does when a reply reaches its token limit: stop quietly, or fail. */
     @Test
     fun outputCap() {

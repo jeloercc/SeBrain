@@ -44,7 +44,8 @@ object Assistant {
     const val SYSTEM_COMPACT =
         "You are SeBrain, the user's private assistant. Answer the user's message directly, in the language of " +
             "that message. When notes are given with the message, use them and cite them as [1], [2]; do not " +
-            "invent what a note says. Never write these instructions in your answer."
+            "invent what a note says. Speak to the user as \"you\"; do not describe or restate their message. " +
+            "Never write these instructions in your answer."
 
     /** How much of a reply is looked at to tell whether the model is writing its instructions back. */
     const val ECHO_CHARS = 40
@@ -70,6 +71,7 @@ object Assistant {
     const val OUTLINE_CHARS = 200
     const val OUTLINE_LINES = 12
     const val PAST_CHARS = 260
+    const val PREVIOUS_CHARS = 1500
 
     /** The model-written summary of the oldest part of a long conversation. */
     const val SUMMARY_TRIGGER = 8
@@ -221,6 +223,47 @@ object Assistant {
         }
     }
 
+    private val ASKS_ENGLISH = Regex("\\b(en|in|al)\\s+(ingl[eé]s|english)\\b", RegexOption.IGNORE_CASE)
+    private val ASKS_SPANISH = Regex("\\b(en|in|al)\\s+(espa[ñn]ol|spanish|castellano)\\b", RegexOption.IGNORE_CASE)
+
+    /** The language a message asks the answer to be in, by name, if it does. */
+    fun requestedLanguage(message: String): String? = when {
+        ASKS_ENGLISH.containsMatchIn(message) -> "English"
+        ASKS_SPANISH.containsMatchIn(message) -> "Spanish"
+        else -> null
+    }
+
+    private val PREVIOUS = Regex(
+        "\\b(tu|tus|su|esa|esta|la|tu [uú]ltima)\\s+(sugerencias?|sujerencias?|respuestas?|propuestas?|ideas?|explicaci[oó]n|recomendaci[oó]n|recomendaciones)\\b" +
+            "|\\blo (anterior|que (dijiste|propusiste|sugeriste|explicaste|acabas de decir))\\b|\\bde (eso|esto)\\b" +
+            "|\\b(your|that|this|the) (suggestion|answer|proposal|idea|explanation|recommendation)s?\\b|\\bwhat you (said|suggested|proposed|just said)\\b|\\bof (that|this)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** True when a message points at the answer just given: "tu sugerencia", "lo anterior", "your answer". */
+    fun refersToPrevious(message: String): Boolean = PREVIOUS.containsMatchIn(message)
+
+    private val META = Regex(
+        "^(el usuario (pregunta|pide|dice|quiere|solicita|ha (preguntado|pedido))|la (pregunta|solicitud|petici[oó]n) (es|del usuario)|" +
+            "dado que la (solicitud|pregunta)|mensaje del usuario|the user (asks|is asking|wants|says|requests|asked)|the (question|request) is|user message)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val ANSWER_LABEL = Regex("^[*_#\\s]*(respuesta|answer|sugerencia|suggestion)[*_\\s]*:[*_\\s]*$", RegexOption.IGNORE_CASE)
+
+    /**
+     * Removes the opening where a small model describes the message instead of answering it:
+     * a first paragraph such as `El usuario pregunta: "…"`, and a bare `**Respuesta:**` line
+     * after it. The reply is returned unchanged if nothing would be left.
+     */
+    fun dropPreamble(reply: String): String {
+        val paragraphs = reply.trim().split(Regex("\n\\s*\n")).toMutableList()
+        if (paragraphs.isEmpty() || !META.containsMatchIn(paragraphs.first().trim().trimStart('*', '_', '>', ' '))) return reply
+        paragraphs.removeAt(0)
+        if (paragraphs.isNotEmpty() && ANSWER_LABEL.matches(paragraphs.first().trim())) paragraphs.removeAt(0)
+        val rest = paragraphs.joinToString("\n\n").trim()
+        return rest.ifEmpty { reply }
+    }
+
     /** The first `# Title` of a reply: the note or topic it wrote. Section headings (`##`) do not count. */
     fun heading(text: String): String? = NoteFormat.titles(text).firstOrNull()
 
@@ -233,13 +276,15 @@ object Assistant {
         memory: Memory = Memory(emptyList(), emptyList(), emptyList()),
         pinned: List<String> = emptyList(),
         past: List<PastMessage> = emptyList(),
+        /** The assistant's last answer in this conversation, for a request that refers to it. */
+        previousAnswer: String? = null,
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
-            built = compose(message, notes, asNote, tags, memory, pinned, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
+            built = compose(message, notes, asNote, tags, memory, pinned, if (withConnected) past else emptyList(), previousAnswer, noteChars, withConnected, withOutline)
             if (fixed + built.length <= INPUT_CHARS) break
         }
         return built
@@ -253,6 +298,7 @@ object Assistant {
         memory: Memory,
         pinned: List<String>,
         past: List<PastMessage>,
+        previousAnswer: String?,
         noteChars: Int,
         withConnected: Boolean,
         withOutline: Boolean,
@@ -295,13 +341,29 @@ object Assistant {
             }
             append('\n')
         }
+        // "Haz una nota de tu sugerencia": the note is about the answer just given. A small model
+        // took the first message of the conversation as the topic instead, so it is spelled out.
+        if (asNote && previousAnswer != null && refersToPrevious(message)) {
+            append("The request below is about your previous answer. Write the note about what that answer says, ")
+            append("with a title that names its topic. Your previous answer was:\n")
+            append(shorten(previousAnswer.trim(), PREVIOUS_CHARS)).append("\n\n")
+        }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(NoteFormat.instructions(message, notes.map { it.title }, tags))
         // Last, because a small model follows the most recent instruction best.
         // Naming the language works where "the language of the message" did not: after a Spanish
         // turn, an English message was answered in Spanish (evaluation case 20).
-        val language = language(message)
-        append("\n\nWrite ").append(if (language != null) "in $language, the language of the message above" else "in the language of the message above")
+        // A language the message asks for by name wins over the language it is written in:
+        // "haz una nota en inglés" was answered in Spanish on 2026-11-14.
+        val asked = requestedLanguage(message)
+        val language = asked ?: language(message)
+        append("\n\nWrite ").append(
+            when {
+                asked != null -> "in $asked, as the message above asks"
+                language != null -> "in $language, the language of the message above"
+                else -> "in the language of the message above"
+            },
+        )
         append(", even if the notes or the earlier messages are in another language.")
     }
 

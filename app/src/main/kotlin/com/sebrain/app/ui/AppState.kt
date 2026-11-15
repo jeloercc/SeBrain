@@ -1055,10 +1055,9 @@ class AppState(private val app: SeBrainApp) {
         transferring = true
         fun say(status: String) {
             editStatus = status
-            if (fromChat) {
-                messages += ChatMessage(false, status)
-                persist(fromUser = false, text = status)
-            }
+            // An action line, not an answer: it is shown but never given back to the model as
+            // something it said, which misled it about what the conversation was about.
+            if (fromChat) messages += ChatMessage(false, status, isAction = true)
         }
         editStatus = "Reviewing the links of every note…"
         thread(name = "vault-links") {
@@ -1222,7 +1221,10 @@ class AppState(private val app: SeBrainApp) {
         app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
-            val prompt = Assistant.prompt(question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty())
+            val prompt = Assistant.prompt(
+                question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty(),
+                previousAnswer = earlier.lastOrNull { !it.fromUser }?.text,
+            )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
                 val limit = if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS
@@ -1278,7 +1280,7 @@ class AppState(private val app: SeBrainApp) {
                         result.isFailure -> (if (visible) messages[index].text else "") + "\n[error: ${result.exceptionOrNull()?.message}]"
                         echoed -> Assistant.ECHO_NOTICE
                         looped -> reply.trimEnd() + "\n\n" + Assistant.LOOP_NOTICE
-                        else -> reply
+                        else -> Assistant.dropPreamble(reply)
                     }
                     val final = Assistant.dropUnknownCitations(body, notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
                     if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
