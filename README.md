@@ -1,6 +1,6 @@
 # SeBrain
 
-SeBrain is a private, local-first second brain for the Google Pixel 10. It combines an
+SeBrain is a private, local-first second brain for the Google Pixel. It combines an
 encrypted Obsidian-style vault with notes, tags, links, semantic search and an on-device
 uncensored AI assistant.
 
