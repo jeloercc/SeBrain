@@ -53,9 +53,12 @@ class VaultContextTest {
             val chunks = db.rawQuery("SELECT text FROM chunk ORDER BY id", emptyArray<String>()).use { c ->
                 generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList()
             }
-            assertTrue(chunks.all { it.startsWith("[") })
-            assertTrue(chunks.any { it.startsWith("[Protocolo SSH · Detalles › Puertos · #redes #seguridad]\n") })
-            assertTrue(chunks.any { it.startsWith("[Café · #habitos]\n") })
+            val heads = chunks.joinToString(" | ") { it.take(70).replace("\n", "⏎") }
+            assertTrue(heads, chunks.all { it.startsWith("[") })
+            // Every heading starts a chunk; its own heading is in its text, the ones above it in its header.
+            assertTrue(heads, chunks.any { it.startsWith("[Protocolo SSH · #redes #seguridad]\n## Detalles") })
+            assertTrue(heads, chunks.any { it.startsWith("[Protocolo SSH · Detalles · #redes #seguridad]\n### Puertos\nEscucha en el 22") })
+            assertTrue(heads, chunks.any { it.startsWith("[Café · #habitos]\n") })
         }
     }
 
@@ -74,15 +77,16 @@ class VaultContextTest {
             val message = "¿qué dice la nota protocolo ssh sobre los puertos?"
             val context = VaultContext.build(db, message, null, message = message)
             val first = context.notes.first()
-            assertTrue(first.focus)
+            assertTrue(context.notes.joinToString { "${it.title} focus=${it.focus}" }, first.focus)
             assertEquals("Protocolo SSH", first.title)
             // The whole note: its first sentence and its last section.
             assertTrue(first.text.contains("Permite administrar otra máquina"))
             assertTrue(first.text.contains("Escucha en el 22 por defecto"))
             assertEquals(1, context.notes.count { it.title == "Protocolo SSH" })
 
-            // A message that names no note has no focused note.
-            assertFalse(VaultContext.build(db, "¿cómo tomo el café por la mañana?", null).notes.any { it.focus })
+            // A message that names no note has no focused note; one that names "Café" does.
+            assertFalse(VaultContext.build(db, "¿cuánto azúcar lleva lo que tomo por la mañana?", null).notes.any { it.focus })
+            assertEquals("Café", VaultContext.build(db, "¿cómo tomo el café?", null).notes.first { it.focus }.title)
         }
     }
 

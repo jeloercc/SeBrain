@@ -84,9 +84,10 @@ class NoteIndexer(
 
         /**
          * The version of what [index] stores for a note. It changes when the stored chunks change
-         * shape, so the app knows to index every note again. 2: chunks carry a header.
+         * shape, so the app knows to index every note again. 2: chunks carry a header. 3: a
+         * heading always starts a new chunk.
          */
-        const val INDEX_VERSION = 2
+        const val INDEX_VERSION = 3
 
         /** See [NoteStore.contentHash]. */
         fun contentHash(text: String, path: String?): String = NoteStore.contentHash(text, path)
