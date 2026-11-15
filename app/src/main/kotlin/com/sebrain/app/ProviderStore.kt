@@ -21,8 +21,15 @@ import org.json.JSONObject
  * ever on disk in plain text, and the file is excluded from backups like the rest of
  * `noBackupFilesDir`. An API key is read only to send a request.
  */
-class ProviderStore(context: Context) {
-    private val file = File(context.noBackupFilesDir, FILE_NAME)
+class ProviderStore(
+    context: Context,
+    fileName: String = FILE_NAME,
+    /** Its own Keystore alias; a test passes another one so the user's providers are not touched. */
+    private val keyAlias: String = KEY_ALIAS,
+) {
+    val alias: String get() = keyAlias
+
+    private val file = File(context.noBackupFilesDir, fileName)
 
     /** A provider and its key, as stored. */
     class Entry(val provider: RemoteProvider, val apiKey: String)
@@ -48,6 +55,12 @@ class ProviderStore(context: Context) {
 
     @Synchronized
     fun remove(id: String) = write(load().filterNot { it.provider.id == id })
+
+    /** Deletes the file and the Keystore key. For tests. */
+    fun deleteEverything() {
+        file.delete()
+        runCatching { KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(keyAlias) }
+    }
 
     private fun load(): List<Entry> {
         if (!file.exists()) return emptyList()
@@ -95,7 +108,7 @@ class ProviderStore(context: Context) {
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as SecretKey?)?.let { return it }
+        (store.getKey(keyAlias, null) as SecretKey?)?.let { return it }
         return try {
             generate(strongBox = true)
         } catch (_: GeneralSecurityException) {
@@ -104,7 +117,7 @@ class ProviderStore(context: Context) {
     }
 
     private fun generate(strongBox: Boolean): SecretKey {
-        val spec = KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        val spec = KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
             .setKeySize(256)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
