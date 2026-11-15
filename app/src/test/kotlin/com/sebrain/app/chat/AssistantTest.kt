@@ -209,6 +209,8 @@ class AssistantTest {
         val prompt = Assistant.prompt("haz una nota en inglés de tu sugerencia", emptyList(), asNote = true, tags = emptyList(), previousAnswer = answer)
         assertTrue(prompt.contains("The request below is about your previous answer."))
         assertTrue(prompt.contains("Your previous answer was:\n$answer\n\nRequest: haz una nota en inglés de tu sugerencia"))
+        assertTrue(prompt.contains("Translate it: every sentence of the note must be in English. Your previous answer was:"))
+        assertFalse(Assistant.prompt("haz una nota de tu sugerencia", emptyList(), asNote = true, tags = emptyList(), previousAnswer = answer).contains("Translate it"))
         // A question, or a note about something else, does not carry it.
         assertFalse(Assistant.prompt("haz una nota sobre TCP", emptyList(), asNote = true, tags = emptyList(), previousAnswer = answer).contains("previous answer"))
         assertFalse(Assistant.prompt("explica tu sugerencia", emptyList(), asNote = false, tags = emptyList(), previousAnswer = answer).contains("Your previous answer was"))

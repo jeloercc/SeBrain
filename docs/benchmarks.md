@@ -820,3 +820,19 @@ recognised as English). Each case ran once per version; the model samples, so a 
 guarantee for every run. Rerun the whole set after any prompt change:
 `am instrument -w -e class com.sebrain.app.AssistantEvalTest com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner`
 (about 15 minutes; keep the USB connection and do not open the app meanwhile).
+
+### A note in English about the previous answer: two models (2026-11-14)
+
+`AssistantPhoneTest#noteOfPreviousAnswer`, one run per model, GPU, same prompt (compact
+system instruction, the previous answer in Spanish carried in the prompt, "perfect haz una
+nota en Ingles de tu sujerencia", with the explicit instruction to translate). The second
+model was chosen with `-e model E4B`; the model selected in the app was not changed.
+
+| Model | Time | Topic | Language | Format |
+| --- | --- | --- | --- | --- |
+| `gemma-4-E2B-it-Uncensored-MAX` | 80 s | Right ("Enhancing Kernel Architecture Interaction") | **Mixed:** English openings, Spanish sentences ("This note outlines how to deepen the discussion regarding la interacción…") | Title, key points, details, tags |
+| `gemma-4-E4B-it-abliterated` | 18 s | Right ("Kernel Architectures Comparison") | English throughout | Title, 4 key points, details, 4 tags, two of them from the tags offered |
+
+Before the translate instruction the E2B model also fell into a loop after 172 s, which
+`LoopGuard` cut. The E2B model wrote about 2 tokens/s in every run of 2026-11-13 and 14; the
+E4B model was about four times faster on the same phone.

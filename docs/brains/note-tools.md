@@ -134,8 +134,12 @@ not run on the phone, which was disconnected again.**
 | That note was about the first message of the chat, not about the suggestion | The request points at the previous answer, and the model picked another topic. The review's report was also stored as something the assistant had said | `Assistant.refersToPrevious`: for a note request that points at the answer just given, the prompt carries that answer and says the note is about it. Tool reports are now action lines, kept out of the model's history |
 | An answer opened with `El usuario pregunta: "…"` and `**Respuesta:**` | The small model describes the message before answering | `Assistant.dropPreamble` removes that opening; the compact instruction also says not to restate the message |
 
-A phone test for the second case exists (`AssistantPhoneTest#noteOfPreviousAnswer`) and has
-not run.
+Run on the phone on 2026-11-14 (`AssistantPhoneTest#noteOfPreviousAnswer`, see
+`benchmarks.md`): with both models the note is now about the previous answer and has the
+format. The language is right with Gemma 4 E4B abliterated and **still mixed with the E2B
+Uncensored MAX model**, even with an explicit instruction to translate; that one is a limit
+of the model, not something the app corrects. The opening-removal and the action-line change
+are unit-tested only.
 
 ## Where the code is
 

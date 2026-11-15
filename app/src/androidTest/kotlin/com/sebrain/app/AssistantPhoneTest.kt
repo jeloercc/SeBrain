@@ -34,7 +34,10 @@ class AssistantPhoneTest {
         val models = chat.languageModels()
         assumeTrue("no language model is installed", models.isNotEmpty())
         val saved = context.getSharedPreferences("sebrain", 0).getString("language_model", null)
-        val model = models.firstOrNull { it.fileName == saved } ?: models.first()
+        // `-e model E4B` runs a test with another installed model, without changing the one chosen in the app.
+        val wanted = InstrumentationRegistry.getArguments().getString("model")
+        val model = models.firstOrNull { wanted != null && it.fileName.contains(wanted, ignoreCase = true) }
+            ?: models.firstOrNull { it.fileName == saved } ?: models.first()
         val start = System.nanoTime()
         chat.load(model)
         log("model=${model.fileName} backend=${chat.backend} load=${(System.nanoTime() - start) / 1_000_000} ms")
@@ -142,7 +145,8 @@ class AssistantPhoneTest {
         val start = System.nanoTime()
         val reply = chat.reply(Assistant.SYSTEM_COMPACT, memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }, prompt, Assistant.NOTE_TOKENS) {}
         log("previous seconds=%.1f language=${Assistant.language(reply.take(600))} looped=${chat.lastLooped}".format((System.nanoTime() - start) / 1e9))
-        log("previous raw=${reply.replace("\n", "⏎").take(900)}")
+        log("previous raw=${reply.replace("\n", "⏎").take(700)}")
+        log("previous end=${reply.replace("\n", "⏎").takeLast(500)}")
         NoteFormat.parse(reply, request).forEach { log("previous note title=\"${it.title}\" tags=${it.tags} body=${it.body.replace("\n", "⏎").take(500)}") }
     }
 

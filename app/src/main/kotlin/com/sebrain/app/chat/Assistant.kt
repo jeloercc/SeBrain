@@ -345,7 +345,10 @@ object Assistant {
         // took the first message of the conversation as the topic instead, so it is spelled out.
         if (asNote && previousAnswer != null && refersToPrevious(message)) {
             append("The request below is about your previous answer. Write the note about what that answer says, ")
-            append("with a title that names its topic. Your previous answer was:\n")
+            append("with a title that names its topic. ")
+            // Given its own words in another language, a small model copies them instead of translating.
+            requestedLanguage(message)?.let { append("Translate it: every sentence of the note must be in $it. ") }
+            append("Your previous answer was:\n")
             append(shorten(previousAnswer.trim(), PREVIOUS_CHARS)).append("\n\n")
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
