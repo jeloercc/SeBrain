@@ -37,9 +37,15 @@ object VaultContext {
         exclude: Collection<String> = emptyList(),
         /** The open conversation, which is not searched: the model already has it. */
         conversationId: Long? = null,
+        /** The user's message as written, to see whether it names a note. */
+        message: String = query,
     ): Result {
         val store = NoteStore(db)
         val excluded = exclude.map { it.lowercase() }.toSet()
+        // "¿Qué dice la nota Protocolo SSH?": the note a message names is read, first and whole.
+        // Search alone may rank it low, or give only one of its chunks.
+        val named = NoteEdits.mentioned(message, store.names().map { it.first to it.third })?.let(store::get)
+            ?.takeIf { it.title.lowercase() !in excluded }
         // Several chunks of one note can match; keep the note once, with its best chunks in order.
         val chunksByNote = LinkedHashMap<Long, MutableList<String>>()
         for (hit in HybridSearch(db).search(query, vector, SEARCH_HITS)) {
@@ -47,8 +53,17 @@ object VaultContext {
         }
         val notes = mutableListOf<ContextNote>()
         val included = HashSet<Long>()
+        if (named != null) {
+            included += named.id
+            notes += ContextNote(
+                1, named.id, named.title, named.tags,
+                store.linkedFrom(named.id).mapNotNull { it.title }, store.backlinks(named.id).mapNotNull { it.title },
+                FrontMatter.body(named.text), focus = true,
+            )
+        }
         for ((id, chunks) in chunksByNote) {
             if (notes.size == MATCHED_NOTES) break
+            if (id in included) continue
             val note = store.get(id) ?: continue
             included += id
             if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue

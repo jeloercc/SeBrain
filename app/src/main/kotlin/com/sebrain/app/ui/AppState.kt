@@ -178,6 +178,7 @@ class AppState(private val app: SeBrainApp) {
 
     fun start() {
         app.onImported = { onMain { refreshNotes() } }
+        reindexIfNeeded()
         app.requestImport()
         migratePins()
         refreshInstalled()
@@ -534,6 +535,22 @@ class AppState(private val app: SeBrainApp) {
      * Notes tagged #memory before 2026-11-12 become pinned notes. Runs once, when the vault
      * can be opened; a failure leaves the flag unset so it is tried again at the next start.
      */
+    /**
+     * Indexes every note again when the shape of the stored chunks has changed (see
+     * [NoteIndexer.INDEX_VERSION]). The notes are only marked here; the import that follows
+     * indexes them in the background, and search by words keeps working meanwhile.
+     */
+    private fun reindexIfNeeded() {
+        val prefs = app.getSharedPreferences(PREFS, 0)
+        if (prefs.getInt(PREF_INDEX_VERSION, 1) >= NoteIndexer.INDEX_VERSION) return
+        app.vault({ db -> CaptureStore(db).markAllPending() }) { result ->
+            result.onSuccess {
+                prefs.edit().putInt(PREF_INDEX_VERSION, NoteIndexer.INDEX_VERSION).apply()
+                app.requestImport()
+            }
+        }
+    }
+
     private fun migratePins() {
         val prefs = app.getSharedPreferences(PREFS, 0)
         if (prefs.getBoolean(PREF_PINS_MIGRATED, false)) return
@@ -1218,7 +1235,7 @@ class AppState(private val app: SeBrainApp) {
         val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
         val open = storedConversation
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open) }) { found ->
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
             val prompt = Assistant.prompt(
@@ -1434,6 +1451,7 @@ class AppState(private val app: SeBrainApp) {
         const val PREF_MODEL = "language_model"
         const val PREF_PINS_MIGRATED = "pins_migrated"
         const val PREF_COMPACT = "compact_prompt_models"
+        const val PREF_INDEX_VERSION = "index_version"
         const val IMPORT_BATCH = 20
         const val EMBED_CHARS = 1500
         const val RELATED_RANK = 5

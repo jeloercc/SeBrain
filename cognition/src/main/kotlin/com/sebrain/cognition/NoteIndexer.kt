@@ -19,9 +19,18 @@ class NoteIndexer(
 
     /** Rebuilds the index of one note. Call it inside a transaction with the write that changed the text. */
     fun index(db: SQLiteDatabase, id: Long, text: String, subject: String? = null) {
-        val chunks = Chunker.chunk(text)
-        ChunkStore(db).index(id, chunks, embedOrNull(chunks.map { it.text }))
+        // The markup comes first: the chunk headers use the note's stored title.
         markup(db, id, text, subject)
+        val parsed = NoteMarkup.parse(text)
+        val title = NoteStore(db).get(id)?.title?.takeIf { it.isNotBlank() } ?: NoteMarkup.titleOf(text, subject)
+        // "pinned" says how the assistant treats the note, not what the note is about.
+        val tags = parsed.tags.filter { it != PINNED_TAG }
+        // Each chunk is stored, searched and embedded with its header (see ChunkHeader), so it is
+        // found by its note's title and section, and whoever reads it knows where it is from.
+        val chunks = Chunker.chunk(text).map { chunk ->
+            chunk.copy(text = ChunkHeader.of(text, title, parsed.aliases, tags, chunk.startOffset) + "\n" + chunk.text)
+        }
+        ChunkStore(db).index(id, chunks, embedOrNull(chunks.map { it.text }))
     }
 
     /** Reads the title, tags, links, aliases and properties of a note, without touching its search chunks. */
@@ -71,6 +80,13 @@ class NoteIndexer(
 
     companion object {
         private val STRUCTURAL = setOf("tags", "tag", "aliases", "alias")
+        private const val PINNED_TAG = "pinned"
+
+        /**
+         * The version of what [index] stores for a note. It changes when the stored chunks change
+         * shape, so the app knows to index every note again. 2: chunks carry a header.
+         */
+        const val INDEX_VERSION = 2
 
         /** See [NoteStore.contentHash]. */
         fun contentHash(text: String, path: String?): String = NoteStore.contentHash(text, path)

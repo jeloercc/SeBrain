@@ -13,6 +13,8 @@ data class ContextNote(
     val linkedFrom: List<String>,
     val text: String,
     val via: String? = null,
+    /** True for the note the message names. It is given whole, whatever else has to be cut. */
+    val focus: Boolean = false,
 )
 
 /** A message from another saved conversation that matches the current one. */
@@ -91,6 +93,9 @@ object Assistant {
 
     /** Context budget, so the prompt stays well inside the model's context window. */
     const val NOTE_CHARS = 900
+
+    /** The note a message names is read whole up to this size, about 850 tokens of the 4096. */
+    const val FOCUS_CHARS = 3000
     const val CONNECTED_CHARS = 280
 
     /**
@@ -372,6 +377,7 @@ object Assistant {
 
     fun render(note: ContextNote, chars: Int): String = buildString {
         append('[').append(note.number).append("] ").append(note.title.ifBlank { "Untitled" })
+        if (note.focus) append(" (the note the message names, in full)")
         note.via?.let { append(" (").append(it).append(')') }
         val facts = listOfNotNull(
             note.tags.takeIf { it.isNotEmpty() }?.joinToString(" ", prefix = "Tags: ") { "#$it" },
@@ -379,7 +385,7 @@ object Assistant {
             note.linkedFrom.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Linked from: "),
         )
         if (facts.isNotEmpty()) append('\n').append(facts.joinToString(" · "))
-        append('\n').append(shorten(stripHeading(note.text, note.title), chars))
+        append('\n').append(shorten(stripHeading(note.text, note.title), if (note.focus) maxOf(chars, FOCUS_CHARS) else chars))
     }
 
     /**

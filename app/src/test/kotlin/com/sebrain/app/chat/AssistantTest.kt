@@ -225,4 +225,17 @@ class AssistantTest {
         assertEquals("Los kernels pueden ser monolíticos.", Assistant.dropPreamble("Los kernels pueden ser monolíticos."))
         assertEquals("El usuario pregunta por kernels.", Assistant.dropPreamble("El usuario pregunta por kernels."))
     }
+
+    @Test
+    fun theNoteAMessageNamesIsGivenWholeWhenOthersAreCut() {
+        val long = "frase de la nota. ".repeat(150)
+        val named = ContextNote(1, 1, "Protocolo SSH", emptyList(), emptyList(), emptyList(), long, focus = true)
+        val other = ContextNote(2, 2, "Otra", emptyList(), emptyList(), emptyList(), long)
+        val prompt = Assistant.prompt("¿qué dice la nota Protocolo SSH?", listOf(named, other), asNote = false, tags = emptyList())
+        assertTrue(prompt.contains("[1] Protocolo SSH (the note the message names, in full)"))
+        val first = prompt.substringAfter("[1] ").substringBefore("[2] ")
+        val second = prompt.substringAfter("[2] ").substringBefore("Message:")
+        assertTrue(first.length > 2500)
+        assertTrue(second.length < 1000)
+    }
 }
