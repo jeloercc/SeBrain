@@ -2,8 +2,6 @@ package com.sebrain.app.ui
 
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -11,10 +9,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.sebrain.app.GenerationService
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
+import com.sebrain.app.chat.Assistant
+import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.NoteEdits
+import com.sebrain.app.chat.NoteFormat
+import com.sebrain.app.chat.Pins
+import com.sebrain.app.chat.VaultContext
+import com.sebrain.core.ml.ChatEngine
+import com.sebrain.core.vault.ConversationStore
+import com.sebrain.core.vault.ConversationSummary
+import com.sebrain.app.privacy.AppPrivacy
+import com.sebrain.app.privacy.DexTrackerScanner
+import com.sebrain.app.privacy.PrivacyAudit
 import com.sebrain.cognition.NoteIndexer
+import com.sebrain.cognition.FrontMatter
 import com.sebrain.cognition.MarkdownInterop
+import com.sebrain.cognition.NoteMarkup
+import com.sebrain.cognition.NoteSections
+import com.sebrain.app.VaultFolder
+import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.ml.KnownModel
 import com.sebrain.core.net.HubFile
 import com.sebrain.core.net.HubModel
@@ -31,10 +47,8 @@ import com.sebrain.core.vault.VaultSession
 import com.sebrain.core.crypto.BackupMetadata
 import com.sebrain.core.crypto.EncryptedBackupCodec
 import com.sebrain.core.crypto.WrappedDekStore
-import com.sebrain.ingest.IntegrationPolicyStore
 import com.sebrain.ingest.BrainStore
 import com.sebrain.ingest.MiniBrain
-import com.sebrain.ingest.NotificationCaptureService
 import java.time.Instant
 import java.time.ZoneId
 import java.nio.charset.StandardCharsets
@@ -43,13 +57,22 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
-class NoteDetail(val note: Note, val linksTo: List<CaptureSummary>, val linkedFrom: List<CaptureSummary>)
+class NoteDetail(
+    val note: Note,
+    val linksTo: List<CaptureSummary>,
+    val linkedFrom: List<CaptureSummary>,
+    /** Notes that name this one without linking to it. */
+    val mentions: List<CaptureSummary> = emptyList(),
+    /** The text of each note or section this note embeds, by [NoteSections.embedKey]. */
+    val embeds: Map<String, String> = emptyMap(),
+    /** Why the note's properties could not be read in full, if they could not. */
+    val problem: String? = null,
+)
 
 /** [id] is null for a new note. */
 class NoteDraft(val id: Long?, val text: String)
 
 data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false, val saved: Boolean = false)
-data class IntegrationApp(val packageName: String, val label: String)
 
 /**
  * Everything the screens show and do. State is only changed on the main thread; vault, model
@@ -57,7 +80,9 @@ data class IntegrationApp(val packageName: String, val label: String)
  */
 class AppState(private val app: SeBrainApp) {
     private val main = Handler(Looper.getMainLooper())
-    private fun onMain(block: () -> Unit) = main.post(block)
+    private fun onMain(block: () -> Unit) {
+        main.post(block)
+    }
 
     // ---- Notes ----
     var query by mutableStateOf("")
@@ -89,11 +114,12 @@ class AppState(private val app: SeBrainApp) {
         private set
     var brainName by mutableStateOf("")
     var brainSources by mutableStateOf(emptySet<String>())
-    var integrationApps by mutableStateOf(emptyList<IntegrationApp>())
+    var privacyApps by mutableStateOf(emptyList<AppPrivacy>())
         private set
-    var notificationPackages by mutableStateOf(emptySet<String>())
+    var usageAccess by mutableStateOf(false)
         private set
-    var notificationAccessEnabled by mutableStateOf(false)
+    /** "12 / 80" while the tracker scan runs, null otherwise. */
+    var scanProgress by mutableStateOf<String?>(null)
         private set
     var backupStatus by mutableStateOf<String?>(null)
         private set
@@ -153,8 +179,19 @@ class AppState(private val app: SeBrainApp) {
     fun start() {
         app.onImported = { onMain { refreshNotes() } }
         app.requestImport()
+        migratePins()
         refreshInstalled()
-        refreshIntegrations()
+        refreshPrivacy()
+        loadConversations()
+        started = true
+        main.removeCallbacks(releaseModel)
+        GenerationService.clearDone(app)
+        GenerationService.onScreenOff = { stopGenerating() }
+        // A reply still being written kept its messages on screen; otherwise reload them.
+        unsavedReply?.let { unsavedReply = null; persist(fromUser = false, text = it) }
+        if (!generating) conversationId?.let(::openConversation)
+        // Load the model now, so it is ready by the time the user opens the chat.
+        if (installed.any { !it.fileName.contains("embedding", ignoreCase = true) }) ensureModel()
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -162,6 +199,10 @@ class AppState(private val app: SeBrainApp) {
         app.onImported = null
         notes = emptyList()
         tags = emptyList()
+        folders = emptyList()
+        proposalQueue.clear()
+        proposalsLeft = 0
+        proposal = null
         detail = null
         draft = null
         graph = null
@@ -169,13 +210,37 @@ class AppState(private val app: SeBrainApp) {
         graphFilterSources = null
         brains = emptyList()
         selectedBrain = null
-        messages.clear()
-        app.chat.cancel()
-        chatWorker.execute {
-            app.chat.close()
-            onMain { currentModel = null; modelBackend = null }
+        conversations = emptyList()
+        started = false
+        // A reply in progress keeps running behind GenerationService, and its messages stay
+        // until it ends. The model stays loaded for a while, so coming back does not reload it.
+        if (!generating) {
+            messages.clear()
+            main.postDelayed(releaseModel, MODEL_IDLE_MS)
         }
         app.releaseModels()
+    }
+
+    /** True between onStart and onStop. */
+    private var started = false
+
+    /** Frees the language model after the app has been off screen for [MODEL_IDLE_MS]. */
+    private val releaseModel = Runnable {
+        if (started || generating) return@Runnable
+        chatWorker.execute {
+            app.chat.close()
+            onMain {
+                currentModel = null
+                modelBackend = null
+                if (started) ensureModel()
+            }
+        }
+    }
+
+    private fun markGenerating(value: Boolean) {
+        if (generating == value) return
+        generating = value
+        if (value) GenerationService.start(app) else GenerationService.stop(app)
     }
 
     fun search(text: String) {
@@ -185,13 +250,31 @@ class AppState(private val app: SeBrainApp) {
 
     fun selectTag(tag: String?) {
         selectedTag = tag
+        selectedFolder = null
         query = ""
         refreshNotes()
     }
 
+    /** Folders that hold notes, with how many each holds, subfolders included. */
+    var folders by mutableStateOf(emptyList<Pair<String, Int>>())
+        private set
+    var selectedFolder by mutableStateOf<String?>(null)
+        private set
+
+    fun selectFolder(folder: String?) {
+        selectedFolder = folder
+        selectedTag = null
+        query = ""
+        refreshNotes()
+    }
+
+    /** Set on the vault thread by [refreshNotes], read on the main thread right after. */
+    @Volatile private var loadedFolders = emptyList<Pair<String, Int>>()
+
     fun refreshNotes() {
         val wanted = query.trim()
         val tag = selectedTag
+        val folder = selectedFolder
         app.search(wanted, { db, vector ->
             val captures = CaptureStore(db)
             val store = NoteStore(db)
@@ -199,18 +282,20 @@ class AppState(private val app: SeBrainApp) {
                 wanted.isNotEmpty() ->
                     HybridSearch(db).search(wanted, vector, LIMIT).mapNotNull { captures.summaryOf(it.captureId) }.distinctBy { it.id }
                 tag != null -> store.withTag(tag, LIMIT)
+                folder != null -> store.inFolder(folder, LIMIT)
                 else -> captures.recent(LIMIT)
             }
-
+            loadedFolders = store.folders()
             Triple(captures.count(), found, store.tags())
         }) { result ->
             onMain {
                 // A slower, older query must not replace the results of a newer one.
-                if (wanted != query.trim() || tag != selectedTag) return@onMain
+                if (wanted != query.trim() || tag != selectedTag || folder != selectedFolder) return@onMain
                 result.onSuccess { (count, found, allTags) ->
                     noteCount = count
                     notes = found
                     tags = allTags
+                    folders = loadedFolders
                     vaultProblem = null
                 }.onFailure {
                     notes = emptyList()
@@ -222,36 +307,65 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
-    fun refreshIntegrations() {
-        chatWorker.execute {
-            val packageManager = app.packageManager
-            val apps = packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-                .asSequence()
-                .filter { it.packageName != app.packageName }
-                .map {
-                    IntegrationApp(
-                        packageName = it.packageName,
-                        label = packageManager.getApplicationLabel(it).toString(),
-                    )
-                }
+    private val privacyAudit by lazy { PrivacyAudit(app) }
+    @Volatile private var scanning = false
 
-                .sortedBy { it.label.lowercase() }
-                .toList()
-            val policy = runCatching { IntegrationPolicyStore(app).load() }
-                .getOrElse { com.sebrain.ingest.IntegrationPolicy.denyAll() }
+    fun refreshPrivacy() {
+        thread(name = "privacy-audit") {
+            val access = privacyAudit.hasUsageAccess()
+            val apps = runCatching { sortPrivacy(privacyAudit.listApps()) }.getOrElse { emptyList() }
             val savedBrains = runCatching { BrainStore(app).load() }.getOrElse { emptyList() }
-            val enabledPackages = NotificationManagerCompat.getEnabledListenerPackages(app)
             onMain {
-                integrationApps = apps
-                notificationPackages = policy.packages()
+                usageAccess = access
+                if (!scanning) privacyApps = apps
                 brains = savedBrains
-                notificationAccessEnabled = app.packageName in enabledPackages
             }
-            app.vault({ db -> CaptureStore(db).sources() }) { result ->
-                onMain { graphSources = result.getOrDefault(emptyList()) }
+        }
+        app.vault({ db -> CaptureStore(db).sources() }) { result ->
+            onMain { graphSources = result.getOrDefault(emptyList()) }
+        }
+    }
+
+    /** Scans every listed app's APK for trackers, one at a time, off the main thread. */
+    fun scanTrackers() {
+        if (scanning) return
+        val apps = privacyApps
+        if (apps.isEmpty()) return
+        scanning = true
+        scanProgress = "0 / ${apps.size}"
+        thread(name = "tracker-scan", priority = Thread.MIN_PRIORITY) {
+            val scanner = DexTrackerScanner()
+            try {
+                apps.forEachIndexed { index, target ->
+                    val trackers = runCatching { privacyAudit.scanTrackers(target, scanner) }.getOrElse { emptyList() }
+                    onMain {
+                        privacyApps = privacyApps.map {
+                            if (it.packageName == target.packageName) it.copy(trackers = trackers) else it
+                        }
+                        scanProgress = "${index + 1} / ${apps.size}"
+                    }
+                }
+            } finally {
+                onMain {
+                    scanning = false
+                    scanProgress = null
+                    privacyApps = sortPrivacy(privacyApps)
+                }
             }
         }
     }
+
+    fun openUsageAccessSettings() = app.startActivity(privacyAudit.usageAccessSettings())
+
+    fun openAppSettings(packageName: String) = app.startActivity(privacyAudit.appSettings(packageName))
+
+    /** Most exposed first: trackers, then sensitive permissions, then data use. */
+    private fun sortPrivacy(apps: List<AppPrivacy>) = apps.sortedWith(
+        compareByDescending<AppPrivacy> { it.trackers?.size ?: 0 }
+            .thenByDescending { it.sensitive.size }
+            .thenByDescending { it.bytes ?: 0L }
+            .thenBy { it.label.lowercase() },
+    )
 
     fun exportBackup(uri: Uri, passphrase: CharArray) {
         app.background({
@@ -313,27 +427,39 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
-    fun setNotificationPackageEnabled(packageName: String, enabled: Boolean) {
-        val updated = notificationPackages.toMutableSet().apply {
-            if (enabled) add(packageName) else remove(packageName)
-        }.toSet()
-        notificationPackages = updated
-        chatWorker.execute {
-            val policy = com.sebrain.ingest.IntegrationPolicy.fromPackages(updated)
-            IntegrationPolicyStore(app).save(policy)
-            NotificationCaptureService.configurePolicy(updated)
-        }
-    }
-
-    fun openNotificationSettings() {
-        app.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-
     fun open(id: Long) {
         app.vault({ db ->
             val store = NoteStore(db)
-            store.get(id)?.let { NoteDetail(it, store.linkedFrom(id), store.backlinks(id)) }
+            store.get(id)?.let { note ->
+                val parsed = NoteMarkup.parse(note.text)
+                // An embedded note is read here, off the main thread, and only one level deep.
+                val embeds = parsed.linkDetails.filter { it.embed }.mapNotNull { link ->
+                    val text = store.findByTitle(link.target)?.let(store::get)?.let { NoteSections.extract(it.text, link.anchor) }
+                    text?.let { NoteSections.embedKey(link.target, link.anchor) to Assistant.shorten(it, EMBED_CHARS) }
+                }.toMap()
+                NoteDetail(note, store.linkedFrom(id), store.backlinks(id), store.unlinkedMentions(id), embeds, parsed.problem)
+            }
         }) { result -> onMain { detail = result.getOrNull() } }
+    }
+
+    /** Turns the first mention of the open note inside the note [sourceId] into a link to it. */
+    fun linkMention(sourceId: Long) {
+        val target = detail?.note ?: return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            val source = store.get(sourceId) ?: return@vault false
+            val text = NoteSections.linkMention(source.text, target.title, listOf(target.title) + target.aliases) ?: return@vault false
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(sourceId, text, NoteIndexer.sha256Hex(text), now)
+                if (changed) app.indexer.index(db, sourceId, text)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { onMain { open(target.id) } }
     }
 
     fun openByTitle(title: String) {
@@ -374,6 +500,65 @@ class AppState(private val app: SeBrainApp) {
                     if (detail != null) open(id)
                 }
                 onDone(id != null)
+            }
+        }
+    }
+
+    /** Pins or unpins a note: the assistant reads pinned notes in every prompt. */
+    fun togglePinned(id: Long) {
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            val note = store.get(id) ?: return@vault false
+            val text = if (Pins.isPinned(note.text)) Pins.unpin(note.text) else Pins.pin(note.text)
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(id, text, NoteIndexer.sha256Hex(text), now)
+                if (changed) app.indexer.index(db, id, text)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                if (result.getOrDefault(false)) {
+                    refreshNotes()
+                    if (detail?.note?.id == id) open(id)
+                }
+            }
+        }
+    }
+
+    /**
+     * Notes tagged #memory before 2026-11-12 become pinned notes. Runs once, when the vault
+     * can be opened; a failure leaves the flag unset so it is tried again at the next start.
+     */
+    private fun migratePins() {
+        val prefs = app.getSharedPreferences(PREFS, 0)
+        if (prefs.getBoolean(PREF_PINS_MIGRATED, false)) return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            db.beginTransaction()
+            try {
+                var changed = 0
+                for (summary in store.withTag(Pins.LEGACY_TAG, LIMIT)) {
+                    val text = Pins.migrate(summary.text) ?: continue
+                    if (store.updateText(summary.id, text, NoteIndexer.sha256Hex(text), now)) {
+                        app.indexer.index(db, summary.id, text)
+                        changed++
+                    }
+                }
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            result.onSuccess {
+                prefs.edit().putBoolean(PREF_PINS_MIGRATED, true).apply()
+                if (it > 0) onMain { refreshNotes() }
             }
         }
     }
@@ -430,6 +615,124 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    /** What a vault import or export is doing, or its report when it ends. */
+    var vaultTransfer by mutableStateOf<String?>(null)
+        private set
+    @Volatile private var transferring = false
+
+    /** Runs [block] on the vault thread and waits for it, so a long job can go in small steps. */
+    private fun <T> vaultStep(block: (net.zetetic.database.sqlcipher.SQLiteDatabase) -> T): Result<T> {
+        val done = java.util.concurrent.CountDownLatch(1)
+        var outcome: Result<T>? = null
+        app.vault(block) { outcome = it; done.countDown() }
+        done.await()
+        return outcome!!
+    }
+
+    /**
+     * Imports an Obsidian vault folder: every Markdown file becomes a note with its path, its
+     * properties, tags and links. A file whose path is already in the vault updates that note.
+     * It runs in small batches so search and the chat keep working meanwhile.
+     */
+    fun importVault(tree: Uri) {
+        if (transferring) return
+        transferring = true
+        vaultTransfer = "Reading the folder…"
+        thread(name = "vault-import") {
+            var created = 0; var updated = 0; var unchanged = 0; var unreadable = 0; var problems = 0
+            val report = runCatching {
+                val folder = VaultFolder(app.contentResolver, tree)
+                val listing = folder.list()
+                val zone = ZoneId.systemDefault().id
+                listing.notes.chunked(IMPORT_BATCH).forEachIndexed { batch, files ->
+                    onMain { vaultTransfer = "Importing ${batch * IMPORT_BATCH} of ${listing.notes.size} notes…" }
+                    val texts = files.map { it to folder.read(it) }
+                    unreadable += texts.count { it.second == null }
+                    val now = Instant.now().toString()
+                    vaultStep { db ->
+                        db.beginTransaction()
+                        try {
+                            val store = NoteStore(db)
+                            for ((file, text) in texts) {
+                                if (text == null) continue
+                                val path = MarkdownInterop.notePath(file.relative) ?: continue
+                                val subject = path.substringAfterLast('/')
+                                if (NoteMarkup.parse(text).problem != null) problems++
+                                val existing = store.idAtPath(path)
+                                if (existing != null) {
+                                    if (store.get(existing)?.text == text) {
+                                        unchanged++
+                                    } else if (store.updateText(existing, text, NoteIndexer.sha256Hex(text), now)) {
+                                        app.indexer.index(db, existing, text, subject)
+                                        updated++
+                                    }
+                                    continue
+                                }
+                                val id = CaptureStore(db).insertReturningId(
+                                    CaptureRecord(UUID.randomUUID(), NoteStore.contentHash(text, path), now, zone, NoteStore.SOURCE_VAULT, subject, text),
+                                ) ?: continue
+                                store.setPath(id, path)
+                                app.indexer.index(db, id, text, subject)
+                                created++
+                            }
+                            db.setTransactionSuccessful()
+                        } finally {
+                            db.endTransaction()
+                        }
+                    }.getOrThrow()
+                }
+                buildString {
+                    append("Imported $created notes")
+                    if (updated > 0) append(", updated $updated")
+                    if (unchanged > 0) append(", $unchanged unchanged")
+                    if (unreadable > 0) append(" · $unreadable could not be read or are over 2 MB")
+                    if (listing.ignored > 0) append(" · ${listing.ignored} other files ignored (attachments are not imported)")
+                    if (problems > 0) append(" · $problems with properties that could not be read in full")
+                }
+            }.getOrElse { "Import stopped after $created notes: ${it.message ?: it.javaClass.simpleName}" }
+            transferring = false
+            onMain {
+                vaultTransfer = report
+                refreshNotes()
+                loadGraph()
+            }
+        }
+    }
+
+    /** Writes every note as a Markdown file under [tree], in its folder. The files are plain text. */
+    fun exportVault(tree: Uri) {
+        if (transferring) return
+        transferring = true
+        vaultTransfer = "Exporting…"
+        thread(name = "vault-export") {
+            var written = 0; var failed = 0
+            val report = runCatching {
+                val folder = VaultFolder(app.contentResolver, tree)
+                val used = HashSet<String>()
+                var after = 0L
+                while (true) {
+                    val notes = vaultStep { db -> NoteStore(db).page(after, IMPORT_BATCH) }.getOrThrow()
+                    if (notes.isEmpty()) break
+                    after = notes.last().id
+                    for (note in notes) {
+                        var parts = MarkdownInterop.exportFile(note.path, note.title)
+                        // Two notes without a path can share a title; the second gets a number.
+                        var n = 2
+                        while (!used.add(parts.joinToString("/").lowercase())) {
+                            parts = parts.dropLast(1) + (parts.last().removeSuffix(".md") + " ($n).md")
+                            n++
+                        }
+                        if (folder.write(parts, note.text)) written++ else failed++
+                    }
+                    onMain { vaultTransfer = "Exported $written notes…" }
+                }
+                "Exported $written notes as plain Markdown" + if (failed > 0) " · $failed could not be written" else ""
+            }.getOrElse { "Export stopped after $written notes: ${it.message ?: it.javaClass.simpleName}" }
+            transferring = false
+            onMain { vaultTransfer = report }
+        }
+    }
+
     // ---- Chat ----
     private val chatWorker = Executors.newSingleThreadExecutor()
     private val tools = NoteTools(app.session, app.indexer) { action -> onMain { messages += ChatMessage(false, action, isAction = true) } }
@@ -449,6 +752,16 @@ class AppState(private val app: SeBrainApp) {
         private set
     var chatProblem by mutableStateOf<String?>(null)
         private set
+    var conversations by mutableStateOf(emptyList<ConversationSummary>())
+        private set
+
+    /** The open conversation, or null for a new one that has no message yet. Kept across onStop. */
+    var conversationId by mutableStateOf<Long?>(null)
+        private set
+
+    /** Written on the vault thread when a conversation is created, so later writes find it. */
+    @Volatile private var storedConversation: Long? = null
+    @Volatile private var stopRequested = false
 
     /** Loads [choice], or the model used last, or the first installed one. Does nothing if it is already loaded. */
     fun ensureModel(choice: KnownModel? = null) {
@@ -462,7 +775,6 @@ class AppState(private val app: SeBrainApp) {
                 val model = choice ?: models.firstOrNull { it.fileName == saved } ?: models.firstOrNull()
                 if (model != null) {
                     app.chat.load(model)
-                    app.chat.startConversation(SYSTEM)
                     app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, model.fileName).apply()
                 }
                 models to model
@@ -474,99 +786,556 @@ class AppState(private val app: SeBrainApp) {
                     currentModel = model
                     modelBackend = app.chat.backend
                     canAct = model != null
-                    if (model == null) chatProblem = "No language model is installed. Download one in Models."
+                    if (model == null) {
+                        chatProblem = "No language model is installed. Download one in Models."
+                        markGenerating(false)
+                    }
                     pendingQuestion?.let { pendingQuestion = null; if (model != null) generate(it) }
                 }.onFailure {
                     currentModel = null
                     chatProblem = "The model could not be loaded: ${it.message}"
                     pendingQuestion = null
+                    markGenerating(false)
                 }
             }
         }
     }
 
-    /** Sends a question. If the model is still loading, it is answered as soon as it is ready. */
+    /** What the Chats panel is filtered by; blank lists every conversation. */
+    var conversationQuery by mutableStateOf("")
+        private set
+
+    fun loadConversations() = searchConversations(conversationQuery)
+
+    /** Lists the conversations, or with [words] the ones that have a matching message. */
+    fun searchConversations(words: String) {
+        conversationQuery = words
+        val wanted = words.trim()
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            if (wanted.isEmpty()) store.list() else store.searchConversations(wanted)
+        }) { result ->
+            onMain { if (wanted == conversationQuery.trim()) conversations = result.getOrDefault(emptyList()) }
+        }
+    }
+
+    /** Shows a saved conversation; the next message continues it. */
+    fun openConversation(id: Long) {
+        if (generating) return
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            store.messages(id) to store.summary(id)
+        }) { result ->
+            onMain {
+                result.onSuccess { (stored, saved) ->
+                    storedConversation = id
+                    conversationId = id
+                    summary = saved?.first
+                    summarized = saved?.second ?: 0
+                    messages.clear()
+                    messages += stored.map { ChatMessage(it.fromUser, it.text) }
+                }
+            }
+        }
+    }
+
+    /** The model's summary of the first [summarized] messages of the open conversation. */
+    private var summary: String? = null
+    private var summarized = 0
+    @Volatile private var summarizing = false
+
+    /** The stored messages of the open conversation, as the model's memory sees them. */
+    private fun lines(): List<Assistant.Line> =
+        messages.filter { !it.isAction && it.text.isNotBlank() }.map { Assistant.Line(it.fromUser, it.text) }
+
+    /**
+     * Summarizes the oldest part of a long conversation, after a reply and off the main thread.
+     * It is cancelled if the user sends a message meanwhile, and tried again after the next reply.
+     */
+    private fun summarizeIfDue() {
+        val conversation = storedConversation ?: return
+        val all = lines()
+        val covered = Assistant.summaryDue(all, summarized) ?: return
+        val request = Assistant.summaryRequest(summary, all.subList(summarized, covered))
+        summarizing = true
+        chatWorker.execute {
+            if (!summarizing) return@execute
+            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request, Assistant.SUMMARY_TOKENS) {} }.getOrNull()?.trim()
+            val finished = summarizing
+            summarizing = false
+            // A cancelled summary is partial text; it is dropped.
+            if (!finished || text.isNullOrBlank()) return@execute
+            app.vault({ db -> ConversationStore(db).setSummary(conversation, text, covered) }) { stored ->
+                onMain {
+                    if (stored.getOrDefault(false) && storedConversation == conversation) {
+                        summary = text
+                        summarized = covered
+                    }
+                }
+            }
+        }
+    }
+
+    fun newConversation() {
+        if (generating) return
+        storedConversation = null
+        conversationId = null
+        summary = null
+        summarized = 0
+        messages.clear()
+    }
+
+    fun deleteConversation(id: Long) {
+        if (generating) return
+        if (id == conversationId) newConversation()
+        app.vault({ db -> ConversationStore(db).delete(id) }) { loadConversations() }
+    }
+
+    /** Sends a message. If the model is still loading, it is answered as soon as it is ready. */
     fun ask(question: String) {
-        if (question.isBlank() || generating) return
-        messages += ChatMessage(true, question.trim())
+        val text = question.trim()
+        if (text.isEmpty() || generating) return
+        if (summarizing) {
+            // The user comes first: drop the summary being written and answer.
+            summarizing = false
+            app.chat.cancel()
+        }
+        messages += ChatMessage(true, text)
+        persist(fromUser = true, text = text)
+        // "Revisa conceptos no enlazados en todas nuestras notas": a review of the whole vault.
+        if (NoteEdits.wantsVaultReview(text)) {
+            reviewVaultLinks(fromChat = true)
+            return
+        }
+        // "Corrige la nota X": a tool on an existing note, if the message names one.
+        val tool = NoteEdits.kindOf(text)
+        if (tool != null) {
+            app.vault({ db -> NoteEdits.mentioned(text, NoteStore(db).names().map { it.first to it.third }) }) { found ->
+                onMain {
+                    val id = found.getOrNull()
+                    if (id != null) proposeEdit(id, tool, text, fromChat = true) else answer(text)
+                }
+            }
+            return
+        }
+        answer(text)
+    }
+
+    /** Answers a message that is already in the conversation. */
+    private fun answer(text: String) {
+        if (generating) return
+        markGenerating(true)
+        stopRequested = false
         if (currentModel == null) {
-            pendingQuestion = question.trim()
+            pendingQuestion = text
             ensureModel()
         } else {
-            generate(question.trim())
+            generate(text)
         }
     }
 
-    private class Source(val title: String, val text: String)
+    /** Models that write the long system instruction back; they get the compact one. Kept across starts. */
+    private fun compactModels(): Set<String> = app.getSharedPreferences(PREFS, 0).getStringSet(PREF_COMPACT, emptySet()).orEmpty()
+
+    private fun rememberCompact(model: String) {
+        if (model.isEmpty()) return
+        val prefs = app.getSharedPreferences(PREFS, 0)
+        prefs.edit().putStringSet(PREF_COMPACT, compactModels() + model).apply()
+    }
+
+    /**
+     * How fast the loaded model writes, in tokens per second, taken from its last replies. It
+     * starts at the speed measured for the first model and follows whatever model is loaded.
+     */
+    @Volatile private var writingSpeed = 7.5
+
+    /** Runs a model call and updates [writingSpeed] from how long its reply took. */
+    private fun timed(call: () -> String): String {
+        val start = System.nanoTime()
+        val reply = call()
+        val seconds = (System.nanoTime() - start) / 1e9
+        val tokens = reply.length / 3.6
+        // Short replies are mostly waiting for the first token; they say little about speed.
+        if (tokens >= 20 && seconds > 1) writingSpeed = (writingSpeed + tokens / seconds) / 2
+        return reply
+    }
+
+    // ---- Tools on an existing note ----
+
+    /** A change to a note that waits for the user: nothing is written until it is applied. */
+    class NoteProposal(
+        val noteId: Long,
+        val title: String,
+        val kind: NoteEdits.Kind,
+        val before: String,
+        val after: String,
+        val warnings: List<String>,
+        val changes: List<Pair<NoteEdits.Change, String>>,
+    )
+
+    var proposal by mutableStateOf<NoteProposal?>(null)
+        private set
+
+    /** What a tool is doing, or why it produced nothing. */
+    var editStatus by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Runs a tool on a note and shows its result as a proposal. Linking uses retrieval and no
+     * language model; the others make one model call, short for a fix or tags, as long as the
+     * note for a rewrite.
+     */
+    fun proposeEdit(noteId: Long, kind: NoteEdits.Kind, instruction: String = "", fromChat: Boolean = false) {
+        if (generating) return
+        fun say(status: String) {
+            editStatus = status
+            if (fromChat) messages += ChatMessage(false, status, isAction = true)
+        }
+        if (kind.usesModel && currentModel == null) return say("The model is still loading. Try again in a moment.")
+        app.vault({ db -> NoteStore(db).get(noteId) }) { loaded ->
+            val note = loaded.getOrNull() ?: return@vault onMain { say("That note could not be opened.") }
+            val body = FrontMatter.body(note.text)
+            if (kind == NoteEdits.Kind.LINK) return@vault proposeLinks(note, body, ::say)
+            val limit = if (kind == NoteEdits.Kind.IMPROVE || kind == NoteEdits.Kind.EDIT) NoteEdits.MAX_CHARS else NoteEdits.MAX_CHARS * 2
+            if (body.length > limit) {
+                return@vault onMain { say("\"${note.title}\" is too long for the phone model to ${kind.label.lowercase()} (${body.length} characters, limit $limit).") }
+            }
+            val tags = if (kind == NoteEdits.Kind.TAGS) runCatching { app.session.withDatabase { NoteStore(it).tags().take(40).map { t -> t.first } } }.getOrDefault(emptyList()) else emptyList()
+            onMain {
+                if (generating) return@onMain
+                if (summarizing) {
+                    summarizing = false
+                    app.chat.cancel()
+                }
+                markGenerating(true)
+                stopRequested = false
+                val addition = kind == NoteEdits.Kind.EDIT && NoteEdits.isAddition(instruction)
+                say("${kind.label}: \"${note.title}\" · about ${NoteEdits.secondsFor(kind, body.length, writingSpeed, addition)} s")
+                val system = when (kind) {
+                    NoteEdits.Kind.FIX -> NoteEdits.FIX_SYSTEM
+                    NoteEdits.Kind.TAGS -> NoteEdits.TAGS_SYSTEM
+                    else -> NoteEdits.SYSTEM
+                }
+                val prompt = NoteEdits.prompt(kind, if (kind == NoteEdits.Kind.TAGS) Assistant.shorten(body, 3000) else body, instruction, tags)
+                chatWorker.execute {
+                    val limit = if (addition) NoteEdits.ADDITION_TOKENS else NoteEdits.maxTokens(kind, body.length)
+                    val reply = runCatching { timed { app.chat.reply(system, emptyList(), prompt, limit) {} } }
+                    val result = reply.getOrNull()?.takeIf { !stopRequested }?.let {
+                        when (kind) {
+                            NoteEdits.Kind.FIX -> NoteEdits.corrected(note.text, it)
+                            NoteEdits.Kind.TAGS -> NoteEdits.tagged(note.text, it)
+                            else -> if (addition) NoteEdits.appended(note.text, it) else NoteEdits.rewritten(kind, note.text, it)
+                        }
+                    }
+                    onMain {
+                        markGenerating(false)
+                        when {
+                            reply.isFailure -> say("The model failed: ${reply.exceptionOrNull()?.message}")
+                            stopRequested -> say("Stopped.")
+                            else -> offer(note, kind, result, ::say)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Proposals still waiting behind the one on screen, from a review of the whole vault. */
+    private val proposalQueue = ArrayDeque<NoteProposal>()
+    var proposalsLeft by mutableStateOf(0)
+        private set
+
+    /**
+     * Looks in every note for other notes it names without linking them, and queues one proposal
+     * per note to review. It also reports the links that point to notes that do not exist. No
+     * language model is used, so it takes seconds and works with any model loaded, or none.
+     */
+    fun reviewVaultLinks(fromChat: Boolean = false) {
+        if (transferring || generating) return
+        transferring = true
+        fun say(status: String) {
+            editStatus = status
+            // An action line, not an answer: it is shown but never given back to the model as
+            // something it said, which misled it about what the conversation was about.
+            if (fromChat) messages += ChatMessage(false, status, isAction = true)
+        }
+        editStatus = "Reviewing the links of every note…"
+        thread(name = "vault-links") {
+            val found = ArrayList<NoteProposal>()
+            var links = 0
+            var reviewed = 0
+            val outcome = runCatching {
+                val names = vaultStep { db -> NoteStore(db).names() }.getOrThrow()
+                val byNote = names.groupBy({ it.first }, { it.second to it.third })
+                val all = byNote.map { (id, pairs) -> id to (pairs.first().first to pairs.map { it.second }) }
+                val index = NoteEdits.Names(all.map { it.second })
+                val titleOf = all.associate { it.first to it.second.first }
+                var after = 0L
+                while (found.size < REVIEW_MAX) {
+                    val notes = vaultStep { db -> NoteStore(db).page(after, IMPORT_BATCH) }.getOrThrow()
+                    if (notes.isEmpty()) break
+                    after = notes.last().id
+                    for (note in notes) {
+                        reviewed++
+                        val own = titleOf[note.id]
+                        val candidates = index.candidatesFor(FrontMatter.body(note.text)).filter { it.first != own }
+                        val result = NoteEdits.linked(note.text, candidates) ?: continue
+                        val before = NoteMarkup.parse(note.text).links.size
+                        links += NoteMarkup.parse(result.text).links.size - before
+                        found += NoteProposal(note.id, note.title, NoteEdits.Kind.LINK, note.text, result.text, result.warnings, NoteEdits.diff(note.text, result.text))
+                        if (found.size == REVIEW_MAX) break
+                    }
+                }
+                vaultStep { db -> NoteStore(db).unresolvedLinks() }.getOrDefault(emptyList())
+            }
+            transferring = false
+            onMain {
+                val missing = outcome.getOrDefault(emptyList())
+                val report = buildString {
+                    if (outcome.isFailure) {
+                        append("The review stopped: ${outcome.exceptionOrNull()?.message ?: "the vault is not available"}.")
+                    } else if (found.isEmpty()) {
+                        append("Reviewed $reviewed notes: every note that names another one already links to it.")
+                    } else {
+                        append("Reviewed $reviewed notes: $links mention(s) without a link in ${found.size} note(s). Review them one by one; nothing changes until you apply.")
+                        if (found.size == REVIEW_MAX) append(" Only the first $REVIEW_MAX notes are queued; run it again after these.")
+                    }
+                    if (missing.isNotEmpty()) {
+                        append("\n\nLinked but not written yet: ")
+                        append(missing.joinToString(", ") { (title, count) -> if (count > 1) "$title ($count notes)" else title })
+                        append('.')
+                    }
+                }
+                say(report)
+                proposalQueue.clear()
+                proposalQueue.addAll(found)
+                nextProposal()
+            }
+        }
+    }
+
+    private fun nextProposal() {
+        proposal = proposalQueue.removeFirstOrNull()
+        proposalsLeft = proposalQueue.size
+    }
+
+    /** Ends a review of the vault, leaving the notes not yet reviewed as they are. */
+    fun closeReview() {
+        proposalQueue.clear()
+        proposalsLeft = 0
+        proposal = null
+    }
+
+    /** Links by name, then related notes by retrieval: the note's own start is the search query. */
+    private fun proposeLinks(note: Note, body: String, say: (String) -> Unit) {
+        val query = note.title + "\n" + Assistant.shorten(body, 400)
+        app.search(query, { db, vector ->
+            val store = NoteStore(db)
+            val others = store.names().filter { it.first != note.id }.groupBy({ it.second }, { it.third }).map { it.key to it.value }
+            // Close in meaning: found by the vector search, near its top. Without an embedding model, none.
+            val related = if (vector == null) emptyList() else HybridSearch(db).search(query, vector, 12)
+                .filter { it.captureId != note.id && (it.vectorRank ?: Int.MAX_VALUE) <= RELATED_RANK }
+                .mapNotNull { CaptureStore(db).summaryOf(it.captureId)?.title }.distinct()
+            NoteEdits.linked(note.text, others, related)
+        }) { result -> onMain { offer(note, NoteEdits.Kind.LINK, result.getOrNull(), say) } }
+    }
+
+    private fun offer(note: Note, kind: NoteEdits.Kind, result: NoteEdits.Result?, say: (String) -> Unit) {
+        if (result == null || result.text.trimEnd() == note.text.trimEnd()) return say("${kind.label}: nothing to change in \"${note.title}\".")
+        proposal = NoteProposal(note.id, note.title, kind, note.text, result.text, result.warnings, NoteEdits.diff(note.text, result.text))
+        say("${kind.label}: a change to \"${note.title}\" is ready to review.")
+    }
+
+    /** Writes the proposal, unless the note changed since it was made. */
+    fun applyProposal() {
+        val change = proposal ?: return
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = NoteStore(db)
+            if (store.get(change.noteId)?.text != change.before) return@vault false
+            db.beginTransaction()
+            try {
+                val changed = store.updateText(change.noteId, change.after, NoteIndexer.sha256Hex(change.after), now)
+                if (changed) app.indexer.index(db, change.noteId, change.after)
+                db.setTransactionSuccessful()
+                changed
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                nextProposal()
+                editStatus = if (result.getOrDefault(false)) {
+                    "${change.kind.label}: applied to \"${change.title}\"."
+                } else {
+                    "Not applied: \"${change.title}\" changed meanwhile. Run the tool again."
+                }
+                refreshNotes()
+                if (detail?.note?.id == change.noteId) open(change.noteId)
+            }
+        }
+    }
+
+    /** Leaves the note as it is, and moves to the next one if a review is under way. */
+    fun discardProposal() {
+        nextProposal()
+        if (proposal == null) editStatus = null
+    }
+
+    /** Stores a message in the open conversation, creating the conversation on its first message. */
+    private fun persist(fromUser: Boolean, text: String) {
+        val now = Instant.now().toString()
+        app.vault({ db ->
+            val store = ConversationStore(db)
+            val id = storedConversation
+                ?: store.create(text.lineSequence().first().take(60), now).also { storedConversation = it }
+            store.add(id, fromUser, text, now)
+            id
+        }) { result ->
+            onMain {
+                result.onSuccess { conversationId = it }
+                    // The vault is closed while the screen is off. Keep the reply and store it on return.
+                    .onFailure { if (!fromUser) unsavedReply = text }
+                if (started) loadConversations()
+            }
+        }
+    }
+
+    /** A reply that could not be stored because the vault was closed; stored at the next start. */
+    private var unsavedReply: String? = null
 
     private fun generate(question: String) {
-        generating = true
+        // The history is what came before this message, without the action lines.
+        val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
+        val memory = Assistant.remember(earlier.map { Assistant.Line(it.fromUser, it.text) }, summary, summarized)
+        val history = memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }
+        val query = Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
         messages += ChatMessage(false, "")
         val index = messages.lastIndex
-        val asNote = wantsNote(question)
+        val asNote = Assistant.wantsNote(question)
+        // What this conversation already wrote is not searched again, or the model copies it. For
+        // a question, only what is still word for word in the history is left out, so nothing is lost.
+        val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
-        app.search(question, { db, vector ->
-            val captures = CaptureStore(db)
-            HybridSearch(db).search(question, vector, CONTEXT_NOTES).mapNotNull { hit ->
-                captures.summaryOf(hit.captureId)?.let { Source(it.title.orEmpty(), hit.text) }
-            }
-        }) { found ->
-            val context = found.getOrDefault(emptyList())
-            val prompt = buildString {
-                if (context.isNotEmpty()) {
-                    append("Notes from the vault that may be relevant:\n")
-                    append(context.mapIndexed { i, note -> "[${i + 1}] ${note.title}: ${note.text}" }.joinToString("\n\n"))
-                    append("\n\n")
-                }
-                append(if (asNote) "Request: " else "Question: ").append(question)
-                if (asNote) append(NOTE_FORMAT)
-            }
+        val open = storedConversation
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open) }) { found ->
+            val context = found.getOrNull()
+            val notes = context?.notes.orEmpty()
+            val prompt = Assistant.prompt(
+                question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty(),
+                previousAnswer = earlier.lastOrNull { !it.fromUser }?.text,
+            )
+            val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
-                val result = runCatching {
-                    app.chat.send(prompt) { piece ->
-                        onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + piece) }
+                val limit = if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS
+                var echoed = false
+
+                /** One reply. Its first characters are held back until they are known not to be the instructions. */
+                fun attempt(system: String): String {
+                    val streamed = StringBuilder()
+                    var checked = false
+                    return timed {
+                        app.chat.reply(system, history, prompt, limit) { piece ->
+                            streamed.append(piece)
+                            val show = if (checked) piece else if (streamed.length >= Assistant.ECHO_CHARS) {
+                                checked = true
+                                if (Assistant.echoes(streamed)) {
+                                    echoed = true
+                                    app.chat.cancel()
+                                }
+                                streamed.toString()
+                            } else {
+                                ""
+                            }
+                            if (!echoed && show.isNotEmpty()) {
+                                onMain { if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + show) }
+                            }
+                        }
                     }
                 }
-                val saved = result.getOrNull()?.takeIf { asNote }?.let { createNoteFrom(it, question, context) } == true
-                onMain {
-                    result.onFailure {
-                        if (index < messages.size) messages[index] = messages[index].copy(text = messages[index].text + "\n[error: ${it.message}]")
+                var looped = false
+                val result = runCatching {
+                    if (stopRequested) {
+                        ""
+                    } else {
+                        val compact = model in compactModels()
+                        var text = attempt(if (compact) Assistant.SYSTEM_COMPACT else Assistant.SYSTEM)
+                        if (echoed && !stopRequested && !compact) {
+                            // This model copies the long instructions. Use the short ones, now and from here on.
+                            rememberCompact(model)
+                            echoed = false
+                            text = attempt(Assistant.SYSTEM_COMPACT)
+                        }
+                        looped = app.chat.lastLooped
+                        if (echoed || Assistant.echoes(text)) "" else text
                     }
-                    if (saved && index < messages.size) messages[index] = messages[index].copy(saved = true)
-                    generating = false
-                    refreshNotes()
+                }
+                val reply = result.getOrNull().orEmpty()
+                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped && createNoteFrom(reply, question, notes)
+                onMain {
+                    // The screen may have been cleared by onStop meanwhile; the reply is still stored.
+                    val visible = index < messages.size
+                    // The returned reply is what counts: it is the text after any loop was cut.
+                    val body = when {
+                        result.isFailure -> (if (visible) messages[index].text else "") + "\n[error: ${result.exceptionOrNull()?.message}]"
+                        echoed -> Assistant.ECHO_NOTICE
+                        looped -> reply.trimEnd() + "\n\n" + Assistant.LOOP_NOTICE
+                        else -> Assistant.dropPreamble(reply)
+                    }
+                    val final = Assistant.dropUnknownCitations(body, notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
+                    if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
+                    if (final.isNotBlank()) persist(fromUser = false, text = final)
+                    markGenerating(false)
+                    if (started) {
+                        if (!visible) conversationId?.let(::openConversation) else if (!stopRequested) summarizeIfDue()
+                        refreshNotes()
+                    } else {
+                        // Finished off screen: the reply is stored, so clear it from memory like onStop does.
+                        messages.clear()
+                        if (!stopRequested) GenerationService.notifyDone(app)
+                        main.postDelayed(releaseModel, MODEL_IDLE_MS)
+                    }
                 }
             }
         }
     }
 
-    fun stopGenerating() = app.chat.cancel()
+    fun stopGenerating() {
+        stopRequested = true
+        app.chat.cancel()
+        // If the model was still loading, nothing will reply: free the input now.
+        if (loadingModel) {
+            pendingQuestion = null
+            markGenerating(false)
+        }
+    }
 
     /** Saves the answer at [index] as a note. */
     fun saveAsNote(index: Int) {
         val answer = messages.getOrNull(index) ?: return
         val question = messages.take(index).lastOrNull { it.fromUser }?.text.orEmpty()
         messages[index] = answer.copy(saved = true)
-        chatWorker.execute {
-            createNoteFrom(answer.text, question, emptyList())
-            onMain { refreshNotes() }
+        app.search(question, { db, vector -> VaultContext.build(db, question, vector) }) { found ->
+            chatWorker.execute {
+                createNoteFrom(answer.text, question, found.getOrNull()?.notes.orEmpty())
+                onMain { refreshNotes() }
+            }
         }
     }
 
     /**
-     * Stores a reply as a note in Obsidian format: `# Title`, the body, `[[links]]` to the notes
-     * the reply cites, and `#tags`. Returns whether a note was created.
+     * Stores the notes in a reply, one per `# Title`, in Obsidian format: the title, the cleaned
+     * body with each citation turned into a `[[link]]` to the cited note, only links to notes
+     * that exist, and `#tags`. Returns whether at least one note was created.
      */
-    private fun createNoteFrom(reply: String, question: String, context: List<Source>): Boolean {
-        val (title, body, tags) = parseNote(reply, question)
-        if (body.isBlank()) return false
-        val related = Regex("\\[(\\d+)]").findAll(reply)
-            .mapNotNull { context.getOrNull(it.groupValues[1].toInt() - 1)?.title }
-            .filter { it.isNotBlank() && !it.equals(title, ignoreCase = true) }.distinct().toList()
-        val text = if (related.isEmpty()) body else body + "\n\nRelated: " + related.joinToString(" ") { "[[$it]]" }
-        val outcome = runCatching { tools.createNote(title, text, tags) }.getOrElse { "The note could not be saved: ${it.message}" }
-        val created = outcome.startsWith("Created")
-        if (!created) onMain { messages += ChatMessage(false, outcome) }
+    private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>): Boolean {
+        var created = false
+        for (note in NoteFormat.parse(reply, question)) {
+            val text = Assistant.linkify(note.body, context, note.title)
+            val outcome = runCatching { tools.createNote(note.title, text, note.tags) }
+                .getOrElse { "The note could not be saved: ${it.message}" }
+            if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
+        }
         return created
     }
 
@@ -660,48 +1429,15 @@ class AppState(private val app: SeBrainApp) {
 
     private companion object {
         const val LIMIT = 100
-        const val CONTEXT_NOTES = 6
         const val PROGRESS_STEP = 8L * 1024 * 1024
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
-        const val SYSTEM =
-            "You are SeBrain, a private assistant that runs entirely on the user's phone. " +
-                "Always answer the question itself, directly and completely, in the language of the question. " +
-                "When notes from the vault are given, use them if they are relevant and cite them as [1], [2]. " +
-                "If the notes do not contain the answer, answer from your own knowledge. " +
-                "Put every script or piece of code in a fenced code block with its language, like ```bash."
-        const val NOTE_FORMAT =
-            "\n\nThe answer will be saved as a note. Write the information that was asked for, complete and " +
-                "useful on its own. Do not repeat the request and do not say that you are creating a note. " +
-                "Use exactly this format:\n# A short title\n\nThe content, in Markdown\n\nTags: two to four lowercase one-word tags, separated by commas"
-
-        private val NOTE_WORD = Regex("\\b(notas?|notes?)\\b", RegexOption.IGNORE_CASE)
-        private val SAVE_WORD = Regex(
-            "\\b(crea\\w*|haz\\w*|hace\\w*|guard\\w*|anot\\w*|escrib\\w*|gener\\w*|agreg\\w*|añad\\w*|pon\\w*|create|make|save|write|add|put)\\b",
-            RegexOption.IGNORE_CASE,
-        )
-        private val TAG_LINE = Regex("^[*_#\\s]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
-
-        /** True when the user asks for the answer to be stored as a note. */
-        fun wantsNote(question: String) = NOTE_WORD.containsMatchIn(question) && SAVE_WORD.containsMatchIn(question)
-
-        /** Splits a reply into title, body and tags. Without a `# Title` line, [fallbackTitle] is used. */
-        fun parseNote(reply: String, fallbackTitle: String): Triple<String, String, List<String>> {
-            val lines = reply.trim().lines().toMutableList()
-            var tags = emptyList<String>()
-            val tagIndex = lines.indexOfLast { TAG_LINE.matches(it.trim()) }
-            if (tagIndex >= 0) {
-                tags = TAG_LINE.find(lines[tagIndex].trim())!!.groupValues[1].split(',', ' ')
-                    .map { it.trim().trim('*', '_', '#', '.') }.filter { it.isNotEmpty() }
-                lines.removeAt(tagIndex)
-            }
-            val first = lines.indexOfFirst { it.isNotBlank() }
-            val title = if (first >= 0 && lines[first].trimStart().startsWith("#")) {
-                lines.removeAt(first).trim().trimStart('#').trim().trim('*').trim()
-            } else {
-                fallbackTitle.lineSequence().firstOrNull().orEmpty().take(60)
-            }
-            return Triple(title.ifBlank { "Note" }, lines.joinToString("\n").trim(), tags)
-        }
+        const val PREF_PINS_MIGRATED = "pins_migrated"
+        const val PREF_COMPACT = "compact_prompt_models"
+        const val IMPORT_BATCH = 20
+        const val EMBED_CHARS = 1500
+        const val RELATED_RANK = 5
+        const val REVIEW_MAX = 40
+        const val MODEL_IDLE_MS = 5L * 60L * 1000L
     }
 }

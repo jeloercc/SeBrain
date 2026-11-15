@@ -1,5 +1,6 @@
 package com.sebrain.app.ui
 
+import com.sebrain.cognition.NoteSections
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipDescription
@@ -39,7 +40,8 @@ import androidx.compose.ui.unit.sp
 
 internal class Segment(val code: Boolean, val text: String, val language: String)
 
-private val WIKI_LINK = Regex("""\[\[([^\]]+)]]""")
+// [[Note]], [[Note#Heading|shown]] and the embed ![[Note]].
+private val WIKI_LINK = Regex("""(!?)\[\[([^\]]+)]]""")
 
 /** Splits Markdown into prose and fenced code blocks. An unclosed fence runs to the end. */
 internal fun segments(text: String): List<Segment> {
@@ -97,6 +99,8 @@ fun MarkdownBody(
     text: String,
     title: String,
     color: Color = MaterialTheme.colorScheme.onSurface,
+    /** The text of each embedded note or section, by [NoteSections.embedKey]. */
+    embeds: Map<String, String> = emptyMap(),
     onLinkClick: (String) -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -104,7 +108,7 @@ fun MarkdownBody(
             if (segment.code) {
                 CodeBlock(segment, title)
             } else {
-                InlineMarkdown(segment.text, color = color, onLinkClick = onLinkClick)
+                InlineMarkdown(segment.text, color = color, embeds = embeds, onLinkClick = onLinkClick)
             }
         }
     }
@@ -117,16 +121,20 @@ fun InlineMarkdown(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     maxLines: Int = Int.MAX_VALUE,
+    embeds: Map<String, String> = emptyMap(),
     onLinkClick: (String) -> Unit = {},
 ) {
-    val parts = buildList {
+    // Plain text has no reference; a link has one; an embed that could be read also has its text.
+    val parts = buildList<Triple<String, NoteSections.Reference?, String?>> {
         var cursor = 0
         WIKI_LINK.findAll(text).forEach { match ->
-            if (match.range.first > cursor) add(text.substring(cursor, match.range.first) to null)
-            add(match.groupValues[1] to match.groupValues[1])
+            if (match.range.first > cursor) add(Triple(text.substring(cursor, match.range.first), null, null))
+            val reference = NoteSections.reference(match.groupValues[2])
+            val embedded = if (match.groupValues[1] == "!") embeds[NoteSections.embedKey(reference.target, reference.anchor)] else null
+            add(Triple(reference.label, reference, embedded))
             cursor = match.range.last + 1
         }
-        if (cursor < text.length) add(text.substring(cursor) to null)
+        if (cursor < text.length) add(Triple(text.substring(cursor), null, null))
     }
     FlowRow(
         modifier = modifier,
@@ -134,13 +142,25 @@ fun InlineMarkdown(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         maxLines = maxLines,
     ) {
-        parts.forEach { (value, link) ->
+        parts.forEach { (value, link, embedded) ->
             if (link == null) {
                 SelectionContainer {
                     Text(value, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = maxLines)
                 }
+            } else if (embedded != null) {
+                // The embedded note, shown in place. Links inside it work; its own embeds show as links.
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(Neon.PanelHigh, MaterialTheme.shapes.small)
+                        .border(BorderStroke(1.dp, Neon.Line), MaterialTheme.shapes.small)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    LinkPill(value, onClick = { onLinkClick(link.target) })
+                    InlineMarkdown(embedded, color = color, onLinkClick = onLinkClick)
+                }
             } else {
-                LinkPill(link, onClick = { onLinkClick(link) })
+                LinkPill(value, onClick = { onLinkClick(link.target) })
             }
         }
     }

@@ -63,7 +63,7 @@ class SearchIndexTest {
         val version = session.withDatabase { db ->
             db.rawQuery("PRAGMA user_version", emptyArray<String>()).use { c -> c.moveToFirst(); c.getInt(0) }
         }
-        assertEquals(3, version)
+        assertEquals(6, version)
         val id = capture("hello")
         assertEquals(ChunkStore.STATUS_PENDING, session.withDatabase { ChunkStore(it).statusOf(id) })
     }
@@ -111,7 +111,9 @@ class SearchIndexTest {
         index(
             capture("a"),
             listOf("cita con la dentista", "cita en el banco", "receta de cocina"),
-            listOf(vector(1), vector(2), vector(3)),
+            // The first chunk is the farthest from the query vector. With the default tilt it was
+            // the second nearest, which tied its fused score with the second chunk exactly.
+            listOf(vector(1, tilt = 5), vector(2), vector(3, tilt = 2)),
         )
         // Text matches the first two chunks; the vector is nearest to the second.
         val hits = session.withDatabase { HybridSearch(it).search("cita", vector(2, tilt = 9)) }

@@ -26,10 +26,11 @@ import androidx.compose.ui.unit.dp
 import com.sebrain.app.ui.AppState
 import com.sebrain.app.ui.ChatScreen
 import com.sebrain.app.ui.GraphScreen
-import com.sebrain.app.ui.IntegrationsScreen
 import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.Neon
 import com.sebrain.app.ui.NotesScreen
+import com.sebrain.app.ui.PrivacyScreen
+import com.sebrain.app.ui.ProposalScreen
 import com.sebrain.app.ui.SeBrainTheme
 
 /** The whole app: notes, the local assistant and models. */
@@ -56,9 +57,11 @@ class MainActivity : ComponentActivity() {
                         1 -> GraphScreen(state, Modifier.padding(padding))
                         2 -> ChatScreen(state, Modifier.padding(padding).consumeWindowInsets(padding))
                         3 -> ModelsScreen(state, Modifier.padding(padding))
-                        else -> IntegrationsScreen(state, Modifier.padding(padding))
+                        else -> PrivacyScreen(state, Modifier.padding(padding))
                     }
                 }
+                // A change the assistant proposes to a note is reviewed over whatever tab is open.
+                state.proposal?.let { ProposalScreen(state, it) }
             }
         }
     }
@@ -77,7 +80,7 @@ class MainActivity : ComponentActivity() {
     private fun PostPunkNavigation(selected: Int, onSelected: (Int) -> Unit) {
         NavigationBar(containerColor = Neon.Void, tonalElevation = 0.dp) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                listOf("NOTES", "GRAPH", "ASK", "MODELS", "INTEGRATE").forEachIndexed { index, label ->
+                listOf("NOTES", "GRAPH", "ASK", "MODELS", "PRIVACY").forEachIndexed { index, label ->
                     Box(
                         Modifier
                             .weight(1f)

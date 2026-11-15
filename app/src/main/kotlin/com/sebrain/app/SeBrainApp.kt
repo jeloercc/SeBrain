@@ -46,6 +46,7 @@ class SeBrainApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ShareActivity.onCaptureStored = { requestImport() }
+        executor.execute { com.sebrain.ingest.LegacyNotificationCleanup.run(this) }
     }
 
     /** Imports the inbox in the background and reports counts. Safe to call at any time. */
