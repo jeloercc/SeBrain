@@ -34,7 +34,7 @@ class SeBrainApp : Application() {
     val chat by lazy { ChatEngine(this, models) }
 
     val indexer by lazy {
-        NoteIndexer { texts -> if (embedder.isAvailable) embedder.embedDocuments(texts) else null }
+        NoteIndexer { documents -> if (embedder.isAvailable) embedder.embedTitledDocuments(documents) else null }
     }
 
     private val importer by lazy { InboxImporter(ShareActivity.inboxDir(this), session, indexer = indexer) }

@@ -12,8 +12,11 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
  * and links. It is used for imported captures and for notes edited in the app.
  */
 class NoteIndexer(
-    /** Embeds texts, or returns null if no embedding model is available. */
-    private val embed: (List<String>) -> List<FloatArray>? = { null },
+    /**
+     * Embeds documents given as (title, text), or returns null if no embedding model is
+     * available. The title goes in the model's document prompt, not in the text.
+     */
+    private val embed: (List<Pair<String?, String>>) -> List<FloatArray>? = { null },
 ) {
     data class RebuildResult(val notes: Int, val vectors: Int)
 
@@ -30,7 +33,7 @@ class NoteIndexer(
         val chunks = Chunker.chunk(text).map { chunk ->
             chunk.copy(text = ChunkHeader.of(text, title, parsed.aliases, tags, chunk.startOffset) + "\n" + chunk.text)
         }
-        ChunkStore(db).index(id, chunks, embedOrNull(chunks.map { it.text }))
+        ChunkStore(db).index(id, chunks, embedTitled(chunks.map { title to it.text }))
     }
 
     /** Reads the title, tags, links, aliases and properties of a note, without touching its search chunks. */
@@ -49,8 +52,18 @@ class NoteIndexer(
     }
 
     /** A failing model must not block a write: the text is still stored and searchable. */
-    fun embedOrNull(texts: List<String>): List<FloatArray>? =
-        if (texts.isEmpty()) emptyList() else runCatching { embed(texts) }.getOrNull()?.takeIf { it.size == texts.size }
+    fun embedOrNull(texts: List<String>): List<FloatArray>? = embedTitled(texts.map { null to it })
+
+    /** Like [embedOrNull], with each text's title. */
+    fun embedTitled(documents: List<Pair<String?, String>>): List<FloatArray>? =
+        if (documents.isEmpty()) emptyList() else runCatching { embed(documents) }.getOrNull()?.takeIf { it.size == documents.size }
+
+    /** Vectors for chunks stored without one, each embedded with its note's title. */
+    fun embedPending(db: SQLiteDatabase, pending: List<com.sebrain.core.vault.PendingChunk>): List<FloatArray>? {
+        val store = NoteStore(db)
+        val titles = pending.map { it.captureId }.distinct().associateWith { store.get(it)?.title }
+        return embedTitled(pending.map { titles[it.captureId] to it.text })
+    }
 
     /** Rebuilds derived search data without changing capture text or provenance. */
     fun rebuildAll(db: SQLiteDatabase, batchSize: Int = 32): RebuildResult {
@@ -69,7 +82,7 @@ class NoteIndexer(
         while (true) {
             val pending = ChunkStore(db).chunksWithoutVector(batchSize)
             if (pending.isEmpty()) break
-            val embeddings = embedOrNull(pending.map { it.text }) ?: break
+            val embeddings = embedPending(db, pending) ?: break
             pending.forEachIndexed { index, chunk ->
                 ChunkStore(db).addVector(chunk, embeddings[index])
                 vectors++
@@ -85,9 +98,9 @@ class NoteIndexer(
         /**
          * The version of what [index] stores for a note. It changes when the stored chunks change
          * shape, so the app knows to index every note again. 2: chunks carry a header. 3: a
-         * heading always starts a new chunk.
+         * heading always starts a new chunk. 4: chunks are embedded with their note's title.
          */
-        const val INDEX_VERSION = 3
+        const val INDEX_VERSION = 4
 
         /** See [NoteStore.contentHash]. */
         fun contentHash(text: String, path: String?): String = NoteStore.contentHash(text, path)

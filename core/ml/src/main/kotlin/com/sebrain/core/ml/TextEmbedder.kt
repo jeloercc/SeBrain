@@ -27,13 +27,26 @@ class TextEmbedder(context: Context, private val models: ModelFiles) : AutoClose
     val isAvailable: Boolean
         get() = models.isInstalled(ModelFiles.EMBEDDING_NPU) || models.isInstalled(ModelFiles.EMBEDDING_CPU)
 
-    /** Embeds texts to be stored and searched later. */
+    /** Embeds texts to be stored and searched later, without a title. */
     @Synchronized
-    fun embedDocuments(texts: List<String>): List<FloatArray> = texts.map { embed("title: none | text: $it") }
+    fun embedDocuments(texts: List<String>): List<FloatArray> = embedTitledDocuments(texts.map { null to it })
+
+    /**
+     * Embeds documents with their titles, in the format EmbeddingGemma documents for retrieval:
+     * `title: {title} | text: {content}`, or `title: none` when there is no title. Google's
+     * guide states that including titles significantly improves retrieval accuracy.
+     */
+    @Synchronized
+    fun embedTitledDocuments(documents: List<Pair<String?, String>>): List<FloatArray> =
+        documents.map { (title, text) -> embed("title: ${documentTitle(title)} | text: $text") }
 
     /** Embeds a search query. Queries and documents use different task prefixes. */
     @Synchronized
     fun embedQuery(query: String): FloatArray = embed("task: search result | query: $query")
+
+    /** A title as it goes in the prompt: on one line, without the separator the format uses. */
+    private fun documentTitle(title: String?): String =
+        title?.replace(Regex("\\s+"), " ")?.replace("|", "/")?.trim()?.takeIf { it.isNotEmpty() }?.take(TITLE_CHARS) ?: "none"
 
     /** Releases the model. The next call loads it again. */
     @Synchronized
@@ -77,6 +90,7 @@ class TextEmbedder(context: Context, private val models: ModelFiles) : AutoClose
     }
 
     private companion object {
+        const val TITLE_CHARS = 120
         const val TAG = "SEBRAIN_ML"
         const val DIMENSIONS = 256
         val OPTIONS = EmbeddingOptions(normalize = true, outputSize = DIMENSIONS)

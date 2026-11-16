@@ -2,6 +2,7 @@ package com.sebrain.app.chat
 
 import com.sebrain.cognition.FrontMatter
 import com.sebrain.core.vault.ConversationStore
+import com.sebrain.core.vault.GraphRank
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.NoteStore
 import net.zetetic.database.sqlcipher.SQLiteDatabase
@@ -16,7 +17,6 @@ object VaultContext {
     private const val SEARCH_HITS = 16
     private const val MATCHED_NOTES = 4
     private const val CONNECTED_NOTES = 4
-    private const val EXPANDED_FROM = 3
     private const val TAGS_SHOWN = 30
 
     /** Pinned notes read at most; the prompt keeps the ones that fit [Pins.BUDGET_CHARS]. */
@@ -84,17 +84,22 @@ object VaultContext {
             )
         }
 
+        // Connected notes are chosen by Personalized PageRank over the brain's links and shared
+        // tags, seeded by the notes the search found (better hits weigh more). A note two links
+        // away can win when it is central to what was found; a note one link away from a weak
+        // hit can lose.
         val matched = notes.toList()
-        for (origin in matched.take(EXPANDED_FROM)) {
-            val neighbours = store.linkedFrom(origin.id).map { it to "linked from [${origin.number}]" } +
-                store.backlinks(origin.id).map { it to "links to [${origin.number}]" } +
-                store.sharingTags(origin.id, CONNECTED_NOTES).map { it to "shares tags with [${origin.number}]" }
-            for ((summary, via) in neighbours) {
+        if (matched.isNotEmpty()) {
+            val edges = store.rankEdges()
+            val seeds = matched.associate { it.id to 1.0 / (RRF_K + it.number) }
+            val ranked = GraphRank.personalized(edges, seeds).map { it.first }.filter { it !in included }
+            val adjacent = edges.groupBy({ it.a }, { it.b to it.weight }) + edges.groupBy({ it.b }, { it.a to it.weight })
+            for (id in ranked) {
                 if (notes.size - matched.size >= CONNECTED_NOTES) break
-                if (!included.add(summary.id)) continue
-                val note = store.get(summary.id) ?: continue
+                val note = store.get(id) ?: continue
                 if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
-                notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text), via)
+                included += id
+                notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text), relation(store, note.id, matched, adjacent))
             }
         }
         // Newest first. A pinned note is not also listed as a search result above.
@@ -103,4 +108,24 @@ object VaultContext {
             .map { PastMessage(it.title, it.updatedAt, it.fromUser, it.text) }
         return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, pinned, past)
     }
+
+    /** How a connected note relates to the notes the search found, for the label the model reads. */
+    private fun relation(
+        store: NoteStore,
+        id: Long,
+        matched: List<ContextNote>,
+        adjacent: Map<Long, List<Pair<Long, Double>>>,
+    ): String {
+        val links = store.linkedFrom(id).map { it.id }.toSet()
+        val backlinks = store.backlinks(id).map { it.id }.toSet()
+        for (origin in matched) {
+            if (origin.id in backlinks) return "linked from [${origin.number}]"
+            if (origin.id in links) return "links to [${origin.number}]"
+        }
+        val tagged = matched.firstOrNull { origin -> adjacent[id].orEmpty().any { it.first == origin.id } }
+        if (tagged != null) return "shares tags with [${tagged.number}]"
+        return "connected through the graph to [${matched.first().number}]"
+    }
+
+    private const val RRF_K = 60
 }

@@ -108,6 +108,32 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         return NoteGraph(nodes, edges.toList())
     }
 
+    /**
+     * The edges the graph ranking walks, inside the brain: a resolved link weighs 1; two notes
+     * that share a tag are joined with 1 / (notes with that tag), so a tag used everywhere counts
+     * little. Tags on more than [MAX_TAG_NOTES] notes are skipped.
+     */
+    fun rankEdges(limit: Int = 2000): List<GraphRank.Edge> {
+        val graph = graph(limit)
+        val edges = ArrayList<GraphRank.Edge>()
+        for ((a, b) in graph.edges) {
+            val from = graph.nodes[a].id ?: continue
+            val to = graph.nodes[b].id ?: continue
+            edges += GraphRank.Edge(from, to, 1.0)
+        }
+        val byTag = HashMap<Long, MutableList<Long>>()
+        db.rawQuery(
+            "SELECT ct.tag_id, ct.capture_id FROM capture_tag ct JOIN capture c ON c.id = ct.capture_id WHERE ${inBrain("c.path")}",
+            emptyArray<String>(),
+        ).use { c -> while (c.moveToNext()) byTag.getOrPut(c.getLong(0)) { ArrayList() } += c.getLong(1) }
+        for (notes in byTag.values) {
+            if (notes.size < 2 || notes.size > MAX_TAG_NOTES) continue
+            val weight = 1.0 / notes.size
+            for (i in notes.indices) for (j in i + 1 until notes.size) edges += GraphRank.Edge(notes[i], notes[j], weight)
+        }
+        return edges
+    }
+
     /** Creates a note written in the app. Returns null if a note with the same content exists. */
     fun create(text: String, contentSha256: String, now: String, timeZone: String): Long? =
         CaptureStore(db).insertReturningId(
@@ -426,6 +452,7 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         /** Notes brought in from an Obsidian vault folder. */
         const val SOURCE_VAULT = "vault"
         private const val MIN_MENTION = 4
+        private const val MAX_TAG_NOTES = 50
         private val WORD = Regex("[\\p{L}\\p{N}]+")
 
         /**
