@@ -19,6 +19,8 @@ import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.core.ml.ChatEngine
+import com.sebrain.core.vault.Brain
+import com.sebrain.core.vault.BrainRegistry
 import com.sebrain.core.vault.ConversationStore
 import com.sebrain.core.vault.ConversationSummary
 import com.sebrain.app.privacy.AppPrivacy
@@ -132,7 +134,7 @@ class AppState(private val app: SeBrainApp) {
         val source = graphFilterSources
         app.vault({ db ->
             val captures = CaptureStore(db)
-            captures.sources() to NoteStore(db).graph(sources = source)
+            captures.sources() to notes(db).graph(sources = source)
         }) { result ->
             onMain {
                 result.onSuccess { (sources, loadedGraph) ->
@@ -184,6 +186,7 @@ class AppState(private val app: SeBrainApp) {
         app.onImported = { onMain { refreshNotes() } }
         reindexIfNeeded()
         loadProviders()
+        loadBrains()
         app.requestImport()
         migratePins()
         refreshInstalled()
@@ -283,16 +286,16 @@ class AppState(private val app: SeBrainApp) {
         val folder = selectedFolder
         app.search(wanted, { db, vector ->
             val captures = CaptureStore(db)
-            val store = NoteStore(db)
+            val store = notes(db)
             val found = when {
                 wanted.isNotEmpty() ->
-                    HybridSearch(db).search(wanted, vector, LIMIT).mapNotNull { captures.summaryOf(it.captureId) }.distinctBy { it.id }
+                    HybridSearch(db, scopeBrain).search(wanted, vector, LIMIT).mapNotNull { captures.summaryOf(it.captureId) }.distinctBy { it.id }
                 tag != null -> store.withTag(tag, LIMIT)
                 folder != null -> store.inFolder(folder, LIMIT)
-                else -> captures.recent(LIMIT)
+                else -> store.recent(LIMIT)
             }
             loadedFolders = store.folders()
-            Triple(captures.count(), found, store.tags())
+            Triple(store.count(), found, store.tags())
         }) { result ->
             onMain {
                 // A slower, older query must not replace the results of a newer one.
@@ -435,7 +438,7 @@ class AppState(private val app: SeBrainApp) {
 
     fun open(id: Long) {
         app.vault({ db ->
-            val store = NoteStore(db)
+            val store = notes(db)
             store.get(id)?.let { note ->
                 val parsed = NoteMarkup.parse(note.text)
                 // An embedded note is read here, off the main thread, and only one level deep.
@@ -469,7 +472,7 @@ class AppState(private val app: SeBrainApp) {
     }
 
     fun openByTitle(title: String) {
-        app.vault({ db -> NoteStore(db).findByTitle(title) }) { result ->
+        app.vault({ db -> notes(db).findByTitle(title) }) { result ->
             result.getOrNull()?.let(::open)
         }
     }
@@ -485,9 +488,9 @@ class AppState(private val app: SeBrainApp) {
         app.vault({ db ->
             db.beginTransaction()
             try {
-                val store = NoteStore(db)
+                val store = notes(db)
                 val id = if (draft.id == null) {
-                    store.create(text, hash, now, ZoneId.systemDefault().id)
+                    store.create(text, hash, now, ZoneId.systemDefault().id)?.also { placeInBrain(store, it, text) }
                 } else {
                     draft.id.takeIf { store.updateText(it, text, hash, now) }
                 }
@@ -620,9 +623,10 @@ class AppState(private val app: SeBrainApp) {
             app.session.withDatabase { db ->
                 db.beginTransaction()
                 try {
-                    val store = NoteStore(db)
+                    val store = notes(db)
                     val id = store.create(text, hash, now, ZoneId.systemDefault().id)
                         ?: error("A note with the same text already exists")
+                    scopeBrain?.let { store.setPath(id, store.freePath(it, document.subject)) }
                     app.indexer.index(db, id, text, document.subject)
                     db.setTransactionSuccessful()
                 } finally {
@@ -834,7 +838,7 @@ class AppState(private val app: SeBrainApp) {
         conversationQuery = words
         val wanted = words.trim()
         app.vault({ db ->
-            val store = ConversationStore(db)
+            val store = chats(db)
             if (wanted.isEmpty()) store.list() else store.searchConversations(wanted)
         }) { result ->
             onMain { if (wanted == conversationQuery.trim()) conversations = result.getOrDefault(emptyList()) }
@@ -935,7 +939,7 @@ class AppState(private val app: SeBrainApp) {
         // "Corrige la nota X": a tool on an existing note, if the message names one.
         val tool = NoteEdits.kindOf(text)
         if (tool != null) {
-            app.vault({ db -> NoteEdits.mentioned(text, NoteStore(db).names().map { it.first to it.third }) }) { found ->
+            app.vault({ db -> NoteEdits.mentioned(text, notes(db).names().map { it.first to it.third }) }) { found ->
                 onMain {
                     val id = found.getOrNull()
                     if (id != null) proposeEdit(id, tool, text, fromChat = true) else answer(text)
@@ -1029,7 +1033,7 @@ class AppState(private val app: SeBrainApp) {
             if (body.length > limit) {
                 return@vault onMain { say("\"${note.title}\" is too long for the phone model to ${kind.label.lowercase()} (${body.length} characters, limit $limit).") }
             }
-            val tags = if (kind == NoteEdits.Kind.TAGS) runCatching { app.session.withDatabase { NoteStore(it).tags().take(40).map { t -> t.first } } }.getOrDefault(emptyList()) else emptyList()
+            val tags = if (kind == NoteEdits.Kind.TAGS) runCatching { app.session.withDatabase { notes(it).tags().take(40).map { t -> t.first } } }.getOrDefault(emptyList()) else emptyList()
             onMain {
                 if (generating) return@onMain
                 if (summarizing) {
@@ -1094,14 +1098,14 @@ class AppState(private val app: SeBrainApp) {
             var links = 0
             var reviewed = 0
             val outcome = runCatching {
-                val names = vaultStep { db -> NoteStore(db).names() }.getOrThrow()
+                val names = vaultStep { db -> notes(db).names() }.getOrThrow()
                 val byNote = names.groupBy({ it.first }, { it.second to it.third })
                 val all = byNote.map { (id, pairs) -> id to (pairs.first().first to pairs.map { it.second }) }
                 val index = NoteEdits.Names(all.map { it.second })
                 val titleOf = all.associate { it.first to it.second.first }
                 var after = 0L
                 while (found.size < REVIEW_MAX) {
-                    val notes = vaultStep { db -> NoteStore(db).page(after, IMPORT_BATCH) }.getOrThrow()
+                    val notes = vaultStep { db -> notes(db).page(after, IMPORT_BATCH) }.getOrThrow()
                     if (notes.isEmpty()) break
                     after = notes.last().id
                     for (note in notes) {
@@ -1115,7 +1119,7 @@ class AppState(private val app: SeBrainApp) {
                         if (found.size == REVIEW_MAX) break
                     }
                 }
-                vaultStep { db -> NoteStore(db).unresolvedLinks() }.getOrDefault(emptyList())
+                vaultStep { db -> notes(db).unresolvedLinks() }.getOrDefault(emptyList())
             }
             transferring = false
             onMain {
@@ -1159,10 +1163,10 @@ class AppState(private val app: SeBrainApp) {
     private fun proposeLinks(note: Note, body: String, say: (String) -> Unit) {
         val query = note.title + "\n" + Assistant.shorten(body, 400)
         app.search(query, { db, vector ->
-            val store = NoteStore(db)
+            val store = notes(db)
             val others = store.names().filter { it.first != note.id }.groupBy({ it.second }, { it.third }).map { it.key to it.value }
             // Close in meaning: found by the vector search, near its top. Without an embedding model, none.
-            val related = if (vector == null) emptyList() else HybridSearch(db).search(query, vector, 12)
+            val related = if (vector == null) emptyList() else HybridSearch(db, scopeBrain).search(query, vector, 12)
                 .filter { it.captureId != note.id && (it.vectorRank ?: Int.MAX_VALUE) <= RELATED_RANK }
                 .mapNotNull { CaptureStore(db).summaryOf(it.captureId)?.title }.distinct()
             NoteEdits.linked(note.text, others, related)
@@ -1215,9 +1219,10 @@ class AppState(private val app: SeBrainApp) {
     private fun persist(fromUser: Boolean, text: String) {
         val now = Instant.now().toString()
         app.vault({ db ->
-            val store = ConversationStore(db)
+            val store = chats(db)
             val id = storedConversation
                 ?: store.create(text.lineSequence().first().take(60), now).also { storedConversation = it }
+            // (store is the current brain's: a conversation belongs to the brain it was started in)
             store.add(id, fromUser, text, now)
             id
         }) { result ->
@@ -1247,7 +1252,7 @@ class AppState(private val app: SeBrainApp) {
         val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
         val open = storedConversation
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question) }) { found ->
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question, scopeBrain, brainId) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
             val prompt = Assistant.prompt(
@@ -1362,11 +1367,118 @@ class AppState(private val app: SeBrainApp) {
         var created = false
         for (note in NoteFormat.parse(reply, question)) {
             val text = Assistant.linkify(note.body, context, note.title)
-            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source) }
+            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain) }
                 .getOrElse { "The note could not be saved: ${it.message}" }
             if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
         }
         return created
+    }
+
+    // ---- Brains ----
+
+    /** The sub-brains: top-level folders, each seen on its own. */
+    var subBrains by mutableStateOf(emptyList<Brain>())
+        private set
+
+    /** The brain everything is scoped to, or null for the universal brain, which sees every note. */
+    var currentBrain by mutableStateOf<Brain?>(null)
+        private set
+
+    private val scopeBrain: String? get() = currentBrain?.name
+    private val brainId: Long? get() = currentBrain?.id
+
+    /** The notes of the current brain. Every read of the vault for the screens goes through it. */
+    private fun notes(db: net.zetetic.database.sqlcipher.SQLiteDatabase) = NoteStore(db, scopeBrain)
+
+    private fun chats(db: net.zetetic.database.sqlcipher.SQLiteDatabase) = ConversationStore(db, brainId)
+
+    fun loadBrains() {
+        val chosen = app.getSharedPreferences(PREFS, 0).getString(PREF_BRAIN, null)
+        app.vault({ db -> BrainRegistry(db).list(Instant.now().toString()) }) { result ->
+            onMain {
+                subBrains = result.getOrDefault(emptyList())
+                val current = subBrains.firstOrNull { it.name.equals(currentBrain?.name ?: chosen, ignoreCase = true) }
+                if (current?.id != currentBrain?.id || current?.private != currentBrain?.private) {
+                    currentBrain = current
+                    rescope()
+                }
+            }
+        }
+    }
+
+    /** Switches every screen to [brain]; null is the universal brain. */
+    fun switchBrain(brain: Brain?) {
+        if (generating || brain?.id == currentBrain?.id) return
+        currentBrain = brain
+        app.getSharedPreferences(PREFS, 0).edit().apply { if (brain == null) remove(PREF_BRAIN) else putString(PREF_BRAIN, brain.name) }.apply()
+        // An external model cannot be used in a private brain.
+        if (brain?.private == true && remoteProvider != null) useLocalModel()
+        rescope()
+    }
+
+    private fun rescope() {
+        selectedTag = null
+        selectedFolder = null
+        query = ""
+        detail = null
+        attachedNotes = emptyList()
+        newConversation()
+        refreshNotes()
+        loadGraph()
+        loadConversations()
+    }
+
+    fun createBrain(name: String, private: Boolean) {
+        app.vault({ db -> BrainRegistry(db).create(name, private, Instant.now().toString()) }) { result ->
+            onMain {
+                result.onSuccess { brain ->
+                    loadBrains()
+                    switchBrain(brain)
+                }.onFailure { vaultProblem = it.message }
+            }
+        }
+    }
+
+    fun setBrainPrivate(brain: Brain, private: Boolean) {
+        app.vault({ db -> BrainRegistry(db).setPrivate(brain.id, private, Instant.now().toString()) }) {
+            onMain {
+                if (private && currentBrain?.id == brain.id) {
+                    currentBrain = brain.copy(private = true)
+                    if (remoteProvider != null) useLocalModel()
+                }
+                loadBrains()
+            }
+        }
+    }
+
+    /** Moves a note into [brain]'s folder, or out of every brain with null. */
+    fun moveNote(id: Long, brain: Brain?) {
+        app.vault({ db ->
+            val store = NoteStore(db)
+            val note = store.get(id) ?: return@vault false
+            val path = brain?.let { store.freePath(it.name, note.title) }
+            db.beginTransaction()
+            try {
+                val moved = store.setPath(id, path)
+                db.setTransactionSuccessful()
+                moved
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                if (!result.getOrDefault(false)) vaultProblem = "The note could not be moved"
+                detail = null
+                loadBrains()
+                refreshNotes()
+            }
+        }
+    }
+
+    /** A new note written while a sub-brain is open goes into its folder. */
+    private fun placeInBrain(store: NoteStore, id: Long, text: String) {
+        val brain = scopeBrain ?: return
+        store.setPath(id, store.freePath(brain, NoteMarkup.titleOf(text)))
     }
 
     // ---- External AI over an API ----
@@ -1438,6 +1550,7 @@ class AppState(private val app: SeBrainApp) {
 
     /** Answers with an external model from now on. Notes stay on the phone unless attached. */
     fun useProvider(provider: RemoteProvider) {
+        if (currentBrain?.private == true) return
         remoteProvider = provider
         app.getSharedPreferences(PREFS, 0).edit().putString(PREF_ENGINE, provider.id).apply()
     }
@@ -1466,7 +1579,11 @@ class AppState(private val app: SeBrainApp) {
         val wanted = words.trim()
         app.vault({ db ->
             val captures = CaptureStore(db)
-            if (wanted.isEmpty()) captures.recent(20) else HybridSearch(db).search(wanted, null, 20).mapNotNull { captures.summaryOf(it.captureId) }
+            val store = notes(db)
+            val private = BrainRegistry(db).privateNames()
+            val found = if (wanted.isEmpty()) store.recent(40) else HybridSearch(db, scopeBrain).search(wanted, null, 40).mapNotNull { captures.summaryOf(it.captureId) }
+            // A note of a private brain is never offered to an external model.
+            found.filter { BrainRegistry.of(store.pathOf(it.id))?.lowercase() !in private }.take(20)
         }) { result ->
             onMain { attachCandidates = result.getOrDefault(emptyList()).distinctBy { it.id }.map { it.id to (it.title ?: it.text.take(40)) } }
         }
@@ -1478,10 +1595,16 @@ class AppState(private val app: SeBrainApp) {
      */
     private fun prepareRemote(provider: RemoteProvider, question: String) {
         val attached = attachedNotes
+        if (currentBrain?.private == true) {
+            messages += ChatMessage(false, "This brain is private: only the phone's model can be used in it.", isAction = true)
+            return
+        }
         app.vault({ db ->
             val store = NoteStore(db)
+            val private = BrainRegistry(db).privateNames()
             attached.mapIndexedNotNull { i, (id, _) ->
-                store.get(id)?.let { ContextNote(i + 1, it.id, it.title, it.tags, emptyList(), emptyList(), FrontMatter.body(it.text), focus = true) }
+                // Checked again here, at the last moment, whatever the screen offered.
+                store.get(id)?.takeIf { BrainRegistry.of(it.path)?.lowercase() !in private }?.let { ContextNote(i + 1, it.id, it.title, it.tags, emptyList(), emptyList(), FrontMatter.body(it.text), focus = true) }
             }
         }) { found ->
             onMain {
@@ -1641,6 +1764,7 @@ class AppState(private val app: SeBrainApp) {
         const val PREF_COMPACT = "compact_prompt_models"
         const val PREF_INDEX_VERSION = "index_version"
         const val PREF_ENGINE = "chat_engine"
+        const val PREF_BRAIN = "brain"
         const val REMOTE_HISTORY = 8
         const val REMOTE_ANSWER_TOKENS = 2000
         const val REMOTE_NOTE_TOKENS = 4000

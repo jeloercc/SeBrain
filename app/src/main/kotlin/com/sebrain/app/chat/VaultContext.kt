@@ -39,8 +39,12 @@ object VaultContext {
         conversationId: Long? = null,
         /** The user's message as written, to see whether it names a note. */
         message: String = query,
+        /** The brain to read from, or null for the universal brain. See [NoteStore]. */
+        brain: String? = null,
+        /** The brain's row id, for its conversations; null with the universal brain. */
+        brainId: Long? = null,
     ): Result {
-        val store = NoteStore(db)
+        val store = NoteStore(db, brain)
         val excluded = exclude.map { it.lowercase() }.toSet()
         // "¿Qué dice la nota Protocolo SSH?": the note a message names is read, first and whole.
         // Search alone may rank it low, or give only one of its chunks.
@@ -48,7 +52,7 @@ object VaultContext {
             ?.takeIf { it.title.lowercase() !in excluded }
         // Several chunks of one note can match; keep the note once, with its best chunks in order.
         val chunksByNote = LinkedHashMap<Long, MutableList<String>>()
-        for (hit in HybridSearch(db).search(query, vector, SEARCH_HITS)) {
+        for (hit in HybridSearch(db, brain).search(query, vector, SEARCH_HITS)) {
             chunksByNote.getOrPut(hit.captureId) { mutableListOf() }.add(hit.text)
         }
         val notes = mutableListOf<ContextNote>()
@@ -95,7 +99,7 @@ object VaultContext {
         }
         // Newest first. A pinned note is not also listed as a search result above.
         val pinned = store.withTag(Pins.TAG, PINNED_NOTES).map { Pins.line(it.title.orEmpty(), it.text) }
-        val past = ConversationStore(db).search(query, PAST_MESSAGES, conversationId)
+        val past = ConversationStore(db, brainId).search(query, PAST_MESSAGES, conversationId)
             .map { PastMessage(it.title, it.updatedAt, it.fromUser, it.text) }
         return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, pinned, past)
     }

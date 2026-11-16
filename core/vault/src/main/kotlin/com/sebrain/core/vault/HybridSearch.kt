@@ -14,7 +14,11 @@ data class SearchHit(
 )
 
 /** Full-text and vector search fused with Reciprocal Rank Fusion. Use it inside [VaultSession.withDatabase]. */
-class HybridSearch(private val db: SQLiteDatabase) {
+class HybridSearch(
+    private val db: SQLiteDatabase,
+    /** Keeps the hits of this brain's notes only; null searches every note. See [NoteStore]. */
+    private val brain: String? = null,
+) {
     /**
      * @param queryEmbedding the query vector, or null to search by text only.
      */
@@ -24,13 +28,19 @@ class HybridSearch(private val db: SQLiteDatabase) {
         val scored = (textRanks.keys + vectorRanks.keys).map { id ->
             val score = listOfNotNull(textRanks[id], vectorRanks[id]).sumOf { 1.0 / (RRF_K + it) }
             Triple(id, score, textRanks[id] to vectorRanks[id])
-        }.sortedWith(compareByDescending<Triple<Long, Double, Pair<Int?, Int?>>> { it.second }.thenBy { it.first }).take(limit)
+        }.sortedWith(compareByDescending<Triple<Long, Double, Pair<Int?, Int?>>> { it.second }.thenBy { it.first })
 
-        return scored.mapNotNull { (id, score, ranks) ->
-            db.rawQuery("SELECT capture_id, text FROM chunk WHERE id = ?", id as Any).use { c ->
-                if (c.moveToFirst()) SearchHit(id, c.getLong(0), c.getString(1), score, ranks.first, ranks.second) else null
+        // The brain is applied after the ranking, so a narrow brain may get fewer than [limit]
+        // hits from the candidates; the ranking itself is the same.
+        val prefix = brain?.let { "$it/" }
+        return scored.asSequence().mapNotNull { (id, score, ranks) ->
+            db.rawQuery("SELECT ch.capture_id, ch.text, c.path FROM chunk ch JOIN capture c ON c.id = ch.capture_id WHERE ch.id = ?", id as Any).use { c ->
+                if (!c.moveToFirst()) return@use null
+                val path = if (c.isNull(2)) null else c.getString(2)
+                if (prefix != null && (path == null || !path.startsWith(prefix, ignoreCase = true))) return@use null
+                SearchHit(id, c.getLong(0), c.getString(1), score, ranks.first, ranks.second)
             }
-        }
+        }.take(limit).toList()
     }
 
     private fun textRanks(ftsQuery: String): Map<Long, Int> = db.rawQuery(

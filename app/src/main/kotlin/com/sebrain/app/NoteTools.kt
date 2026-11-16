@@ -31,7 +31,7 @@ class NoteTools(
     ): String = createNoteFrom(title, text, tags, "assistant")
 
     /** Creates a note and records in its properties who wrote it: the local assistant, or an external model. */
-    fun createNoteFrom(title: String, text: String, tags: List<String>, source: String): String {
+    fun createNoteFrom(title: String, text: String, tags: List<String>, source: String, brain: String? = null): String {
         val body = buildString {
             // Properties that say where the note came from, so it can be told apart and filtered.
             append(FrontMatter.render(listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString()))))
@@ -40,13 +40,18 @@ class NoteTools(
             if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })
         }
         // Links point to titles, so two notes with one title would make them ambiguous.
-        if (session.withDatabase { NoteStore(it).findByTitle(title.trim()) } != null) {
+        if (session.withDatabase { NoteStore(it, brain).findByTitle(title.trim()) } != null) {
             return "A note titled \"${title.trim()}\" already exists; it was not saved again"
         }
         val created = session.withDatabase { db ->
             write(db) {
-                NoteStore(db).create(body, NoteIndexer.sha256Hex(body), Instant.now().toString(), ZoneId.systemDefault().id)
-                    ?.also { indexer.index(db, it, body) }
+                val store = NoteStore(db, brain)
+                store.create(body, NoteIndexer.sha256Hex(body), Instant.now().toString(), ZoneId.systemDefault().id)
+                    ?.also { id ->
+                        // A note written in a brain is placed in its folder.
+                        if (brain != null) store.setPath(id, store.freePath(brain, title))
+                        indexer.index(db, id, body)
+                    }
             }
         }
         return if (created != null) done("Created the note \"${title.trim()}\"") else "A note with the same content already exists"

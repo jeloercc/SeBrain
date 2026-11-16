@@ -23,7 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Column
 import com.sebrain.app.ui.AppState
+import com.sebrain.app.ui.BrainBar
 import com.sebrain.app.ui.ChatScreen
 import com.sebrain.app.ui.GraphScreen
 import com.sebrain.app.ui.ModelsScreen
@@ -53,9 +55,23 @@ class MainActivity : ComponentActivity() {
                     },
                 ) { padding ->
                     when (tab) {
-                        0 -> if (fullScreen) NotesScreen(state) else NotesScreen(state, Modifier.padding(padding))
-                        1 -> GraphScreen(state, Modifier.padding(padding))
-                        2 -> ChatScreen(state, Modifier.padding(padding).consumeWindowInsets(padding))
+                        0 -> if (fullScreen) {
+                            NotesScreen(state)
+                        } else {
+                            Column(Modifier.padding(padding)) {
+                                // The brain the tab is scoped to; the same choice on Notes, Graph and Ask.
+                                BrainBar(state, Modifier.padding(top = 8.dp))
+                                NotesScreen(state, Modifier.weight(1f))
+                            }
+                        }
+                        1 -> Column(Modifier.padding(padding)) {
+                            BrainBar(state, Modifier.padding(vertical = 6.dp))
+                            GraphScreen(state, Modifier.weight(1f))
+                        }
+                        2 -> Column(Modifier.padding(padding).consumeWindowInsets(padding)) {
+                            BrainBar(state, Modifier.padding(top = 6.dp))
+                            ChatScreen(state, Modifier.weight(1f))
+                        }
                         3 -> ModelsScreen(state, Modifier.padding(padding))
                         else -> PrivacyScreen(state, Modifier.padding(padding))
                     }

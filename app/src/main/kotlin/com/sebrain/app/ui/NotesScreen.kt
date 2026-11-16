@@ -438,6 +438,7 @@ private fun NetworkGraphCard(graph: NoteGraph?) {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
+    var moving by remember(detail.note.id) { mutableStateOf(false) }
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmShare by remember { mutableStateOf(false) }
@@ -456,6 +457,7 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                 actions = {
                     // Pinned: the assistant reads this note in every answer.
                     TextButton(onClick = { state.togglePinned(note.id) }) { Text(if (Pins.TAG in note.tags) "UNPIN" else "PIN") }
+                    TextButton(onClick = { moving = true }) { Text("MOVE") }
                     IconButton(onClick = { state.draft = NoteDraft(note.id, note.text) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit") }
                     IconButton(onClick = { confirmShare = true }) { Icon(Icons.Filled.Share, contentDescription = "Share") }
                     TextButton(onClick = { exportPicker.launch(com.sebrain.cognition.MarkdownInterop.fileName(note.title)) }) {
@@ -518,6 +520,12 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                     },
                     dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
                 )
+            }
+            if (moving) {
+                MoveNoteDialog(state.subBrains, com.sebrain.core.vault.BrainRegistry.of(note.path), onDismiss = { moving = false }) { brain ->
+                    moving = false
+                    state.moveNote(note.id, brain)
+                }
             }
             detail.problem?.let {
                 Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
