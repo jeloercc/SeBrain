@@ -17,7 +17,7 @@ PACKAGE=com.sebrain.diag
 mkdir -p "$OUT"
 
 $ADB get-state > /dev/null 2>&1 || { echo "Device $SERIAL not found"; exit 1; }
-$ADB shell dumpsys trust | grep -m1 -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
+$ADB shell dumpsys trust | grep '(current)' | grep -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
 
 (cd "$ROOT/spikes/diag" && ./gradlew -q assembleDebug > "$OUT/build.log" 2>&1) || { echo "Build failed, see $OUT/build.log"; exit 1; }
 $ADB install -r "$ROOT/spikes/diag/app/build/outputs/apk/debug/app-debug.apk" > /dev/null

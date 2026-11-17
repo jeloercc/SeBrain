@@ -17,7 +17,7 @@ mkdir -p "$OUT"
 cd "$ROOT"
 
 record() { echo "$1 | $2 | $3" | tee -a "$SUMMARY"; }
-locked() { $ADB shell dumpsys trust | grep -m1 -q 'deviceLocked=1'; }
+locked() { $ADB shell dumpsys trust | grep '(current)' | grep -q 'deviceLocked=1'; }
 instrument() { # package class#method phase
     $ADB shell am instrument -w -e class "$2" -e phase "$3" "$1/androidx.test.runner.AndroidJUnitRunner" 2>&1
 }

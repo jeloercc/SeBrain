@@ -9,7 +9,14 @@ object NoteSections {
     private val HEADING = Regex("^(#{1,6})\\s+(.*?)\\s*#*\\s*$")
     private val BLOCK_ID = Regex("\\s\\^([\\p{L}\\p{N}-]+)\\s*$")
     private val FENCE = Regex("^\\s*(```|~~~)")
-    private val LINK_OR_CODE = Regex("!?\\[\\[[^\\]]*]]|```.*?```|`[^`\\n]*`", RegexOption.DOT_MATCHES_ALL)
+    /**
+     * Text a mention is never linked in: links, code, heading lines (a link would change the
+     * note's title or a section name) and `#tags` (as `NoteMarkup` reads them).
+     */
+    private val NOT_LINKABLE = Regex(
+        "!?\\[\\[[^\\]]*]]|```.*?```|`[^`\\n]*`|(?m:^#{1,6}[ \\t][^\\n]*)|(?<![\\p{L}\\p{N}_#/&=?.:])#[\\p{L}_][\\p{L}\\p{N}_/-]*",
+        RegexOption.DOT_MATCHES_ALL,
+    )
 
     /** What `[[target#anchor|display]]` holds between its brackets. */
     data class Reference(val target: String, val anchor: String, val display: String?) {
@@ -75,7 +82,7 @@ object NoteSections {
      */
     fun linkMention(text: String, title: String, names: List<String>): String? {
         val start = FrontMatter.parse(text).bodyStart
-        val taken = LINK_OR_CODE.findAll(text, start).map { it.range }.toList()
+        val taken = NOT_LINKABLE.findAll(text, start).map { it.range }.toList()
         for (name in names.filter { it.isNotBlank() }.sortedByDescending { it.length }) {
             val pattern = Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(name.trim()) + "(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
             val match = pattern.findAll(text, start).firstOrNull { m -> taken.none { m.range.first >= it.first && m.range.last <= it.last } }

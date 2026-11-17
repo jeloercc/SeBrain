@@ -77,6 +77,29 @@ class NoteSectionsTest {
     fun mentionsInsideLinksCodeOrOtherWordsAreNotTouched() {
         assertNull(NoteSections.linkMention("Ya está en [[Protocolo TCP]] y en `Protocolo TCP`.", "Protocolo TCP", listOf("Protocolo TCP")))
         assertNull(NoteSections.linkMention("Los TCPs y el xTCP no cuentan.", "Protocolo TCP", listOf("TCP")))
+    }
+
+    @Test
+    fun aTagIsNeverTurnedIntoALink() {
+        // Seen on the phone: "#kernel" became "#[[The Linux Kernel|kernel]]".
+        val text = "# Systemd\n\nAn init system.\n\n#linux #core #kernel"
+        assertNull(NoteSections.linkMention(text, "The Linux Kernel", listOf("kernel", "core")))
+        // A nested tag too, while the same word in prose is still linked.
+        assertEquals(
+            "Talks to the [[The Linux Kernel|kernel]].\n\n#os/kernel",
+            NoteSections.linkMention("Talks to the kernel.\n\n#os/kernel", "The Linux Kernel", listOf("kernel")),
+        )
+    }
+
+    @Test
+    fun aHeadingIsNeverTurnedIntoALink() {
+        // Seen on the phone: the title "SSH Remote Access" lost its last word to a link.
+        val text = "# SSH Remote Access\n\n## Access keys\nUse a key."
+        assertNull(NoteSections.linkMention(text, "File Permissions and Chmod", listOf("access")))
+        assertEquals(
+            "# SSH\n\nControls [[File Permissions and Chmod|access]].",
+            NoteSections.linkMention("# SSH\n\nControls access.", "File Permissions and Chmod", listOf("access")),
+        )
         assertEquals(
             "---\ntitle: TCP\n---\nEl [[Protocolo TCP|TCP]].",
             NoteSections.linkMention("---\ntitle: TCP\n---\nEl TCP.", "Protocolo TCP", listOf("TCP")),

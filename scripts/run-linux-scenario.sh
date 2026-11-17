@@ -19,12 +19,15 @@ mkdir -p "$OUT"
 cd "$ROOT"
 
 $ADB get-state > /dev/null 2>&1 || { echo "Device $SERIAL not found"; exit 1; }
-$ADB shell dumpsys trust | grep -m1 -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
+$ADB shell dumpsys trust | grep '(current)' | grep -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
 
 ANDROID_SERIAL=$SERIAL ./gradlew -q :app:installDebug :app:installDebugAndroidTest > "$OUT/install.log" 2>&1 \
     || { echo "Install failed, see $OUT/install.log"; exit 1; }
 
 $ADB shell svc power stayon usb
+# The vault closes when the screen turns off, so the timeout is also raised for the run and restored after.
+SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r')
+$ADB shell settings put system screen_off_timeout 1800000
 $ADB logcat -c
 # Streamed to a file: the device buffer rotates during the run and loses the early lines.
 $ADB logcat -v time -s SEBRAIN_EVAL:I > "$LOG" &
@@ -39,6 +42,10 @@ $ADB shell am instrument -w -e scenario linux $MODEL_ARG \
 sleep 2
 kill $LOGCAT_PID 2> /dev/null
 $ADB shell svc power stayon false
+$ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"
+# A run that stopped because the device locked is not a test failure: say so.
+grep -q 'VaultKeyException\$DeviceLocked\|VaultKeyException\$ScreenOff' "$RESULT" \
+    && echo "== The device locked or its screen turned off during the run: unlock it, leave it untouched and run again."
 
 if grep -q '^OK (1 test)' "$RESULT"; then STATUS=PASS; else STATUS=FAIL; fi
 echo "== $STATUS ($(grep -m1 '^Time:' "$RESULT"))"
