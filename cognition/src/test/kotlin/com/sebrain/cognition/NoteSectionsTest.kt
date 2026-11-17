@@ -92,6 +92,18 @@ class NoteSectionsTest {
     }
 
     @Test
+    fun theNotesOwnNamesAreNotLinkedToOtherNotes() {
+        // Seen on the phone: "Shell" inside "Secure Shell", the SSH note's own alias, linked to The Shell.
+        val ssh = "---\naliases: [scp, secure shell]\n---\n# SSH Remote Access\n\nSecure Shell encrypts the session."
+        assertNull(NoteSections.linkMention(ssh, "The Shell", listOf("The Shell", "Shell")))
+        // The same word outside the note's own names is still linked.
+        assertEquals(
+            ssh.replace("the session.", "the session. It starts a [[The Shell|shell]]."),
+            NoteSections.linkMention(ssh.replace("the session.", "the session. It starts a shell."), "The Shell", listOf("The Shell", "shell")),
+        )
+    }
+
+    @Test
     fun aHeadingIsNeverTurnedIntoALink() {
         // Seen on the phone: the title "SSH Remote Access" lost its last word to a link.
         val text = "# SSH Remote Access\n\n## Access keys\nUse a key."

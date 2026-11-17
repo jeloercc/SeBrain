@@ -82,14 +82,29 @@ object NoteSections {
      */
     fun linkMention(text: String, title: String, names: List<String>): String? {
         val start = FrontMatter.parse(text).bodyStart
-        val taken = NOT_LINKABLE.findAll(text, start).map { it.range }.toList()
+        // The note's own names ("Secure Shell" in the SSH note) are about this note, so no word
+        // inside them links to another one.
+        val ownNames = (NoteMarkup.parse(text).aliases + listOfNotNull(ownTitle(text, start))).filter { it.trim().length >= MIN_OWN_NAME }
+        val taken = NOT_LINKABLE.findAll(text, start).map { it.range }.toList() +
+            ownNames.flatMap { own -> mentions(text, own, start).map { it.range }.toList() }
         for (name in names.filter { it.isNotBlank() }.sortedByDescending { it.length }) {
-            val pattern = Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(name.trim()) + "(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
-            val match = pattern.findAll(text, start).firstOrNull { m -> taken.none { m.range.first >= it.first && m.range.last <= it.last } }
+            val match = mentions(text, name, start).firstOrNull { m -> taken.none { m.range.first >= it.first && m.range.last <= it.last } }
                 ?: continue
             val link = if (match.value == title) "[[$title]]" else "[[$title|${match.value}]]"
             return text.replaceRange(match.range, link)
         }
         return null
     }
+
+    /** The note's `# Title`, if it has one; a first line of prose is not a name. */
+    private fun ownTitle(text: String, start: Int): String? =
+        text.substring(start).lineSequence().mapNotNull { HEADING.matchEntire(it.trim()) }
+            .firstOrNull { it.groupValues[1].length == 1 }?.groupValues?.get(2)?.takeIf { it.isNotBlank() }
+
+    /** Where [name] appears in [text] from [start], as whole words, ignoring case. */
+    private fun mentions(text: String, name: String, start: Int): Sequence<MatchResult> =
+        Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(name.trim()) + "(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE).findAll(text, start)
+
+    /** Shorter own names ("os") would block words that are not about the note. */
+    private const val MIN_OWN_NAME = 3
 }

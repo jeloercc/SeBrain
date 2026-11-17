@@ -26,8 +26,13 @@ ANDROID_SERIAL=$SERIAL ./gradlew -q :app:installDebug :app:installDebugAndroidTe
 
 $ADB shell svc power stayon usb
 # The vault closes when the screen turns off, so the timeout is also raised for the run and restored after.
-SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r')
-$ADB shell settings put system screen_off_timeout 1800000
+RUN_TIMEOUT=1800000
+SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r[:space:]')
+# A run stopped before it could restore leaves the long timeout: never keep it as the user's own.
+[ "$SCREEN_TIMEOUT" = "$RUN_TIMEOUT" ] && SCREEN_TIMEOUT=60000
+# Restored on any exit, also when the run is interrupted.
+trap '$ADB shell svc power stayon false; $ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"' EXIT
+$ADB shell settings put system screen_off_timeout $RUN_TIMEOUT
 $ADB logcat -c
 # Streamed to a file: the device buffer rotates during the run and loses the early lines.
 $ADB logcat -v time -s SEBRAIN_EVAL:I > "$LOG" &
@@ -41,8 +46,6 @@ $ADB shell am instrument -w -e scenario linux $MODEL_ARG \
 
 sleep 2
 kill $LOGCAT_PID 2> /dev/null
-$ADB shell svc power stayon false
-$ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"
 # A run that stopped because the device locked is not a test failure: say so.
 grep -q 'VaultKeyException\$DeviceLocked\|VaultKeyException\$ScreenOff' "$RESULT" \
     && echo "== The device locked or its screen turned off during the run: unlock it, leave it untouched and run again."
