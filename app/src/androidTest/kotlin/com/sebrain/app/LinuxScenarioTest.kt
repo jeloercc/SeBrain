@@ -34,8 +34,7 @@ import org.junit.runner.RunWith
  * `connectedDebugAndroidTest`. Run it with:
  *
  * ```
- * adb shell am instrument -w -e scenario linux [-e model E4B] \
- *     -e class com.sebrain.app.LinuxScenarioTest com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner
+ * scripts/run-linux-scenario.sh <serial> [model]
  * ```
  */
 @RunWith(AndroidJUnit4::class)
@@ -169,6 +168,13 @@ class LinuxScenarioTest {
 
     /** 5. Chat in the Linux brain: answers grounded in the notes, a follow-up, a named note. */
     private fun chatInBrain() {
+        // The named-note turn is judged against what the note really says, so its body is logged.
+        vault.session.withDatabase { db ->
+            val store = NoteStore(db, "Linux")
+            store.findByTitle(NAMED_NOTE)?.let(store::get)?.let { note ->
+                log("named note=\"${note.title}\" body=${FrontMatter.body(note.text).replace("\n", " ⏎ ")}")
+            } ?: log("named note=\"$NAMED_NOTE\" missing")
+        }
         val history = ArrayList<Assistant.Line>()
         for (message in CHAT_MESSAGES) {
             val (reply, read) = ask(message, "Linux", history)
@@ -243,6 +249,9 @@ class LinuxScenarioTest {
         const val NOW = "2026-11-16T10:00:00Z"
         const val PERSONAL_NOTE = "My home server runs Debian 12 and is called atlas. The admin password hint is the blue notebook."
         const val ISOLATION_QUESTION = "What is my home server called?"
+
+        /** The note the last chat message names. */
+        const val NAMED_NOTE = "systemd"
 
         val NOTE_REQUESTS = listOf(
             "Create a note for each of these Linux topics: the Linux kernel, the shell, and the filesystem hierarchy",
