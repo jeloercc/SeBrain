@@ -94,6 +94,25 @@ class BrainIsolationTest {
     }
 
     @Test
+    fun notesMentioningCountsWholeWordsInsideTheBrain() {
+        note("Shell", "Linux/Shell", text = "the shell reads commands")
+        note("Cron", "Linux/Cron", text = "cron runs a shell script at night")
+        note("Kernel", "Linux/Kernel", text = "the kernel schedules processes")
+        note("Diario", "Personal/Diario", text = "a shell on the beach")
+        session.withDatabase { db ->
+            val linux = NoteStore(db, "Linux")
+            assertEquals(2, linux.notesMentioning("shell"))
+            assertEquals(1, linux.notesMentioning("shell script"))
+            // Whole words only.
+            assertEquals(0, linux.notesMentioning("she"))
+            // FTS5 syntax in the input is only words: this is the phrase "shell OR kernel".
+            assertEquals(0, linux.notesMentioning("shell\" OR \"kernel"))
+            assertEquals(0, linux.notesMentioning("  -- "))
+            assertEquals(3, NoteStore(db).notesMentioning("shell"))
+        }
+    }
+
+    @Test
     fun brainsAreListedFromFoldersAndRememberWhetherTheyArePrivate() {
         note("TCP", "Redes/TCP")
         session.withDatabase { db ->

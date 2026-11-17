@@ -55,6 +55,21 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
             "ORDER BY COALESCE(updated_at, captured_at) DESC, id DESC LIMIT $limit",
     )
 
+    /**
+     * How many notes of the brain contain [phrase] as whole words, answered by the full-text
+     * index, so it stays one indexed query however large the vault is. 0 if it has no word.
+     */
+    fun notesMentioning(phrase: String): Int {
+        val words = WORD.findAll(phrase).map { it.value }.toList()
+        if (words.isEmpty()) return 0
+        // One quoted FTS5 phrase made only of words, so the input is never read as FTS5 syntax.
+        return db.rawQuery(
+            "SELECT count(DISTINCT ch.capture_id) FROM chunk_fts JOIN chunk ch ON ch.id = chunk_fts.rowid " +
+                "JOIN capture c ON c.id = ch.capture_id WHERE chunk_fts MATCH ? AND ${inBrain("c.path")}",
+            "\"${words.joinToString(" ")}\"" as Any,
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+
     fun count(): Long = db.rawQuery("SELECT count(*) FROM capture WHERE ${inBrain()}", emptyArray<String>()).use { c ->
         c.moveToFirst()
         c.getLong(0)

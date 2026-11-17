@@ -104,9 +104,13 @@ class LinuxScenarioTest {
                 total++
                 val ok = draft.body.contains("## ") && draft.body.contains("\n- ") && draft.tags.size in 2..4
                 if (ok) formatted++
-                val outcome = tools.createNoteFrom(draft.title, draft.body, draft.tags, "assistant", "Linux")
+                val outcome = tools.createNoteFrom(draft.title, draft.body, draft.tags, "assistant", "Linux", draft.aliases)
                 if (outcome.startsWith("Created")) written += draft.title
-                log("note title=\"${draft.title}\" tags=${draft.tags} sections=${Regex("(?m)^## ").findAll(draft.body).count()} bullets=${Regex("(?m)^- ").findAll(draft.body).count()} chars=${draft.body.length} format=${if (ok) "ok" else "off"} outcome=${outcome.take(60)}")
+                val stored = vault.session.withDatabase { db ->
+                    val store = NoteStore(db, "Linux")
+                    store.findByTitle(draft.title)?.let(store::get)?.let { NoteMarkup.parse(it.text).aliases }.orEmpty()
+                }
+                log("note title=\"${draft.title}\" proposedAliases=${draft.aliases} aliases=$stored tags=${draft.tags} sections=${Regex("(?m)^## ").findAll(draft.body).count()} bullets=${Regex("(?m)^- ").findAll(draft.body).count()} chars=${draft.body.length} format=${if (ok) "ok" else "off"} outcome=${outcome.take(60)}")
             }
             log("write request=\"$request\" seconds=%.1f notes=${drafts.size} looped=${chat.lastLooped}".format(seconds))
         }
@@ -130,6 +134,11 @@ class LinuxScenarioTest {
                     val before = NoteMarkup.parse(note.text).links.size
                     if (rewrite(db, store, note.id, result.text)) linksAdded += NoteMarkup.parse(result.text).links.size - before
                 }
+            }
+            // Which note links to which, to check by reading that no link goes to a wrong note.
+            for (note in store.page(0, 50)) {
+                val targets = NoteMarkup.parse(note.text).links
+                if (targets.isNotEmpty()) log("links from=\"${note.title}\" to=$targets")
             }
             val graph = store.graph()
             log("links added=$linksAdded graph nodes=${graph.nodes.count { it.id != null }} edges=${graph.edges.size} unresolved=${graph.nodes.count { it.id == null }}")

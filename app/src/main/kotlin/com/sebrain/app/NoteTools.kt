@@ -3,6 +3,7 @@ package com.sebrain.app
 import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
+import com.sebrain.app.chat.NoteAliases
 import com.sebrain.cognition.FrontMatter
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.vault.CaptureStore
@@ -31,14 +32,15 @@ class NoteTools(
     ): String = createNoteFrom(title, text, tags, "assistant")
 
     /** Creates a note and records in its properties who wrote it: the local assistant, or an external model. */
-    fun createNoteFrom(title: String, text: String, tags: List<String>, source: String, brain: String? = null): String {
-        val body = buildString {
-            // Properties that say where the note came from, so it can be told apart and filtered.
-            append(FrontMatter.render(listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString()))))
-            append("# ").append(title.trim()).append("\n\n").append(text.trim())
-            val clean = cleanTags(tags)
-            if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })
-        }
+    fun createNoteFrom(
+        title: String,
+        text: String,
+        tags: List<String>,
+        source: String,
+        brain: String? = null,
+        /** Other names the model proposed; only those that pass [NoteAliases.choose] are kept. */
+        aliases: List<String> = emptyList(),
+    ): String {
         // Links point to titles, so two notes with one title would make them ambiguous.
         if (session.withDatabase { NoteStore(it, brain).findByTitle(title.trim()) } != null) {
             return "A note titled \"${title.trim()}\" already exists; it was not saved again"
@@ -46,6 +48,8 @@ class NoteTools(
         val created = session.withDatabase { db ->
             write(db) {
                 val store = NoteStore(db, brain)
+                // Chosen in the same transaction as the write, against the brain as it is now.
+                val body = noteText(title, text, tags, source, NoteAliases.choose(title, aliases, aliasChecks(store), cleanTags(tags)))
                 store.create(body, NoteIndexer.sha256Hex(body), Instant.now().toString(), ZoneId.systemDefault().id)
                     ?.also { id ->
                         // A note written in a brain is placed in its folder.
@@ -55,6 +59,31 @@ class NoteTools(
             }
         }
         return if (created != null) done("Created the note \"${title.trim()}\"") else "A note with the same content already exists"
+    }
+
+    /** The note in Obsidian format: where it came from and its other names, the title, the body, the tags. */
+    private fun noteText(title: String, text: String, tags: List<String>, source: String, aliases: List<String>): String = buildString {
+        // Properties that say where the note came from, so it can be told apart and filtered.
+        val properties = listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString())) +
+            (if (aliases.isEmpty()) emptyList() else listOf("aliases" to aliases))
+        append(FrontMatter.render(properties))
+        append("# ").append(title.trim()).append("\n\n").append(text.trim())
+        val clean = cleanTags(tags)
+        if (clean.isNotEmpty()) append("\n\n").append(clean.joinToString(" ") { "#$it" })
+    }
+
+    /**
+     * The checks [NoteAliases.choose] makes against the brain. Each one is a single indexed
+     * query and runs only for the few names left after the checks done in memory.
+     */
+    private fun aliasChecks(store: NoteStore): NoteAliases.Brain {
+        val notes = store.count()
+        return NoteAliases.Brain(
+            isTaken = { store.findByTitle(it) != null },
+            tagsInUse = store.tags().mapTo(HashSet()) { it.first.lowercase() },
+            // In more than half of the brain's notes, a name says nothing about one topic.
+            isGeneric = { notes >= GENERIC_MIN_NOTES && store.notesMentioning(it) * 2 > notes },
+        )
     }
 
     @Tool(description = "Search the user's notes by words. Returns titles and short excerpts")
@@ -114,5 +143,10 @@ class NoteTools(
     private fun done(message: String): String {
         onAction(message)
         return message
+    }
+
+    private companion object {
+        /** Below this, a brain is too small to tell a generic word from a shared topic. */
+        const val GENERIC_MIN_NOTES = 4
     }
 }

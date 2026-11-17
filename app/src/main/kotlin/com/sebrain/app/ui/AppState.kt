@@ -1367,7 +1367,7 @@ class AppState(private val app: SeBrainApp) {
         var created = false
         for (note in NoteFormat.parse(reply, question)) {
             val text = Assistant.linkify(note.body, context, note.title)
-            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain) }
+            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain, note.aliases) }
                 .getOrElse { "The note could not be saved: ${it.message}" }
             if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
         }

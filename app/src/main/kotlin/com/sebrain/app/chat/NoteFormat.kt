@@ -1,7 +1,13 @@
 package com.sebrain.app.chat
 
 /** A note taken out of a model reply, ready to be saved. */
-data class DraftNote(val title: String, val body: String, val tags: List<String>)
+data class DraftNote(
+    val title: String,
+    val body: String,
+    val tags: List<String>,
+    /** Other names the model gave the topic, not yet filtered: see [NoteAliases.choose]. */
+    val aliases: List<String> = emptyList(),
+)
 
 /**
  * The format of the notes the assistant writes. It has two halves: [instructions] tell the
@@ -18,7 +24,9 @@ object NoteFormat {
     private val TITLE_LINE = Regex("^#\\s+(\\S.*)$")
     private val FENCE = Regex("^\\s*(```|~~~)")
     private val TAG_LINE = Regex("^[*_#\\s>-]*(?:tags?|etiquetas?)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
-    private val TITLE_LABEL = Regex("^(?:title|t[ií]tulo|note|nota)\\s*:\\s*", RegexOption.IGNORE_CASE)
+    private val ALIAS_LINE = Regex("^[*_#\\s>-]*(?:aliases|alias|otros nombres)[*_\\s]*:(.*)$", RegexOption.IGNORE_CASE)
+    private val NO_ALIAS = setOf("none", "no", "n/a", "ninguno", "ninguna", "-")
+    private val TITLE_LABEL =Regex("^(?:title|t[ií]tulo|note|nota)\\s*:\\s*", RegexOption.IGNORE_CASE)
     private val BULLET = Regex("^(\\s*)[*•+]\\s+")
     private val RULE = Regex("^\\s*([-*_])(\\s*\\1){2,}\\s*$")
     private val SPANISH = Regex(
@@ -44,6 +52,9 @@ object NoteFormat {
         append("One or two sentences that say what it is.\n\n")
         append("## $points\n- three to six short bullets\n\n")
         append("## $details\nA short paragraph, a list or a code block. Leave this section out if it adds nothing.\n\n")
+        // Other notes link to this one when they use one of these names.
+        append("Aliases: up to three other names that mean only this topic (an abbreviation, the command, another common name), ")
+        append("not general words, separated by commas, or none\n")
         append("Tags: two to four lowercase tags, separated by commas\n\n")
         append("Rules: the title is the topic itself, at most six words, without words like \"note\" or ")
         append("\"description\". Use \"#\" only for the title of a note and \"##\" for its sections. Every note ends ")
@@ -99,10 +110,24 @@ object NoteFormat {
             tags = cleanTags(TAG_LINE.find(kept[tagIndex].trim())!!.groupValues[1])
             kept.removeAt(tagIndex)
         }
+        var aliases = emptyList<String>()
+        val aliasIndex = kept.indexOfLast { ALIAS_LINE.matches(it.trim()) }
+        if (aliasIndex >= 0) {
+            aliases = cleanAliases(ALIAS_LINE.find(kept[aliasIndex].trim())!!.groupValues[1])
+            kept.removeAt(aliasIndex)
+        }
         val title = cleanTitle(rawTitle).ifBlank { "Note" }
         val body = cleanBody(kept, title)
-        return if (body.isBlank()) null else DraftNote(title, body, tags)
+        return if (body.isBlank()) null else DraftNote(title, body, tags, aliases)
     }
+
+    /** Names as written, without Markdown or quotes; the brain-aware filtering is [NoteAliases.choose]. */
+    private fun cleanAliases(raw: String): List<String> =
+        raw.split(',', ';')
+            .map { it.trim().trim('*', '_', '`', '"', '“', '”', '\'', '[', ']', '.', ' ') }
+            .filter { it.isNotEmpty() && it.lowercase() !in NO_ALIAS }
+            .distinctBy { it.lowercase() }
+            .take(NoteAliases.MAX_ALIASES)
 
     /** Removes a code fence the model put around the whole reply. */
     private fun unwrap(reply: String): String {
