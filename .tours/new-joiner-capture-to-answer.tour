@@ -1,0 +1,101 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "SeBrain: from a shared text to a cited answer",
+  "description": "Onboarding tour for a new maintainer. Follows one capture from the Android share sheet, through the encrypted inbox and the SQLCipher vault, to hybrid search and the chat prompt, and ends at the only module allowed to touch the network.",
+  "steps": [
+    {
+      "file": "settings.gradle.kts",
+      "line": 18,
+      "title": "Module map",
+      "description": "Seven modules, one per trust boundary. `:ingest` writes captures and never opens the vault. `:cognition` turns captures into searchable rows. `:core:crypto` owns the Keystore keys and file formats, `:core:vault` owns SQLCipher + sqlite-vec, `:core:ml` the on-device models, `:core:net` the only network code, and `:app` wires them together with Compose.\n\nGotcha: `spikes/diag` is a separate Gradle build used for Phase 0 measurements. It is not part of the app."
+    },
+    {
+      "file": "ingest/src/main/kotlin/com/sebrain/ingest/ShareActivity.kt",
+      "line": 15,
+      "title": "Entry point: the share sheet",
+      "description": "A note's life starts here. `ACTION_SEND` text is handed to `CaptureIngestor` on a plain thread, and the user only sees a toast (Saved / Already saved / Too large).\n\nThere is no UI and no vault access, and this is deliberate: it must work with the phone locked. Errors are logged by class name only (`e.javaClass.simpleName`), never with content. Keep that rule in any new log line."
+    },
+    {
+      "file": "ingest/src/main/kotlin/com/sebrain/ingest/ShareActivity.kt",
+      "line": 63,
+      "title": "Ingestion needs only public material",
+      "description": "The ingestor is built with the `K_inbox` **public** key and `K_dedup` (an HMAC key with no unlock requirement). Neither can decrypt anything, so capturing works while the device is locked.\n\nGotcha: it is a per-process singleton on purpose. `CaptureIngestor.ingest` is `@Synchronized`, and that only serializes writes to the inbox and to `dedup.idx` if there is a single instance."
+    },
+    {
+      "file": "ingest/src/main/kotlin/com/sebrain/ingest/CaptureIngestor.kt",
+      "line": 35,
+      "title": "Normalize, deduplicate, encrypt, write",
+      "description": "The pipeline is: normalize → size limit (1 MiB) → SHA-256 → `HMAC(K_dedup, sha)` tag → skip if seen → build `CapturePayload` → encrypt → write `<uuid>.tmp`, `fsync`, rename to `.seg`.\n\nThe disk only ever holds the keyed tag, never a plain content hash. The plaintext payload buffer is zeroed in `finally`."
+    },
+    {
+      "file": "ingest/src/main/kotlin/com/sebrain/ingest/CaptureIngestor.kt",
+      "line": 59,
+      "title": "Ordering gotcha: remember after durable",
+      "description": "The dedup tag is recorded only after the segment is on disk. If the app crashes in between, the same text can be captured twice. That is accepted because the vault has `content_sha256 UNIQUE` and rejects the second copy at import. Reversing the order would risk losing a capture, which is worse than a duplicate."
+    },
+    {
+      "file": "core/crypto/src/main/kotlin/com/sebrain/core/crypto/InboxSegmentCodec.kt",
+      "line": 34,
+      "title": "Segment format: ECIES per segment",
+      "description": "Each segment gets a fresh ephemeral P-256 key. ECDH with the recipient `K_inbox` public key derives an AES-256-GCM key bound to `keyId` and `segmentId`. The header (magic, version, key id, segment id, ephemeral key, nonce) is authenticated as AAD, so a header cannot be swapped between files.\n\nThe key id byte selects Strict or Balanced `K_inbox` on decrypt. Phase 0 measured one ECDH per segment at about 44 ms, under 2% of a segment's processing time, which is why the per-window key proposal was rejected."
+    },
+    {
+      "file": "app/src/main/kotlin/com/sebrain/app/SeBrainApp.kt",
+      "line": 48,
+      "title": "Who triggers cognition today",
+      "description": "When a capture is stored, the app process queues `requestImport()` on its single-thread executor. Search, vault reads/writes and model work share that same executor, so the vault and the models are never used from two threads at once.\n\nGotcha: `CLAUDE.md` describes a WorkManager `CognitionWorker`. That worker does not exist in the code yet. Import runs in-process, and only while the vault can open (screen on and unlocked)."
+    },
+    {
+      "file": "core/vault/src/main/kotlin/com/sebrain/core/vault/VaultSession.kt",
+      "line": 64,
+      "title": "The vault gate: withDatabase",
+      "description": "Every vault access goes through `withDatabase`. It refuses with `DeviceLocked` or `ScreenOff`, and closes an open database if that happens. It opens the database lazily and counts active uses, so a close requested mid-work (screen off, idle timeout) waits for the work to finish.\n\nThe screen state is used as the boundary because apps cannot observe the keyguard lock moment."
+    },
+    {
+      "file": "core/vault/src/main/kotlin/com/sebrain/core/vault/VaultSession.kt",
+      "line": 106,
+      "title": "Opening: DEK → raw SQLCipher key",
+      "description": "The 32-byte DEK is unwrapped by `WrappedDekStore` with `K_wrap` (StrongBox, unlock required). It is encoded as a raw `x'…'` key so SQLCipher skips PBKDF2, and the DEK copy is zeroed immediately. Then `VaultSchema.migrate` runs.\n\nGotcha: the raw key array cannot be zeroed until close, because sqlcipher-android keeps a reference to it for later connections (see `docs/design-vault-session.md`). If the vault file exists but the wrapped DEK does not, this fails loudly instead of creating a new key."
+    },
+    {
+      "file": "cognition/src/main/kotlin/com/sebrain/cognition/InboxImporter.kt",
+      "line": 37,
+      "title": "Import: crash-safe, idempotent",
+      "description": "First it probes `session.withDatabase { }`, so no segment is decrypted unless the vault is open. Each segment is decrypted, stored, and deleted **only after** its transaction commits. Segments that fail to decrypt or parse are quarantined, not deleted.\n\nIt can stop at any point (lock, screen off) and be re-run. The `Result` holds counts and an exception class only."
+    },
+    {
+      "file": "cognition/src/main/kotlin/com/sebrain/cognition/NoteIndexer.kt",
+      "line": 24,
+      "title": "Indexing: markup, chunks, vectors",
+      "description": "One call derives everything searchable: title, tags, links, aliases and properties (`markup`), then chunks with a `ChunkHeader` (note title + section) prepended, then embeddings with the title in the document prompt.\n\nGotcha: embedding is best-effort (`embedTitled` returns null on any failure). Text and FTS are stored anyway, and `indexPending` in the importer backfills missing vectors later. A missing model must never block a write."
+    },
+    {
+      "file": "core/vault/src/main/kotlin/com/sebrain/core/vault/HybridSearch.kt",
+      "line": 25,
+      "title": "Query side: FTS5 + vec0 fused with RRF",
+      "description": "There are two candidate lists of 50: BM25 over `chunk_fts`, and KNN over `chunk_vec` (256-dimensional EmbeddingGemma). They are fused with `1/(60 + rank)`. With no embedding model, search degrades to text only.\n\nGotchas: user text becomes quoted words joined by OR (`ftsQuery`), so input is never parsed as FTS5 syntax. The brain filter (top-level folder prefix) is applied **after** ranking, so a small brain can return fewer than `limit` hits."
+    },
+    {
+      "file": "app/src/main/kotlin/com/sebrain/app/chat/VaultContext.kt",
+      "line": 33,
+      "title": "From hits to notes the model sees",
+      "description": "Hits are grouped per note. A note the user names explicitly is read in full and placed first. Pinned notes and already-written titles are excluded, and each note carries its links and backlinks.\n\nThis is the layer to change if answers miss obviously relevant notes. `HybridSearch` only ranks chunks; this file decides what reaches the prompt."
+    },
+    {
+      "file": "app/src/main/kotlin/com/sebrain/app/chat/Assistant.kt",
+      "line": 287,
+      "title": "Prompt budget and citations",
+      "description": "The on-device model has 4096 tokens including the reply. When the context does not fit, `prompt` cuts the least valuable parts first: connected notes, then note length, then the outline. Notes are numbered for `[n]` citations.\n\nAfter generation, `dropUnknownCitations` removes `[n]` values outside the range, and `linkify` turns citations into `[[links]]` and strips made-up links before a reply is saved as a note. Without that, the graph would get false edges."
+    },
+    {
+      "file": "core/net/src/main/kotlin/com/sebrain/core/net/TailnetGateway.kt",
+      "line": 21,
+      "title": "The only door to the network",
+      "description": "Every outbound connection (Hugging Face model downloads, user-configured AI providers through `RemoteChat`) is opened here. It allows HTTPS only, follows redirects by hand so that each hop is checked, and can optionally require the Tailscale VPN network.\n\nRule for reviewers: a socket, `URL.openConnection` or HTTP client anywhere else is a bug. Note content leaves the device only when the user attaches a note to an external-provider request."
+    },
+    {
+      "title": "Where to go next",
+      "description": "You can now follow a capture from share to answer. Next reads: `docs/roadmap.md` (step table, source of truth), `docs/threat-model.md`, and `docs/design-vault-session.md`. Phone tests run with `scripts/run-phone-tests.sh`. Before touching keys or the schema (`VaultSchema.VERSION`), propose the change first. That is a project rule."
+    }
+  ]
+}
