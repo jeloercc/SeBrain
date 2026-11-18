@@ -18,12 +18,16 @@ class BrainRegistry(private val db: SQLiteDatabase) {
     fun list(now: String): List<Brain> {
         val counts = HashMap<String, Int>()
         db.rawQuery("SELECT path FROM capture WHERE path IS NOT NULL AND instr(path, '/') > 0", emptyArray<String>()).use { c ->
-            while (c.moveToNext()) counts.merge(c.getString(0).substringBefore('/'), 1, Int::plus)
+            while (c.moveToNext()) {
+                val folder = c.getString(0).substringBefore('/')
+                // The templates folder holds structures for new notes, not a brain.
+                if (!folder.equals(NoteStore.TEMPLATES, ignoreCase = true)) counts.merge(folder, 1, Int::plus)
+            }
         }
         // Folders without a row, such as those of an imported vault, get one: external AI allowed.
         val known = rows().map { it.second.lowercase() }.toSet()
         counts.keys.filter { it.lowercase() !in known }.forEach { insert(it, private = false, now = now) }
-        return rows().map { (id, name, private) ->
+        return rows().filterNot { it.second.equals(NoteStore.TEMPLATES, ignoreCase = true) }.map { (id, name, private) ->
             Brain(id, name, private, counts.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value ?: 0)
         }.sortedBy { it.name.lowercase() }
     }

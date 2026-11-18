@@ -433,6 +433,55 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         }
     }
 
+    // ---- Memory by time, by property, and templates ----
+
+    /**
+     * Notes of the brain from [from] to [to] (both `YYYY-MM-DD`, included): written or edited
+     * then, dated by a `date`, `created` or `day` property, or daily notes (a title or file name
+     * that is the date). Newest first. Templates are not memory and are left out.
+     */
+    fun writtenBetween(from: String, to: String, limit: Int): List<CaptureSummary> = summaries(
+        "SELECT c.id, c.captured_at, c.source, c.text, c.title FROM capture c WHERE ${inBrain("c.path")} AND ${notTemplate("c.path")} AND (" +
+            "substr(c.captured_at, 1, 10) BETWEEN ? AND ? " +
+            "OR substr(COALESCE(c.updated_at, ''), 1, 10) BETWEEN ? AND ? " +
+            "OR (c.title GLOB '$DATE_GLOB' AND c.title BETWEEN ? AND ?) " +
+            "OR (c.path GLOB '*$DATE_GLOB' AND substr(c.path, -10) BETWEEN ? AND ?) " +
+            "OR EXISTS (SELECT 1 FROM property p WHERE p.capture_id = c.id AND p.type = 'date' " +
+            "AND p.key IN ('date', 'created', 'day') AND substr(p.value, 1, 10) BETWEEN ? AND ?)) " +
+            "ORDER BY COALESCE(c.updated_at, c.captured_at) DESC, c.id DESC LIMIT $limit",
+        from, to, from, to, from, to, from, to, from, to,
+    )
+
+    /** One `key: value` of the brain's front matter, and how many notes have it. */
+    data class PropertyValue(val key: String, val value: String, val notes: Int)
+
+    /** The brain's property values, except dates and long texts, most used first. */
+    fun propertyValues(limit: Int = MAX_PROPERTY_VALUES): List<PropertyValue> = db.rawQuery(
+        "SELECT p.key, p.value, count(DISTINCT p.capture_id) FROM property p JOIN capture c ON c.id = p.capture_id " +
+            "WHERE ${inBrain("c.path")} AND ${notTemplate("c.path")} AND p.type != 'date' AND length(p.value) BETWEEN 1 AND $MAX_PROPERTY_CHARS " +
+            "GROUP BY p.key COLLATE NOCASE, p.value COLLATE NOCASE ORDER BY count(DISTINCT p.capture_id) DESC LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) PropertyValue(c.getString(0), c.getString(1), c.getInt(2)) else null }.toList() }
+
+    /** Notes of the brain whose property [key] has the value [value], ignoring case. Newest first. */
+    fun withProperty(key: String, value: String, limit: Int): List<CaptureSummary> = summaries(
+        "SELECT DISTINCT c.id, c.captured_at, c.source, c.text, c.title FROM capture c JOIN property p ON p.capture_id = c.id " +
+            "WHERE p.key = ? AND p.value = ? COLLATE NOCASE AND ${inBrain("c.path")} AND ${notTemplate("c.path")} " +
+            "ORDER BY COALESCE(c.updated_at, c.captured_at) DESC, c.id DESC LIMIT $limit",
+        key, value,
+    )
+
+    /**
+     * The notes of the vault's `Templates/` folder, as (title, text). They are structures for
+     * new notes, shared by every brain, and never recalled as memory.
+     */
+    fun templates(limit: Int = MAX_TEMPLATES): List<Pair<String, String>> = db.rawQuery(
+        "SELECT title, text FROM capture WHERE NOT ${notTemplate("path")} AND title IS NOT NULL AND title != '' ORDER BY title LIMIT $limit",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) to c.getString(1) else null }.toList() }
+
+    private fun notTemplate(column: String) = "substr(COALESCE($column, ''), 1, ${TEMPLATES.length + 1}) != '$TEMPLATES/' COLLATE NOCASE"
+
     private fun summaries(sql: String, vararg arguments: Any): List<CaptureSummary> = db.rawQuery(sql, *arguments).use { c ->
         generateSequence {
             if (c.moveToNext()) CaptureSummary(c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4)) else null
@@ -457,6 +506,17 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
 
         /** Notes brought in from an Obsidian vault folder. */
         const val SOURCE_VAULT = "vault"
+
+        /** The top-level folder of note templates, as in Obsidian. It is not a brain and not memory. */
+        const val TEMPLATES = "Templates"
+
+        /** Whether a note at [path] is a template. */
+        fun isTemplate(path: String?): Boolean = path != null && path.startsWith("$TEMPLATES/", ignoreCase = true)
+
+        private const val DATE_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+        private const val MAX_PROPERTY_VALUES = 2000
+        private const val MAX_PROPERTY_CHARS = 60
+        private const val MAX_TEMPLATES = 50
         private const val MIN_MENTION = 4
         private const val MAX_TAG_NOTES = 50
         private val WORD = Regex("[\\p{L}\\p{N}]+")
