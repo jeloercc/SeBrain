@@ -38,9 +38,6 @@ import com.sebrain.core.net.RemoteMessage
 import com.sebrain.core.net.RemoteProvider
 import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.ml.KnownModel
-import com.sebrain.core.net.HubFile
-import com.sebrain.core.net.HubModel
-import com.sebrain.core.net.HuggingFaceClient
 import com.sebrain.core.net.TailnetGateway
 import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.CaptureSummary
@@ -189,7 +186,7 @@ class AppState(private val app: SeBrainApp) {
         loadBrains()
         app.requestImport()
         migratePins()
-        refreshInstalled()
+        modelHub.refreshInstalled()
         refreshPrivacy()
         loadConversations()
         started = true
@@ -200,7 +197,7 @@ class AppState(private val app: SeBrainApp) {
         unsavedReply?.let { unsavedReply = null; persist(fromUser = false, text = it) }
         if (!generating) conversationId?.let(::openConversation)
         // Load the model now, so it is ready by the time the user opens the chat.
-        if (installed.any { !it.fileName.contains("embedding", ignoreCase = true) }) ensureModel()
+        if (modelHub.installed.any { !it.fileName.contains("embedding", ignoreCase = true) }) ensureModel()
     }
 
     /** Clears vault content from memory when the app leaves the screen. */
@@ -1712,95 +1709,12 @@ class AppState(private val app: SeBrainApp) {
 
     // ---- Models ----
     private val gateway = TailnetGateway(app)
-    private val hub = HuggingFaceClient(gateway)
-    var installed by mutableStateOf(emptyList<KnownModel>())
-        private set
-    var semanticSearch by mutableStateOf(false)
-        private set
-    var hubModels by mutableStateOf<List<HubModel>?>(null)
-        private set
-    var hubRepo by mutableStateOf<String?>(null)
-        private set
-    var hubFiles by mutableStateOf(emptyList<HubFile>())
-        private set
-    var hubBusy by mutableStateOf(false)
-        private set
-    var hubMessage by mutableStateOf<String?>(null)
-        private set
-    var downloadProgress by mutableStateOf<Float?>(null)
-        private set
-    val online: Boolean get() = gateway.isAvailable
-    val tailscale: Boolean get() = gateway.isTailscaleUp
 
-    fun refreshInstalled() {
-        installed = app.models.installed()
-        semanticSearch = app.embedder.isAvailable
-    }
-
-    fun searchHub(words: String) = network({ hub.search(words) }) {
-        hubModels = it
-        hubRepo = null
-        hubMessage = if (it.isEmpty()) "No repository found" else null
-    }
-
-    fun openRepo(repo: String) = network({ hub.files(repo) }) {
-        hubRepo = repo
-        hubFiles = it
-        hubMessage = if (it.isEmpty()) "$repo has no .litertlm file" else null
-    }
-
-    fun closeRepo() {
-        hubRepo = null
-    }
-
-    fun download(file: HubFile) {
-        val model = KnownModel(file.fileName, file.sha256, "${file.repo.substringAfterLast('/')} · ${file.fileName}", file.repo)
-        downloadProgress = 0f
-        var shown = 0L
-        network({
-            hub.download(file, app.models.file(model)) { done, total ->
-                if (done - shown > PROGRESS_STEP) {
-                    shown = done
-                    onMain { downloadProgress = done.toFloat() / total }
-                }
-            }
-            app.models.trust(model)
-        }, onFinally = { downloadProgress = null }) {
-            hubMessage = "Installed ${model.fileName}"
-            refreshInstalled()
-            app.requestImport()
-        }
-    }
-
-    fun importFile(uri: Uri) = network({
-        app.contentResolver.openInputStream(uri)?.let { app.models.import(it) }
-    }) { model ->
-        hubMessage = if (model != null) "Imported ${model.description}" else "That file is not a known model"
-        refreshInstalled()
-        app.requestImport()
-    }
-
-    fun remove(model: KnownModel) {
-        app.models.remove(model)
-        refreshInstalled()
-    }
-
-    private fun <T> network(work: () -> T, onFinally: () -> Unit = {}, onSuccess: (T) -> Unit) {
-        hubBusy = true
-        hubMessage = null
-        thread {
-            val result = runCatching(work)
-            onMain {
-                hubBusy = false
-                onFinally()
-                result.onSuccess(onSuccess).onFailure { hubMessage = it.message ?: it.javaClass.simpleName }
-            }
-        }
-    }
+    /** The Models screen: installed models and the Hugging Face hub. */
+    val modelHub = ModelHubState(app, gateway, ::onMain)
 
     private companion object {
         const val LIMIT = 100
-        const val PROGRESS_STEP = 8L * 1024 * 1024
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"
         const val PREF_PINS_MIGRATED = "pins_migrated"
