@@ -60,6 +60,13 @@ class CaptureIngestor(
         return IngestResult.Stored(segmentId)
     }
 
+    /**
+     * Accepts every content again. Called after the active vault is replaced by a backup, which
+     * may not hold what was captured since: the vault still refuses a true duplicate by its hash.
+     */
+    @Synchronized
+    fun forgetDuplicates() = dedup.clear()
+
     private fun write(segmentId: UUID, blob: ByteArray) {
         inboxDir.mkdirs()
         val target = File(inboxDir, "$segmentId.seg")

@@ -57,6 +57,37 @@ class VaultBackupSnapshotTest {
         assertEquals(listOf(conversation), v2.conversations)
     }
 
+    private val privateBrain = VaultBackupSnapshot.BrainSetting(
+        "Personal", "{\"folder\":\"Personal\"}", "Answer briefly", "gemma-4-E4B", BrainRegistry.DEVICE,
+        "2026-11-15T10:00:00Z", "2026-11-16T10:00:00Z",
+    )
+    private val openBrain = privateBrain.copy(name = "Redes", scope = "{\"folder\":\"Redes\"}", instructions = "", model = null, egress = BrainRegistry.EXTERNAL)
+
+    @Test
+    fun versionFourKeepsBrainsPinsAndTheBrainOfEachConversation() {
+        val pin = VaultBackupSnapshot.Pin("Personal", record.capture.segmentId, 2)
+        val inBrain = conversation.copy(brain = "Personal")
+        val bytes = VaultBackupSnapshot.encode(listOf(record), listOf(inBrain, conversation), brains = listOf(privateBrain, openBrain), pins = listOf(pin))
+
+        val restored = VaultBackupSnapshot.decode(bytes)
+
+        assertEquals(4, restored.version)
+        assertEquals(listOf(privateBrain, openBrain), restored.brains)
+        assertEquals(listOf(pin), restored.pins)
+        assertEquals(listOf(inBrain, conversation), restored.conversations)
+    }
+
+    @Test
+    fun aVersionThreeSnapshotSaysItHasNoBrainSettings() {
+        val v3 = VaultBackupSnapshot.decode(VaultBackupSnapshot.encode(listOf(record), listOf(conversation), version = 3))
+
+        // Restore treats this as "settings unknown" and makes every brain private.
+        assertEquals(3, v3.version)
+        assertEquals(emptyList<VaultBackupSnapshot.BrainSetting>(), v3.brains)
+        assertEquals(listOf(record), v3.records)
+        assertEquals(listOf(conversation), v3.conversations)
+    }
+
     @Test
     fun aSnapshotFromANewerAppIsRejected() {
         val bytes = VaultBackupSnapshot.encode(listOf(record))

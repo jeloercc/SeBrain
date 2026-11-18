@@ -95,6 +95,17 @@ class VaultSession(
         }
     }
 
+    /**
+     * Closes the vault and runs [block] while nothing can open it: for [VaultSwap], which moves
+     * the vault's folder. Refuses with [VaultSessionClosingException] if work is in progress, so
+     * no open database is ever moved. The next [withDatabase] opens whatever vault is then in place.
+     */
+    fun <T> whileClosed(block: () -> T): T = lock.withLock {
+        if (activeUses > 0) throw VaultSessionClosingException()
+        if (database != null) closeLocked()
+        block()
+    }
+
     /** Closes the database now, or as soon as the work in progress ends. */
     override fun close() = requestClose()
 

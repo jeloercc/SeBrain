@@ -94,6 +94,46 @@ class BrainIsolationTest {
     }
 
     @Test
+    fun aBackupKeepsWhichBrainsArePrivateAndAnOldOneMakesThemAllPrivate() {
+        note("TCP", "Redes/TCP")
+        note("Diario", "Personal/Diario")
+        val snapshot = session.withDatabase { db ->
+            val registry = BrainRegistry(db)
+            registry.list(now)
+            registry.setPrivate(registry.find("Personal")!!.id, true, now)
+            VaultBackupSnapshot.export(db)
+        }
+
+        restoreInto(snapshot) { db, restored ->
+            assertEquals(0, restored.brainsMadePrivate)
+            assertEquals(2, restored.brains)
+            // Only the brain the user made private is private again.
+            assertEquals(setOf("personal"), BrainRegistry(db).privateNames())
+        }
+
+        // A backup from before version 4 did not save the settings: every brain comes back private.
+        val v3 = VaultBackupSnapshot.encode(VaultBackupSnapshot.decode(snapshot).records, version = 3)
+        restoreInto(v3) { db, restored ->
+            assertEquals(2, restored.brainsMadePrivate)
+            assertEquals(setOf("redes", "personal"), BrainRegistry(db).privateNames())
+        }
+    }
+
+    /** Restores [snapshot] into a new vault with its own key, runs [check], and deletes it. */
+    private fun restoreInto(snapshot: ByteArray, check: (net.zetetic.database.sqlcipher.SQLiteDatabase, VaultBackupSnapshot.Restored) -> Unit) {
+        val otherDir = File(context.noBackupFilesDir, "brains-restore-${System.nanoTime()}").apply { mkdirs() }
+        val otherKey = WrapKey(alias = "test_brains_restore_${System.nanoTime()}")
+        val other = VaultSession(context, File(otherDir, "vault.db"), WrappedDekStore(File(otherDir, "dek.wrapped"), otherKey))
+        try {
+            other.withDatabase { db -> check(db, VaultBackupSnapshot.restore(db, snapshot, now)) }
+        } finally {
+            other.close()
+            otherKey.delete()
+            otherDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun notesMentioningCountsWholeWordsInsideTheBrain() {
         note("Shell", "Linux/Shell", text = "the shell reads commands")
         note("Cron", "Linux/Cron", text = "cron runs a shell script at night")

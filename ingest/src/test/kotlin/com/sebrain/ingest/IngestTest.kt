@@ -98,6 +98,20 @@ class IngestTest {
     }
 
     @Test
+    fun afterARestoreForgottenContentIsAcceptedAgain() {
+        // The restored vault may not hold what was shared after the backup: it must not answer "Already saved".
+        val ingestor = ingestor()
+        assertTrue(ingestor.ingest(Capture("hello", "share")) is IngestResult.Stored)
+
+        ingestor.forgetDuplicates()
+
+        assertTrue(ingestor.ingest(Capture("hello", "share")) is IngestResult.Stored)
+        // Also for a new instance, which reads the index from disk.
+        ingestor().forgetDuplicates()
+        assertTrue(ingestor().ingest(Capture("hello", "share")) is IngestResult.Stored)
+    }
+
+    @Test
     fun indexHoldsKeyedTagsNotPlainHashes() {
         ingestor().ingest(Capture("hello", "share"))
         val digest = CaptureNormalizer.sha256("hello")

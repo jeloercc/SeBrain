@@ -59,6 +59,9 @@ class ShareActivity : Activity() {
         @Volatile
         private var shared: CaptureIngestor? = null
 
+        /** After a vault restore: see [CaptureIngestor.forgetDuplicates]. */
+        fun forgetDuplicates(context: Context) = ingestor(context).forgetDuplicates()
+
         /** One instance per process, so writes to the inbox and the tag index are serialized. */
         fun ingestor(context: Context): CaptureIngestor = shared ?: synchronized(this) {
             shared ?: run {

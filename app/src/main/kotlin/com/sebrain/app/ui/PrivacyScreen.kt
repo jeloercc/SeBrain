@@ -197,10 +197,11 @@ private fun BackupSection(state: AppState) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(onClick = { showBackupDialog = true }) { Text("EXPORT ENCRYPTED BACKUP") }
-        Button(onClick = { showRestoreDialog = true }) { Text("VALIDATE BACKUP") }
+        Button(onClick = { showRestoreDialog = true }) { Text("RESTORE FROM BACKUP") }
         state.backupStatus?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = Neon.Coral)
         }
+        RestoreActions(state)
     }
     if (showBackupDialog || showRestoreDialog) {
         val restoring = showRestoreDialog
@@ -241,6 +242,66 @@ private fun BackupSection(state: AppState) {
         )
     }
 }
+
+/**
+ * After a backup is checked: replace the vault with it, after a confirmation that shows counts
+ * only; and, after a replace, undo it or delete the previous vault.
+ */
+@Composable
+private fun RestoreActions(state: AppState) {
+    var confirmReplace by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val pending = state.pendingRestore
+    if (pending != null) {
+        Text(
+            "Current vault: ${pending.currentNotes} note(s), ${pending.currentConversations} conversation(s)\n" +
+                "Backup (${pending.backupCreatedAt.take(DATE_CHARS)}): ${pending.notes} note(s), ${pending.conversations} conversation(s), ${pending.brains} brain(s)",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { confirmReplace = true }) { Text("REPLACE VAULT") }
+        Button(onClick = { state.discardRestore() }) { Text("DISCARD") }
+    }
+    if (state.hasPreviousVault) {
+        Button(onClick = { state.undoRestore() }) { Text("UNDO RESTORE") }
+        Button(onClick = { confirmDelete = true }) { Text("DELETE PREVIOUS VAULT") }
+    }
+    if (confirmReplace && pending != null) {
+        AlertDialog(
+            onDismissRequest = { confirmReplace = false },
+            title = { Text("Replace the vault?") },
+            text = {
+                Text(
+                    "The vault with ${pending.currentNotes} note(s) is replaced by the backup with ${pending.notes} note(s). " +
+                        "The current vault is kept, encrypted, and UNDO RESTORE brings it back.",
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmReplace = false
+                    state.replaceVault()
+                }) { Text("REPLACE") }
+            },
+            dismissButton = { Button(onClick = { confirmReplace = false }) { Text("CANCEL") } },
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete the previous vault?") },
+            text = { Text("The vault from before the last restore is deleted for good. UNDO RESTORE will no longer be possible.") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmDelete = false
+                    state.deletePreviousVault()
+                }) { Text("DELETE") }
+            },
+            dismissButton = { Button(onClick = { confirmDelete = false }) { Text("CANCEL") } },
+        )
+    }
+}
+
+/** "2026-11-17" out of an ISO instant. */
+private const val DATE_CHARS = 10
 
 @Composable
 private fun MiniBrainSection(state: AppState) {

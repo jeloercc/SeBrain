@@ -10,6 +10,7 @@ import com.sebrain.core.ml.ModelFiles
 import com.sebrain.core.ml.TextEmbedder
 import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.VaultSession
+import com.sebrain.core.vault.VaultSwap
 import com.sebrain.ingest.ShareActivity
 import java.io.File
 import java.util.concurrent.Executors
@@ -22,8 +23,14 @@ class SeBrainApp : Application() {
 
     private val executor = Executors.newSingleThreadExecutor()
 
+    /** The vault folders a restore swaps: `vault/`, `vault-incoming/` and `vault-previous/`. */
+    val vaultSwap by lazy { VaultSwap(noBackupFilesDir) }
+
     val session: VaultSession by lazy {
-        val dir = File(noBackupFilesDir, "vault")
+        // Before the first open: a restore that a crash interrupted is finished or dropped.
+        val recovery = runCatching { vaultSwap.recover() }
+        Log.i(TAG, "vault swap recovery=${recovery.getOrNull() ?: recovery.exceptionOrNull()?.javaClass?.simpleName}")
+        val dir = vaultSwap.active
         VaultSession(this, File(dir, "vault.db"), WrappedDekStore(File(dir, "dek.wrapped")))
     }
 

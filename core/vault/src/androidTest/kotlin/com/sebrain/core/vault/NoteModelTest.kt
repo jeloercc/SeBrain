@@ -223,7 +223,7 @@ class NoteModelTest {
         val other = VaultSession(context, File(otherDir, "vault.db"), WrappedDekStore(File(otherDir, "dek.wrapped"), otherKey))
         try {
             other.withDatabase { db ->
-                assertEquals(2, VaultBackupSnapshot.restore(db, snapshot))
+                assertEquals(2, VaultBackupSnapshot.restore(db, snapshot).notes)
                 val store = NoteStore(db)
                 assertEquals("Redes/TCP", store.get(store.findByTitle("TCP")!!)!!.path)
                 assertNull(store.get(store.findByTitle("Suelta")!!)!!.path)
