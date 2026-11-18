@@ -3,6 +3,7 @@ package com.sebrain.app.ui
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -303,7 +304,10 @@ class AppState(private val app: SeBrainApp) {
         backup.refresh()
         privacy.refresh()
         thread(name = "mini-brains") {
-            val savedBrains = runCatching { BrainStore(app).load() }.getOrElse { emptyList() }
+            val savedBrains = runCatching { BrainStore(app).load() }.getOrElse {
+                Log.w(TAG, "loading mini-brains failed: ${it.javaClass.simpleName}")
+                emptyList()
+            }
             onMain { brains = savedBrains }
         }
         app.vault({ db -> CaptureStore(db).sources() }) { result ->
@@ -771,7 +775,8 @@ class AppState(private val app: SeBrainApp) {
         summarizing = true
         chatWorker.execute {
             if (!summarizing) return@execute
-            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request, Assistant.SUMMARY_TOKENS) {} }.getOrNull()?.trim()
+            val text = runCatching { app.chat.reply(Assistant.SUMMARY_SYSTEM, emptyList(), request, Assistant.SUMMARY_TOKENS) {} }
+                .onFailure { Log.w(TAG, "summary failed: ${it.javaClass.simpleName}") }.getOrNull()?.trim()
             val finished = summarizing
             summarizing = false
             // A cancelled summary is partial text; it is dropped.
@@ -1404,7 +1409,10 @@ class AppState(private val app: SeBrainApp) {
 
     fun loadProviders() {
         thread(name = "providers") {
-            val list = runCatching { providerStore.list() }.getOrDefault(emptyList())
+            val list = runCatching { providerStore.list() }.getOrElse {
+                Log.w(TAG, "listing providers failed: ${it.javaClass.simpleName}")
+                emptyList()
+            }
             val chosen = app.getSharedPreferences(PREFS, 0).getString(PREF_ENGINE, null)
             onMain {
                 providers = list
@@ -1425,7 +1433,7 @@ class AppState(private val app: SeBrainApp) {
 
     fun removeProvider(id: String) {
         thread(name = "providers") {
-            runCatching { providerStore.remove(id) }
+            runCatching { providerStore.remove(id) }.onFailure { Log.w(TAG, "removing a provider failed: ${it.javaClass.simpleName}") }
             if (app.getSharedPreferences(PREFS, 0).getString(PREF_ENGINE, null) == id) useLocalModel()
             loadProviders()
         }
@@ -1506,7 +1514,14 @@ class AppState(private val app: SeBrainApp) {
     fun confirmOutgoing() {
         val request = outgoing ?: return
         outgoing = null
-        val key = runCatching { providerStore.apiKey(request.provider.id) }.getOrNull()
+        val stored = runCatching { providerStore.apiKey(request.provider.id) }
+        stored.exceptionOrNull()?.let { problem ->
+            // The key is there but could not be decrypted: not the same as no key at all.
+            Log.w(TAG, "reading an API key failed: ${problem.javaClass.simpleName}")
+            messages += ChatMessage(false, "Could not read the API key for ${request.provider.name} (${problem.javaClass.simpleName}).", isAction = true)
+            return
+        }
+        val key = stored.getOrNull()
         if (key.isNullOrEmpty()) {
             messages += ChatMessage(false, "No API key is stored for ${request.provider.name}.", isAction = true)
             return
@@ -1557,6 +1572,7 @@ class AppState(private val app: SeBrainApp) {
     val modelHub = ModelHubState(app, gateway, ::onMain)
 
     private companion object {
+        const val TAG = "SEBRAIN_APP"
         const val LIMIT = 100
         const val PREFS = "sebrain"
         const val PREF_MODEL = "language_model"

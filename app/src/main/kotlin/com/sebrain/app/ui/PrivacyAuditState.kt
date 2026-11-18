@@ -1,5 +1,6 @@
 package com.sebrain.app.ui
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -29,7 +30,10 @@ class PrivacyAuditState(
     fun refresh() {
         thread(name = "privacy-audit") {
             val access = privacyAudit.hasUsageAccess()
-            val apps = runCatching { sortPrivacy(privacyAudit.listApps()) }.getOrElse { emptyList() }
+            val apps = runCatching { sortPrivacy(privacyAudit.listApps()) }.getOrElse {
+                Log.w(TAG, "listing apps failed: ${it.javaClass.simpleName}")
+                emptyList()
+            }
             onMain {
                 usageAccess = access
                 if (!scanning) privacyApps = apps
@@ -48,7 +52,11 @@ class PrivacyAuditState(
             val scanner = DexTrackerScanner()
             try {
                 apps.forEachIndexed { index, target ->
-                    val trackers = runCatching { privacyAudit.scanTrackers(target, scanner) }.getOrElse { emptyList() }
+                    val trackers = runCatching { privacyAudit.scanTrackers(target, scanner) }.getOrElse {
+                        // Left unscanned, not "no trackers": a failed scan must not look like a clean app.
+                        Log.w(TAG, "tracker scan failed: ${it.javaClass.simpleName}")
+                        target.trackers
+                    }
                     onMain {
                         privacyApps = privacyApps.map {
                             if (it.packageName == target.packageName) it.copy(trackers = trackers) else it
@@ -77,4 +85,8 @@ class PrivacyAuditState(
             .thenByDescending { it.bytes ?: 0L }
             .thenBy { it.label.lowercase() },
     )
+
+    private companion object {
+        const val TAG = "SEBRAIN_APP"
+    }
 }
