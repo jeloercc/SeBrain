@@ -35,7 +35,13 @@ object NoteFormat {
     )
 
     /** What the model is told when its answer will be saved. [message] decides the language of the section names. */
-    fun instructions(message: String, linkable: List<String>, tags: List<String>): String = buildString {
+    fun instructions(
+        message: String,
+        linkable: List<String>,
+        tags: List<String>,
+        /** The structure of a template the request names; it replaces the default sections. */
+        template: String? = null,
+    ): String = buildString {
         // The section names follow the language the note will be in: the one asked for by name, or the message's.
         val spanish = when (Assistant.requestedLanguage(message)) {
             "English" -> false
@@ -47,11 +53,17 @@ object NoteFormat {
         append("\n\nThe answer will be saved in the vault as a note. If the request asks for several notes, write one ")
         append("note for each topic, one after another, at most $MAX_NOTES. Write only the notes: no introduction, no ")
         append("closing remark, no question, and do not say that you are creating a note.\n")
-        append("Every note follows exactly this format:\n\n")
-        append("# Title of the topic\n\n")
-        append("One or two sentences that say what it is.\n\n")
-        append("## $points\n- three to six short bullets\n\n")
-        append("## $details\nA short paragraph, a list or a code block. Leave this section out if it adds nothing.\n\n")
+        if (template != null) {
+            // The user's own template, from the Templates folder: its headings, in its order.
+            append("Every note follows exactly this template, with its headings in this order; fill each part in:\n\n")
+            append(template.trim()).append("\n\n")
+        } else {
+            append("Every note follows exactly this format:\n\n")
+            append("# Title of the topic\n\n")
+            append("One or two sentences that say what it is.\n\n")
+            append("## $points\n- three to six short bullets\n\n")
+            append("## $details\nA short paragraph, a list or a code block. Leave this section out if it adds nothing.\n\n")
+        }
         // Other notes link to this one when they use one of these names.
         append("Aliases: up to three other names that mean only this topic (an abbreviation, the command, another common name), ")
         append("not general words, separated by commas, or none\n")

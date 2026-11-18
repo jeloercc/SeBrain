@@ -5,6 +5,7 @@ import com.sebrain.core.vault.ConversationStore
 import com.sebrain.core.vault.GraphRank
 import com.sebrain.core.vault.HybridSearch
 import com.sebrain.core.vault.NoteStore
+import java.time.LocalDate
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /**
@@ -24,7 +25,18 @@ object VaultContext {
 
     private const val PAST_MESSAGES = 2
 
-    class Result(val notes: List<ContextNote>, val tags: List<String>, val pinned: List<String>, val past: List<PastMessage>)
+    /** Notes recalled by time or by property, at most, so they cannot crowd out search. */
+    private const val RECALLED_NOTES = 8
+    private const val PROPERTIES_SHOWN = 8
+
+    class Result(
+        val notes: List<ContextNote>,
+        val tags: List<String>,
+        val pinned: List<String>,
+        val past: List<PastMessage>,
+        /** The template a request for a note names, from the `Templates/` folder. */
+        val template: Templates.NoteTemplate? = null,
+    )
 
     /**
      * [exclude] holds titles to leave out: the notes already written in this conversation, when
@@ -43,6 +55,8 @@ object VaultContext {
         brain: String? = null,
         /** The brain's row id, for its conversations; null with the universal brain. */
         brainId: Long? = null,
+        /** Today in the user's time zone, to recall notes by "yesterday" or "last week"; null for no recall by time. */
+        today: LocalDate? = null,
     ): Result {
         val store = NoteStore(db, brain)
         val excluded = exclude.map { it.lowercase() }.toSet()
@@ -62,15 +76,32 @@ object VaultContext {
             notes += ContextNote(
                 1, named.id, named.title, named.tags,
                 store.linkedFrom(named.id).mapNotNull { it.title }, store.backlinks(named.id).mapNotNull { it.title },
-                FrontMatter.body(named.text), focus = true,
+                FrontMatter.body(named.text), focus = true, properties = propertiesOf(store, named.id),
+            )
+        }
+        // Memory recalled by time ("last week") or by property ("status pending"): every match,
+        // newest first, under what it was recalled for, and before what search finds.
+        var recalledCount = 0
+        for ((id, section) in recall(store, message, today)) {
+            if (recalledCount == RECALLED_NOTES) break
+            if (id in included) continue
+            val note = store.get(id) ?: continue
+            if (note.title.lowercase() in excluded || NoteStore.isTemplate(note.path)) continue
+            included += id
+            recalledCount++
+            notes += ContextNote(
+                notes.size + 1, id, note.title, note.tags,
+                store.linkedFrom(id).mapNotNull { it.title }, store.backlinks(id).mapNotNull { it.title },
+                FrontMatter.body(note.text), section = section, properties = propertiesOf(store, id),
             )
         }
         for ((id, chunks) in chunksByNote) {
-            if (notes.size == MATCHED_NOTES) break
+            if (notes.size - recalledCount == MATCHED_NOTES) break
             if (id in included) continue
             val note = store.get(id) ?: continue
             included += id
-            if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
+            // Templates are structures for new notes, not memory.
+            if (note.title.lowercase() in excluded || Pins.TAG in note.tags || NoteStore.isTemplate(note.path)) continue
             notes += ContextNote(
                 number = notes.size + 1,
                 id = id,
@@ -81,6 +112,7 @@ object VaultContext {
                 // A short note is given whole; a long one by its matching chunks.
                 // The model reads the note's own text; its properties block is left out.
                 text = FrontMatter.body(note.text).let { body -> if (body.length <= Assistant.NOTE_CHARS) body else chunks.distinct().joinToString("\n…\n") },
+                properties = propertiesOf(store, id),
             )
         }
 
@@ -97,17 +129,46 @@ object VaultContext {
             for (id in ranked) {
                 if (notes.size - matched.size >= CONNECTED_NOTES) break
                 val note = store.get(id) ?: continue
-                if (note.title.lowercase() in excluded || Pins.TAG in note.tags) continue
+                if (note.title.lowercase() in excluded || Pins.TAG in note.tags || NoteStore.isTemplate(note.path)) continue
                 included += id
-                notes += ContextNote(notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text), relation(store, note.id, matched, adjacent))
+                notes += ContextNote(
+                    notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text),
+                    relation(store, note.id, matched, adjacent), properties = propertiesOf(store, note.id),
+                )
             }
         }
         // Newest first. A pinned note is not also listed as a search result above.
         val pinned = store.withTag(Pins.TAG, PINNED_NOTES).map { Pins.line(it.title.orEmpty(), it.text) }
         val past = ConversationStore(db, brainId).search(query, PAST_MESSAGES, conversationId)
             .map { PastMessage(it.title, it.updatedAt, it.fromUser, it.text) }
-        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, pinned, past)
+        // "Make a meeting note": the user's template for it, if there is one.
+        val template = if (Assistant.wantsNote(message)) {
+            Templates.chosen(message, store.templates().map { (title, text) -> Templates.NoteTemplate(title, text) })
+        } else {
+            null
+        }
+        return Result(notes, store.tags().take(TAGS_SHOWN).map { it.first }, pinned, past, template)
     }
+
+    /** The notes [message] asks for by time or by property, each with the section it goes under. */
+    private fun recall(store: NoteStore, message: String, today: LocalDate?): List<Pair<Long, String>> {
+        val byTime = today?.let { MemoryTime.periodIn(message, it) }?.let { period ->
+            store.writtenBetween(period.from.toString(), period.to.toString(), RECALLED_NOTES).map { it.id to "Notes from ${period.label}" }
+        }.orEmpty()
+        val byProperty = MemoryQuery.mentioned(message, store.propertyValues()).flatMap { value ->
+            val found = store.withProperty(value.key, value.value, RECALLED_NOTES)
+            // The total is exact, so "how many?" can be answered even when only some are given.
+            val shown = if (value.notes > found.size) ", the ${found.size} most recent are given" else ""
+            found.map { it.id to "Notes with ${value.key}: ${value.value} (${value.notes} in total$shown)" }
+        }
+        return byTime + byProperty
+    }
+
+    /** A note's front matter as "key: value", for the model; tags and aliases are shown on their own. */
+    private fun propertiesOf(store: NoteStore, id: Long): List<String> =
+        store.propertiesOf(id).filter { it.key.lowercase() !in setOf("tags", "aliases") }
+            .take(PROPERTIES_SHOWN)
+            .map { "${it.key}: ${it.values.joinToString(", ")}" }
 
     /** How a connected note relates to the notes the search found, for the label the model reads. */
     private fun relation(

@@ -29,6 +29,8 @@ class NoteTools(
         brain: String? = null,
         /** Other names the model proposed; only those that pass [NoteAliases.choose] are kept. */
         aliases: List<String> = emptyList(),
+        /** Properties from the template the request named, already filled in (see [com.sebrain.app.chat.Templates]). */
+        templateProperties: List<Pair<String, List<String>>> = emptyList(),
     ): String {
         // Links point to titles, so two notes with one title would make them ambiguous.
         if (session.withDatabase { NoteStore(it, brain).findByTitle(title.trim()) } != null) {
@@ -38,7 +40,7 @@ class NoteTools(
             write(db) {
                 val store = NoteStore(db, brain)
                 // Chosen in the same transaction as the write, against the brain as it is now.
-                val body = noteText(title, text, tags, source, NoteAliases.choose(title, aliases, aliasChecks(store), cleanTags(tags)))
+                val body = noteText(title, text, tags, source, NoteAliases.choose(title, aliases, aliasChecks(store), cleanTags(tags)), templateProperties)
                 store.create(body, NoteIndexer.sha256Hex(body), Instant.now().toString(), ZoneId.systemDefault().id)
                     ?.also { id ->
                         // A note written in a brain is placed in its folder.
@@ -51,9 +53,16 @@ class NoteTools(
     }
 
     /** The note in Obsidian format: where it came from and its other names, the title, the body, the tags. */
-    private fun noteText(title: String, text: String, tags: List<String>, source: String, aliases: List<String>): String = buildString {
+    private fun noteText(
+        title: String,
+        text: String,
+        tags: List<String>,
+        source: String,
+        aliases: List<String>,
+        templateProperties: List<Pair<String, List<String>>>,
+    ): String = buildString {
         // Properties that say where the note came from, so it can be told apart and filtered.
-        val properties = listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString())) +
+        val properties = listOf("source" to listOf(source), "created" to listOf(LocalDate.now().toString())) + templateProperties +
             (if (aliases.isEmpty()) emptyList() else listOf("aliases" to aliases))
         append(FrontMatter.render(properties))
         append("# ").append(title.trim()).append("\n\n").append(text.trim())

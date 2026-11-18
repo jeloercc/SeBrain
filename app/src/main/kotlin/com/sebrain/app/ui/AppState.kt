@@ -18,6 +18,7 @@ import com.sebrain.app.chat.ContextNote
 import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.Pins
+import com.sebrain.app.chat.Templates
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.vault.Brain
@@ -46,6 +47,7 @@ import com.sebrain.core.vault.NoteStore
 import com.sebrain.ingest.BrainStore
 import com.sebrain.ingest.MiniBrain
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.nio.charset.StandardCharsets
 import java.io.File
@@ -1140,12 +1142,17 @@ class AppState(private val app: SeBrainApp) {
         val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
         // The notes are retrieved first, on the vault thread; the model then runs on the chat thread.
         val open = storedConversation
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question, scopeBrain, brainId) }) { found ->
+        // Today, in the user's time zone: the model cannot know it, and "last week" needs it.
+        val now = LocalDateTime.now()
+        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question, scopeBrain, brainId, now.toLocalDate()) }) { found ->
             val context = found.getOrNull()
             val notes = context?.notes.orEmpty()
+            val template = context?.template
             val prompt = Assistant.prompt(
                 question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty(),
                 previousAnswer = earlier.lastOrNull { !it.fromUser }?.text,
+                today = now.toLocalDate(),
+                template = template?.let { Templates.structure(it, now) },
             )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
@@ -1193,7 +1200,7 @@ class AppState(private val app: SeBrainApp) {
                     }
                 }
                 val reply = result.getOrNull().orEmpty()
-                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped && createNoteFrom(reply, question, notes)
+                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped && createNoteFrom(reply, question, notes, template = template)
                 onMain {
                     // The screen may have been cleared by onStop meanwhile; the reply is still stored.
                     val visible = index < messages.size
@@ -1251,11 +1258,19 @@ class AppState(private val app: SeBrainApp) {
      * body with each citation turned into a `[[link]]` to the cited note, only links to notes
      * that exist, and `#tags`. Returns whether at least one note was created.
      */
-    private fun createNoteFrom(reply: String, question: String, context: List<ContextNote>, source: String = "assistant"): Boolean {
+    private fun createNoteFrom(
+        reply: String,
+        question: String,
+        context: List<ContextNote>,
+        source: String = "assistant",
+        /** The template the request named: the saved note gets its properties. */
+        template: Templates.NoteTemplate? = null,
+    ): Boolean {
         var created = false
         for (note in NoteFormat.parse(reply, question)) {
             val text = Assistant.linkify(note.body, context, note.title)
-            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain, note.aliases) }
+            val fromTemplate = template?.let { Templates.properties(it, note.title, LocalDateTime.now()) }.orEmpty()
+            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain, note.aliases, fromTemplate) }
                 .getOrElse { "The note could not be saved: ${it.message}" }
             if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
         }

@@ -85,6 +85,15 @@ class NoteFormatTest {
     }
 
     @Test
+    fun aTemplateReplacesTheDefaultSections() {
+        val text = NoteFormat.instructions("make a meeting note", emptyList(), emptyList(), template = "# Title of the topic\n\n## Attendees\n\n## Decisions")
+        assertTrue(text.contains("## Attendees\n\n## Decisions"))
+        assertFalse(text.contains("## Key points"))
+        // The closing lines stay, so aliases and tags are still parsed.
+        assertTrue(text.indexOf("\nAliases:") in 0 until text.indexOf("\nTags:"))
+    }
+
+    @Test
     fun anAliasesLineIsParsedAndLeftOutOfTheBody() {
         val reply = "# Package Management with apt\n\nInstalls software.\n\nAliases: apt, **APT**, \"apt-get\"\nTags: linux, apt"
         val note = NoteFormat.parse(reply, "fallback").single()
