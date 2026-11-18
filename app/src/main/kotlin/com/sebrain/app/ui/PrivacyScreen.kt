@@ -38,12 +38,12 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
     var filter by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf<String?>(null) }
     var showSystem by remember { mutableStateOf(false) }
-    val visibleApps = state.privacyApps.filter {
+    val visibleApps = state.privacy.privacyApps.filter {
         (showSystem || !it.system) &&
             (filter.isBlank() || it.label.contains(filter, ignoreCase = true) || it.packageName.contains(filter, ignoreCase = true))
     }
-    val scanned = state.privacyApps.count { it.trackers != null }
-    val withTrackers = state.privacyApps.count { !it.trackers.isNullOrEmpty() }
+    val scanned = state.privacy.privacyApps.count { it.trackers != null }
+    val withTrackers = state.privacy.privacyApps.count { !it.trackers.isNullOrEmpty() }
 
     LazyColumn(
         modifier.fillMaxSize(),
@@ -63,7 +63,7 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val progress = state.scanProgress
+                    val progress = state.privacy.scanProgress
                     Text(
                         when {
                             progress != null -> "Scanning apps for trackers… $progress"
@@ -72,16 +72,16 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
                         },
                         style = MaterialTheme.typography.labelLarge,
                     )
-                    Button(onClick = state::scanTrackers, enabled = progress == null && state.privacyApps.isNotEmpty()) {
+                    Button(onClick = state.privacy::scanTrackers, enabled = progress == null && state.privacy.privacyApps.isNotEmpty()) {
                         Text(if (scanned == 0) "SCAN FOR TRACKERS" else "SCAN AGAIN")
                     }
-                    if (!state.usageAccess) {
+                    if (!state.privacy.usageAccess) {
                         Text(
                             "Data use per app needs usage access. Android asks you to turn it on for SeBrain.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        OutlinedButton(onClick = state::openUsageAccessSettings) { Text("ALLOW USAGE ACCESS") }
+                        OutlinedButton(onClick = state.privacy::openUsageAccessSettings) { Text("ALLOW USAGE ACCESS") }
                     }
                 }
             }
@@ -104,7 +104,7 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
                 app = app,
                 expanded = expanded == app.packageName,
                 onToggle = { expanded = if (expanded == app.packageName) null else app.packageName },
-                onOpenSettings = { state.openAppSettings(app.packageName) },
+                onOpenSettings = { state.privacy.openAppSettings(app.packageName) },
             )
         }
         item { BackupSection(state) }
