@@ -179,13 +179,13 @@ private fun BackupSection(state: AppState) {
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         if (uri != null && pendingPassphrase.isNotEmpty()) {
-            state.exportBackup(uri, pendingPassphrase.toCharArray())
+            state.backup.exportBackup(uri, pendingPassphrase.toCharArray())
         }
         pendingPassphrase = ""
     }
     val restorePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && pendingRestorePassphrase.isNotEmpty()) {
-            state.restoreBackup(uri, pendingRestorePassphrase.toCharArray())
+            state.backup.restoreBackup(uri, pendingRestorePassphrase.toCharArray())
         }
         pendingRestorePassphrase = ""
     }
@@ -198,7 +198,7 @@ private fun BackupSection(state: AppState) {
         )
         Button(onClick = { showBackupDialog = true }) { Text("EXPORT ENCRYPTED BACKUP") }
         Button(onClick = { showRestoreDialog = true }) { Text("RESTORE FROM BACKUP") }
-        state.backupStatus?.let {
+        state.backup.backupStatus?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = Neon.Coral)
         }
         RestoreActions(state)
@@ -251,7 +251,7 @@ private fun BackupSection(state: AppState) {
 private fun RestoreActions(state: AppState) {
     var confirmReplace by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val pending = state.pendingRestore
+    val pending = state.backup.pendingRestore
     if (pending != null) {
         Text(
             "Current vault: ${pending.currentNotes} note(s), ${pending.currentConversations} conversation(s)\n" +
@@ -259,10 +259,10 @@ private fun RestoreActions(state: AppState) {
             style = MaterialTheme.typography.bodySmall,
         )
         Button(onClick = { confirmReplace = true }) { Text("REPLACE VAULT") }
-        Button(onClick = { state.discardRestore() }) { Text("DISCARD") }
+        Button(onClick = { state.backup.discardRestore() }) { Text("DISCARD") }
     }
-    if (state.hasPreviousVault) {
-        Button(onClick = { state.undoRestore() }) { Text("UNDO RESTORE") }
+    if (state.backup.hasPreviousVault) {
+        Button(onClick = { state.backup.undoRestore() }) { Text("UNDO RESTORE") }
         Button(onClick = { confirmDelete = true }) { Text("DELETE PREVIOUS VAULT") }
     }
     if (confirmReplace && pending != null) {
@@ -278,7 +278,7 @@ private fun RestoreActions(state: AppState) {
             confirmButton = {
                 Button(onClick = {
                     confirmReplace = false
-                    state.replaceVault()
+                    state.backup.replaceVault()
                 }) { Text("REPLACE") }
             },
             dismissButton = { Button(onClick = { confirmReplace = false }) { Text("CANCEL") } },
@@ -292,7 +292,7 @@ private fun RestoreActions(state: AppState) {
             confirmButton = {
                 Button(onClick = {
                     confirmDelete = false
-                    state.deletePreviousVault()
+                    state.backup.deletePreviousVault()
                 }) { Text("DELETE") }
             },
             dismissButton = { Button(onClick = { confirmDelete = false }) { Text("CANCEL") } },
