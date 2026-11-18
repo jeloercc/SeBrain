@@ -392,15 +392,6 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         )
     }
 
-    /** Notes that share at least one tag with this note, the most shared tags first. */
-    fun sharingTags(id: Long, limit: Int): List<CaptureSummary> = summaries(
-        "SELECT c.id, c.captured_at, c.source, c.text, c.title FROM capture c " +
-            "JOIN capture_tag ct ON ct.capture_id = c.id " +
-            "WHERE ct.tag_id IN (SELECT tag_id FROM capture_tag WHERE capture_id = ?) AND c.id != ? AND ${inBrain("c.path")} " +
-            "GROUP BY c.id ORDER BY count(*) DESC, c.id DESC LIMIT $limit",
-        id, id,
-    )
-
     /**
      * The note a `[[name]]` points to: first by title, then by alias, then by the last part of
      * its path, which is how Obsidian resolves a link.

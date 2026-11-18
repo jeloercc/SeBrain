@@ -27,10 +27,6 @@ class TextEmbedder(context: Context, private val models: ModelFiles) : AutoClose
     val isAvailable: Boolean
         get() = models.isInstalled(ModelFiles.EMBEDDING_NPU) || models.isInstalled(ModelFiles.EMBEDDING_CPU)
 
-    /** Embeds texts to be stored and searched later, without a title. */
-    @Synchronized
-    fun embedDocuments(texts: List<String>): List<FloatArray> = embedTitledDocuments(texts.map { null to it })
-
     /**
      * Embeds documents with their titles, in the format EmbeddingGemma documents for retrieval:
      * `title: {title} | text: {content}`, or `title: none` when there is no title. Google's
