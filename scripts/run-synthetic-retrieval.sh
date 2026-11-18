@@ -24,9 +24,6 @@ cd "$ROOT"
 $ADB get-state > /dev/null 2>&1 || { echo "Device $SERIAL not found"; exit 1; }
 $ADB shell dumpsys trust | grep '(current)' | grep -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
 
-ANDROID_SERIAL=$SERIAL ./gradlew -q :app:installDebug :app:installDebugAndroidTest > "$OUT/install.log" 2>&1 \
-    || { echo "Install failed, see $OUT/install.log"; exit 1; }
-
 # The vault must not be open in the app while the test opens it.
 $ADB shell am force-stop com.sebrain.app
 $ADB shell svc power stayon usb
@@ -35,6 +32,11 @@ SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r[:
 [ "$SCREEN_TIMEOUT" = "$RUN_TIMEOUT" ] && SCREEN_TIMEOUT=60000
 trap '$ADB shell svc power stayon false; $ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"' EXIT
 $ADB shell settings put system screen_off_timeout $RUN_TIMEOUT
+
+# Installing takes longer than a short screen timeout, so the screen is kept on first.
+ANDROID_SERIAL=$SERIAL ./gradlew -q :app:installDebug :app:installDebugAndroidTest > "$OUT/install.log" 2>&1 \
+    || { echo "Install failed, see $OUT/install.log"; exit 1; }
+
 
 $ADB logcat -c
 # Streamed to a file: the device buffer rotates during the run and loses the early lines.

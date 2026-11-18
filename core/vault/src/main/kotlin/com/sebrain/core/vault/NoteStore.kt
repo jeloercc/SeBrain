@@ -472,13 +472,17 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
     )
 
     /**
-     * The notes of the vault's `Templates/` folder, as (title, text). They are structures for
-     * new notes, shared by every brain, and never recalled as memory.
+     * The notes of the vault's `Templates/` folder, as (name, text). As in Obsidian, a template
+     * is named by its file, not its heading, which is often `# {{title}}`. They are structures
+     * for new notes, shared by every brain, and never recalled as memory.
      */
     fun templates(limit: Int = MAX_TEMPLATES): List<Pair<String, String>> = db.rawQuery(
-        "SELECT title, text FROM capture WHERE NOT ${notTemplate("path")} AND title IS NOT NULL AND title != '' ORDER BY title LIMIT $limit",
+        "SELECT path, text FROM capture WHERE NOT ${notTemplate("path")} ORDER BY path LIMIT $limit",
         emptyArray<String>(),
-    ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) to c.getString(1) else null }.toList() }
+    ).use { c ->
+        generateSequence { if (c.moveToNext()) c.getString(0).substringAfterLast('/') to c.getString(1) else null }
+            .filter { it.first.isNotBlank() }.toList()
+    }
 
     private fun notTemplate(column: String) = "substr(COALESCE($column, ''), 1, ${TEMPLATES.length + 1}) != '$TEMPLATES/' COLLATE NOCASE"
 
