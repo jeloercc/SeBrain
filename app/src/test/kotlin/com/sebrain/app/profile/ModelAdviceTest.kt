@@ -39,6 +39,29 @@ class ModelAdviceTest {
     }
 
     @Test
+    fun `a Tensor G5 phone is offered the NPU chat model without it being the default`() {
+        val advice = ModelAdvisor.advise(DeviceSpec("Pixel 10", "Tensor G5", 11 * gib, 40 * gib))
+
+        val fast = advice.single { it.model == ModelFiles.LLM_E2B_TENSOR_G5 }
+        assertEquals(Hardware.NPU, fast.hardware)
+        assertFalse(fast.recommended)
+    }
+
+    @Test
+    fun `other chips are not offered the NPU chat model`() {
+        val advice = ModelAdvisor.advise(DeviceSpec("Phone", "Snapdragon 8", 16 * gib, 40 * gib))
+
+        assertTrue(advice.none { it.model == ModelFiles.LLM_E2B_TENSOR_G5 })
+    }
+
+    @Test
+    fun `only Tensor G5 builds run on the NPU`() {
+        assertTrue(ModelFiles.compiledForTensorNpu(ModelFiles.LLM_E2B_TENSOR_G5))
+        assertTrue(ModelFiles.compiledForTensorNpu(ModelFiles.EMBEDDING_NPU))
+        assertFalse(ModelFiles.compiledForTensorNpu(ModelFiles.LLM_E4B_ABLITERATED))
+    }
+
+    @Test
     fun `exactly one chat model is recommended`() {
         listOf(4L, 10L, 24L).forEach { ram ->
             val advice = ModelAdvisor.advise(DeviceSpec("Phone", "Tensor G5", ram * gib, 40 * gib))

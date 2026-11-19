@@ -30,8 +30,8 @@ data class ModelAdvice(
 )
 
 /**
- * Which known models suit a phone. Only the search model has a build for the Tensor G5 NPU;
- * the chat models are community builds that run on the GPU (see ChatEngine).
+ * Which known models suit a phone. The uncensored chat models are community builds that run on
+ * the GPU; on a Tensor G5, Google's official E2B build is also offered for the NPU (see ChatEngine).
  */
 object ModelAdvisor {
     /** A 12 GB phone reports about 10.9 GiB to Android, so the line sits below that. */
@@ -55,6 +55,10 @@ object ModelAdvisor {
             ModelFiles.LLM_E2B_UNCENSORED, Role.CHAT, Hardware.GPU, !large,
             if (large) "Faster and smaller, with simpler answers." else "Fits this phone's memory.",
         )
-        return listOf(search, e4b, e2b)
+        val npuChat = ModelAdvice(
+            ModelFiles.LLM_E2B_TENSOR_G5, Role.CHAT, Hardware.NPU, false,
+            "Fast chat on the TPU, about twice as fast. Google's official model: smaller, and it may refuse some requests.",
+        )
+        return listOfNotNull(search, e4b, e2b, npuChat.takeIf { hasTensorNpu(spec) })
     }
 }

@@ -43,7 +43,8 @@ class SeBrainApp : Application() {
     val embedder by lazy { TextEmbedder(this, models) }
 
     /** The language model. It is used only from the chat screen's own thread. */
-    val chat by lazy { ChatEngine(this, models) }
+    // Speed figures on: the log gets token counts and tok/s per reply (never text), to compare NPU and GPU.
+    val chat by lazy { ChatEngine(this, models, benchmark = true) }
 
     val indexer by lazy {
         NoteIndexer { documents -> if (embedder.isAvailable) embedder.embedTitledDocuments(documents) else null }

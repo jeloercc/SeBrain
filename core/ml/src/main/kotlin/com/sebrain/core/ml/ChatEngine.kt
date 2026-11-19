@@ -20,15 +20,15 @@ import java.util.concurrent.TimeUnit
 /**
  * Runs a language model the user installed, fully on the device.
  *
- * Backend chain: GPU, then CPU. Third-party models are not compiled for the Tensor NPU, and
- * `Backend` does not fall back by itself, so the chain is explicit. Not thread-safe: use it
+ * Backend chain: a build compiled for the Tensor G5 runs on the NPU only; any other model runs on
+ * the GPU, then the CPU. `Backend` does not fall back by itself, so the chain is explicit. Not thread-safe: use it
  * from one thread.
  */
 @OptIn(ExperimentalApi::class)
 class ChatEngine(
     context: Context,
     private val models: ModelFiles,
-    /** Collects speed figures for [lastStats]. Off in the app; on for measurements. */
+    /** Collects speed figures for [lastStats] and the log: token counts and tok/s, never text. */
     private val benchmark: Boolean = false,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -53,7 +53,7 @@ class ChatEngine(
         check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
         if (benchmark) ExperimentalFlags.enableBenchmark = true
         var lastError: Throwable? = null
-        for ((name, factory) in listOf<Pair<String, () -> Backend>>("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })) {
+        for ((name, factory) in backends(model)) {
             try {
                 engine = Engine(EngineConfig(modelPath = path, backend = factory(), cacheDir = appContext.cacheDir.path))
                     .also { it.initialize() }
@@ -68,6 +68,13 @@ class ChatEngine(
         }
         throw IllegalStateException("No backend could load ${model.fileName}", lastError)
     }
+
+    private fun backends(model: KnownModel): List<Pair<String, () -> Backend>> =
+        if (ModelFiles.compiledForTensorNpu(model)) {
+            listOf("npu" to { Backend.NPU(appContext.applicationInfo.nativeLibraryDir) })
+        } else {
+            listOf("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })
+        }
 
     @Volatile private var active: Conversation? = null
     @Volatile private var cancelled = false
