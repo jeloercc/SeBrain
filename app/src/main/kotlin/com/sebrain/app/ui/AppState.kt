@@ -15,6 +15,7 @@ import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.DailyNotes
 import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.Pins
@@ -821,6 +822,11 @@ class AppState(private val app: SeBrainApp) {
         }
         messages += ChatMessage(true, text)
         persist(fromUser = true, text = text)
+        // "Save this in today's note": an entry in today's daily note, not an answer.
+        DailyNotes.request(text)?.let { request ->
+            saveToDaily(request)
+            return
+        }
         // "Revisa conceptos no enlazados en todas nuestras notas": a review of the whole vault.
         if (NoteEdits.wantsVaultReview(text)) {
             reviewVaultLinks(fromChat = true)
@@ -838,6 +844,57 @@ class AppState(private val app: SeBrainApp) {
             return
         }
         answer(text)
+    }
+
+    /**
+     * Appends to today's daily note: as a change to review when the note exists, or as a new note
+     * (from the Daily template, if there is one) when it does not.
+     */
+    private fun saveToDaily(request: DailyNotes.Request) {
+        val entry = request.text ?: messages.dropLast(1).lastOrNull { !it.fromUser && !it.isAction && it.text.isNotBlank() }?.text
+        if (entry == null) {
+            messages += ChatMessage(false, "There is no answer to save yet. Ask something first, or write: add to today's note: …", isAction = true)
+            return
+        }
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
+        val brain = scopeBrain
+        app.vault({ db ->
+            val store = NoteStore(db, brain)
+            val existing = store.findByTitle(today.toString())?.let(store::get)
+            if (existing != null) return@vault existing to DailyNotes.appended(existing.text, entry, now.toLocalTime())
+            val template = store.templates().firstOrNull { it.first.equals(DailyNotes.TEMPLATE, ignoreCase = true) }
+                ?.let { (name, text) -> Templates.NoteTemplate(name, text) }
+            val text = DailyNotes.newNote(today, template, entry, now.toLocalTime())
+            val path = DailyNotes.path(today, brain)
+            db.beginTransaction()
+            try {
+                store.create(text, NoteStore.contentHash(text, path), Instant.now().toString(), ZoneId.systemDefault().id)?.let { id ->
+                    store.setPath(id, path)
+                    app.indexer.index(db, id, text)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            null
+        }) { result ->
+            onMain {
+                val found = result.getOrNull()
+                when {
+                    result.isFailure -> messages += ChatMessage(false, "Could not save to today's note (${result.exceptionOrNull()?.javaClass?.simpleName}).", isAction = true)
+                    found == null -> {
+                        messages += ChatMessage(false, "Created today's note, $today.", isAction = true)
+                        refreshNotes()
+                    }
+                    else -> {
+                        val (note, after) = found
+                        proposal = NoteProposal(note.id, note.title, NoteEdits.Kind.EDIT, note.text, after, emptyList(), NoteEdits.diff(note.text, after), label = "Add to today's note")
+                        messages += ChatMessage(false, "A new entry for today's note is ready to review.", isAction = true)
+                    }
+                }
+            }
+        }
     }
 
     /** Answers a message that is already in the conversation. */
@@ -894,6 +951,8 @@ class AppState(private val app: SeBrainApp) {
         val after: String,
         val warnings: List<String>,
         val changes: List<Pair<NoteEdits.Change, String>>,
+        /** What the review screen calls the change; the tool's name unless set. */
+        val label: String = kind.label,
     )
 
     var proposal by mutableStateOf<NoteProposal?>(null)
@@ -1089,7 +1148,7 @@ class AppState(private val app: SeBrainApp) {
             onMain {
                 nextProposal()
                 editStatus = if (result.getOrDefault(false)) {
-                    "${change.kind.label}: applied to \"${change.title}\"."
+                    "${change.label}: applied to \"${change.title}\"."
                 } else {
                     "Not applied: \"${change.title}\" changed meanwhile. Run the tool again."
                 }
