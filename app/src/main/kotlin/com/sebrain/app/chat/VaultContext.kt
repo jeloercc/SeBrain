@@ -29,6 +29,9 @@ object VaultContext {
     private const val RECALLED_NOTES = 8
     private const val PROPERTIES_SHOWN = 8
 
+    /** The source of a capture that came in through the share sheet. */
+    private const val SHARED = "share"
+
     class Result(
         val notes: List<ContextNote>,
         val tags: List<String>,
@@ -77,6 +80,7 @@ object VaultContext {
                 1, named.id, named.title, named.tags,
                 store.linkedFrom(named.id).mapNotNull { it.title }, store.backlinks(named.id).mapNotNull { it.title },
                 FrontMatter.body(named.text), focus = true, properties = propertiesOf(store, named.id),
+                shared = named.source == SHARED,
             )
         }
         // Memory recalled by time ("last week") or by property ("status pending"): every match,
@@ -93,6 +97,7 @@ object VaultContext {
                 notes.size + 1, id, note.title, note.tags,
                 store.linkedFrom(id).mapNotNull { it.title }, store.backlinks(id).mapNotNull { it.title },
                 FrontMatter.body(note.text), section = section, properties = propertiesOf(store, id),
+                shared = note.source == SHARED,
             )
         }
         for ((id, chunks) in chunksByNote) {
@@ -113,6 +118,7 @@ object VaultContext {
                 // The model reads the note's own text; its properties block is left out.
                 text = FrontMatter.body(note.text).let { body -> if (body.length <= Assistant.NOTE_CHARS) body else chunks.distinct().joinToString("\n…\n") },
                 properties = propertiesOf(store, id),
+                shared = note.source == SHARED,
             )
         }
 
@@ -134,6 +140,7 @@ object VaultContext {
                 notes += ContextNote(
                     notes.size + 1, note.id, note.title, note.tags, emptyList(), emptyList(), FrontMatter.body(note.text),
                     relation(store, note.id, matched, adjacent), properties = propertiesOf(store, note.id),
+                    shared = note.source == SHARED,
                 )
             }
         }

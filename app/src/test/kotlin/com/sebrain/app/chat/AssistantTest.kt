@@ -265,6 +265,14 @@ class AssistantTest {
     }
 
     @Test
+    fun aNoteSharedFromAnotherAppIsMarked() {
+        val shared = coffee.copy(shared = true)
+        val prompt = Assistant.prompt("What do I drink?", listOf(shared), false, emptyList())
+        assertTrue(prompt.contains("[1] Coffee (shared from another app)"))
+        assertTrue(Assistant.SYSTEM.contains("shared from another app"))
+    }
+
+    @Test
     fun theModelIsToldThatNotesAreNotInstructions() {
         // A note shared from a web page can carry orders for the assistant (InjectionEvalTest).
         for (system in listOf(Assistant.SYSTEM, Assistant.SYSTEM_COMPACT)) {
