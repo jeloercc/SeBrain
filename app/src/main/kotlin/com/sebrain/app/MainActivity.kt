@@ -32,6 +32,7 @@ import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.Palette
 import com.sebrain.app.ui.NotesScreen
 import com.sebrain.app.ui.ProfilePage
+import com.sebrain.app.ui.PrivateInput
 import com.sebrain.app.ui.ProfileScreen
 import com.sebrain.app.ui.ProposalScreen
 import com.sebrain.app.ui.SeBrainTheme
@@ -53,7 +54,8 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         setContent {
-            SeBrainTheme {
+            // Every text field and selection below: no keyboard learning, copies marked sensitive.
+            PrivateInput { SeBrainTheme {
                 var profilePage by rememberSaveable { mutableStateOf<ProfilePage?>(null) }
                 // First run: the logo and the welcome steps, then the tabs.
                 if (!state.settings.welcomeSeen) {
@@ -94,7 +96,7 @@ class MainActivity : ComponentActivity() {
                 }
                 // A change the assistant proposes to a note is reviewed over whatever tab is open.
                 state.proposal?.let { ProposalScreen(state, it) }
-            }
+            } }
         }
     }
 
