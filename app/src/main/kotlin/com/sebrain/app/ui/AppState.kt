@@ -1644,6 +1644,7 @@ class AppState(private val app: SeBrainApp) {
 
     /** The Models screen: installed models and the Hugging Face hub. */
     val modelHub = ModelHubState(app, gateway, ::onMain)
+    val settings = SettingsState(app, gateway)
 
     private companion object {
         const val TAG = "SEBRAIN_APP"

@@ -31,9 +31,16 @@ import com.sebrain.app.ui.GraphScreen
 import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.Neon
 import com.sebrain.app.ui.NotesScreen
-import com.sebrain.app.ui.PrivacyScreen
+import com.sebrain.app.ui.ProfilePage
+import com.sebrain.app.ui.ProfileScreen
 import com.sebrain.app.ui.ProposalScreen
 import com.sebrain.app.ui.SeBrainTheme
+import com.sebrain.app.ui.WelcomeExit
+import com.sebrain.app.ui.WelcomeFlow
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 
 /** The whole app: notes, the local assistant and models. */
 class MainActivity : ComponentActivity() {
@@ -47,6 +54,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         setContent {
             SeBrainTheme {
+                var profilePage by rememberSaveable { mutableStateOf<ProfilePage?>(null) }
+                // First run: the logo and the welcome steps, then the tabs.
+                if (!state.settings.welcomeSeen) {
+                    WelcomeFlow(state) { exit ->
+                        state.tab = if (exit == WelcomeExit.RESTORE) PROFILE_TAB else 0
+                        if (exit == WelcomeExit.RESTORE) profilePage = ProfilePage.BACKUP
+                    }
+                    return@SeBrainTheme
+                }
                 val tab = state.tab
                 val fullScreen = tab == 0 && (state.draft != null || state.detail != null)
                 Scaffold(
@@ -73,13 +89,17 @@ class MainActivity : ComponentActivity() {
                             ChatScreen(state, Modifier.weight(1f))
                         }
                         3 -> ModelsScreen(state, Modifier.padding(padding))
-                        else -> PrivacyScreen(state, Modifier.padding(padding))
+                        else -> ProfileScreen(state, profilePage, { profilePage = it }, Modifier.padding(padding))
                     }
                 }
                 // A change the assistant proposes to a note is reviewed over whatever tab is open.
                 state.proposal?.let { ProposalScreen(state, it) }
             }
         }
+    }
+
+    private companion object {
+        const val PROFILE_TAB = 4
     }
 
     override fun onStart() {
@@ -96,7 +116,7 @@ class MainActivity : ComponentActivity() {
     private fun PostPunkNavigation(selected: Int, onSelected: (Int) -> Unit) {
         NavigationBar(containerColor = Neon.Void, tonalElevation = 0.dp) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                listOf("NOTES", "GRAPH", "ASK", "MODELS", "PRIVACY").forEachIndexed { index, label ->
+                listOf("NOTES", "GRAPH", "ASK", "MODELS", "PROFILE").forEachIndexed { index, label ->
                     Box(
                         Modifier
                             .weight(1f)

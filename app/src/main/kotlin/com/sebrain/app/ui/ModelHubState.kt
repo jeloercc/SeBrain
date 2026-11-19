@@ -82,6 +82,31 @@ class ModelHubState(
         }
     }
 
+    /** A known model waiting for the user to confirm its download size. */
+    var pendingDownload by mutableStateOf<HubFile?>(null)
+        private set
+
+    /** Looks up [model] in its repository; the download starts only after [confirmDownload]. */
+    fun prepareDownload(model: KnownModel) {
+        val repo = model.repo ?: run {
+            hubMessage = "${model.description} is installed from a file: use IMPORT FROM FILE"
+            return
+        }
+        network({ hub.files(repo) }) { files ->
+            val file = files.firstOrNull { it.fileName == model.fileName && it.sha256 == model.sha256 }
+            if (file == null) hubMessage = "${model.fileName} in $repo no longer matches the pinned file" else pendingDownload = file
+        }
+    }
+
+    fun confirmDownload() {
+        pendingDownload?.let(::download)
+        pendingDownload = null
+    }
+
+    fun cancelDownload() {
+        pendingDownload = null
+    }
+
     fun importFile(uri: Uri) = network({
         app.contentResolver.openInputStream(uri)?.let { app.models.import(it) }
     }) { model ->

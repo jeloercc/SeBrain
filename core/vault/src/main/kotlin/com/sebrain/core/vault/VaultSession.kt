@@ -34,8 +34,12 @@ class VaultSession(
     context: Context,
     private val databaseFile: File,
     private val dekStore: WrappedDekStore,
-    private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
 ) : AutoCloseable {
+    /** Changed from Settings; the next idle check uses the new value. */
+    @Volatile
+    var idleTimeoutMs: Long = idleTimeoutMs
+
     private val appContext = context.applicationContext
     private val keyguard = appContext.getSystemService(KeyguardManager::class.java)
     private val power = appContext.getSystemService(PowerManager::class.java)

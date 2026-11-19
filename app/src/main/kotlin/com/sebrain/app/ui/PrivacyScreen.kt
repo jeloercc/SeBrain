@@ -107,7 +107,6 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
                 onOpenSettings = { state.privacy.openAppSettings(app.packageName) },
             )
         }
-        item { BackupSection(state) }
         if (state.graphSources.isNotEmpty()) item { MiniBrainSection(state) }
     }
 }
@@ -161,7 +160,7 @@ private fun AppPrivacyCard(app: AppPrivacy, expanded: Boolean, onToggle: () -> U
     }
 }
 
-private fun formatBytes(bytes: Long): String = when {
+internal fun formatBytes(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
     bytes >= 1L shl 10 -> "%.0f KB".format(bytes / (1L shl 10).toDouble())
@@ -169,7 +168,7 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 @Composable
-private fun BackupSection(state: AppState) {
+internal fun BackupSection(state: AppState) {
     var showBackupDialog by remember { mutableStateOf(false) }
     var showRestoreDialog by remember { mutableStateOf(false) }
     var passphrase by remember { mutableStateOf("") }

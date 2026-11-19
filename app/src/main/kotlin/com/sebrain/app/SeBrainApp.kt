@@ -31,7 +31,12 @@ class SeBrainApp : Application() {
         val recovery = runCatching { vaultSwap.recover() }
         Log.i(TAG, "vault swap recovery=${recovery.getOrNull() ?: recovery.exceptionOrNull()?.javaClass?.simpleName}")
         val dir = vaultSwap.active
-        VaultSession(this, File(dir, "vault.db"), WrappedDekStore(File(dir, "dek.wrapped")))
+        VaultSession(
+            this,
+            File(dir, "vault.db"),
+            WrappedDekStore(File(dir, "dek.wrapped")),
+            com.sebrain.app.ui.SettingsState.idleTimeoutMs(this),
+        )
     }
 
     val models by lazy { ModelFiles(File(filesDir, "models")) }

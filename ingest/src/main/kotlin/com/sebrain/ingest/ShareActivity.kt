@@ -8,7 +8,6 @@ import android.util.Log
 import android.widget.Toast
 import com.sebrain.core.crypto.DedupKey
 import com.sebrain.core.crypto.InboxKey
-import com.sebrain.core.crypto.InboxMode
 import java.io.File
 
 /** Receives shared text, stores it encrypted and closes. It shows no content and logs none. */
@@ -62,10 +61,13 @@ class ShareActivity : Activity() {
         /** After a vault restore: see [CaptureIngestor.forgetDuplicates]. */
         fun forgetDuplicates(context: Context) = ingestor(context).forgetDuplicates()
 
+        /** After the inbox mode changes: the next share builds an ingestor with the new key. */
+        fun resetIngestor() = synchronized(this) { shared = null }
+
         /** One instance per process, so writes to the inbox and the tag index are serialized. */
         fun ingestor(context: Context): CaptureIngestor = shared ?: synchronized(this) {
             shared ?: run {
-                val key = InboxKey(InboxMode.DEFAULT)
+                val key = InboxKey(InboxSettings.mode(context))
                 val inbox = inboxDir(context)
                 CaptureIngestor(inbox, key.keyId, key::publicKey, DedupIndex(File(inbox, "dedup.idx"), DedupKey()::tag))
             }.also { shared = it }
