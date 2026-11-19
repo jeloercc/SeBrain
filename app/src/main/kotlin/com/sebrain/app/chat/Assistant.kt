@@ -434,10 +434,12 @@ object Assistant {
             note.tags.takeIf { it.isNotEmpty() }?.joinToString(" ", prefix = "Tags: ") { "#$it" },
             note.linksTo.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Links to: "),
             note.linkedFrom.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Linked from: "),
-            note.properties.takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "Properties: "),
+            // Outside text loses the lines and properties addressed to the assistant (see OutsideText).
+            (if (note.shared) OutsideText.properties(note.properties) else note.properties)
+                .takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "Properties: "),
         )
         if (facts.isNotEmpty()) append('\n').append(facts.joinToString(" · "))
-        append('\n').append(shorten(stripHeading(note.text, note.title), if (note.focus) maxOf(chars, FOCUS_CHARS) else chars))
+        append('\n').append(shorten(stripHeading(if (note.shared) OutsideText.neutralize(note.text) else note.text, note.title), if (note.focus) maxOf(chars, FOCUS_CHARS) else chars))
     }
 
     /**
