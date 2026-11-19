@@ -51,7 +51,7 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Text("PRIVACY", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+            Text("PRIVACY", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
             Text(
                 "What your apps can reach: trackers inside them, sensitive permissions you granted, " +
                     "and how much data they used. Everything is checked on the phone; nothing is sent or stored.",
@@ -134,11 +134,11 @@ private fun AppPrivacyCard(app: AppPrivacy, expanded: Boolean, onToggle: () -> U
                 Text(
                     summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (!trackers.isNullOrEmpty()) Neon.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (!trackers.isNullOrEmpty()) Palette.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (expanded) {
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
                 if (!trackers.isNullOrEmpty()) {
                     Text("Trackers", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
                     trackers.forEach {
@@ -189,7 +189,7 @@ internal fun BackupSection(state: AppState) {
         pendingRestorePassphrase = ""
     }
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("BACKUP", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+        Text("BACKUP", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
         Text(
             "Exports an encrypted logical snapshot. The destination is chosen through Android SAF.",
             style = MaterialTheme.typography.bodySmall,
@@ -198,7 +198,7 @@ internal fun BackupSection(state: AppState) {
         Button(onClick = { showBackupDialog = true }) { Text("EXPORT ENCRYPTED BACKUP") }
         Button(onClick = { showRestoreDialog = true }) { Text("RESTORE FROM BACKUP") }
         state.backup.backupStatus?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = Neon.Coral)
+            Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral)
         }
         RestoreActions(state)
     }
@@ -305,7 +305,7 @@ private const val DATE_CHARS = 10
 @Composable
 private fun MiniBrainSection(state: AppState) {
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("MINI-BRAINS", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+        Text("MINI-BRAINS", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
         Text(
             "Save an encrypted view over one or more capture sources.",
             style = MaterialTheme.typography.bodySmall,

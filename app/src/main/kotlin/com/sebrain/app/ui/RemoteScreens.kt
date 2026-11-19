@@ -46,7 +46,7 @@ fun ProvidersSection(state: AppState) {
     var editing by remember { mutableStateOf<RemoteProvider?>(null) }
     LaunchedEffect(Unit) { state.loadProviders() }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("EXTERNAL AI (API)", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+        Text("EXTERNAL AI (API)", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
         Text(
             "Any provider with an OpenAI-style API: OpenRouter, OpenAI, Anthropic, Gemini, Groq or your own server. " +
                 "Only what you write, and notes you attach, leave the phone; you see it before it is sent. " +

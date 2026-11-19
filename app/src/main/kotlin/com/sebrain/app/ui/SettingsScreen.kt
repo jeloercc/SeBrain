@@ -52,7 +52,7 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenProviders: () -> U
         Text(
             "Your notes also close whenever the phone locks.",
             style = MaterialTheme.typography.bodySmall,
-            color = Neon.Dim,
+            color = Palette.Dim,
         )
         SettingsState.IDLE_CHOICES.forEach { minutes ->
             ChoiceRow(
@@ -65,13 +65,13 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenProviders: () -> U
 
         SectionLabel("AI", Modifier.padding(top = 12.dp))
         Row(
-            Modifier.fillMaxWidth().border(1.dp, Neon.Line).padding(12.dp),
+            Modifier.fillMaxWidth().border(1.dp, Palette.Line).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Gemini Nano", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = Neon.Dim)
-                Text("Google's on-device model. Not available yet.", style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+                Text("Gemini Nano", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = Palette.Dim)
+                Text("Google's on-device model. Not available yet.", style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
             }
             Tag("Pending decision")
         }
@@ -103,15 +103,15 @@ private fun ChoiceRow(title: String, subtitle: String?, selected: Boolean, onSel
         Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
-            .background(if (selected) Neon.PanelHigh else Neon.Panel)
+            .background(if (selected) Palette.PanelHigh else Palette.Panel)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Neon.Coral))
+        RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Palette.Coral))
         Column(Modifier.padding(start = 8.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
         }
     }
 }
@@ -122,7 +122,7 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .background(Neon.Panel)
+            .background(Palette.Panel)
             .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -130,12 +130,12 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
         }
         Switch(
             checked = checked,
             onCheckedChange = null,
-            colors = SwitchDefaults.colors(checkedTrackColor = Neon.Coral, checkedThumbColor = Neon.Void),
+            colors = SwitchDefaults.colors(checkedTrackColor = Palette.Coral, checkedThumbColor = Palette.Ink),
         )
     }
 }

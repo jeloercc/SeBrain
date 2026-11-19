@@ -37,7 +37,7 @@ fun ProposalScreen(state: AppState, proposal: AppState.NoteProposal) {
                     Text(
                         proposal.label.uppercase() + if (state.proposalsLeft > 0) " · ${state.proposalsLeft} MORE AFTER THIS" else "",
                         style = MaterialTheme.typography.labelLarge,
-                        color = Neon.Coral,
+                        color = Palette.Coral,
                         modifier = Modifier.weight(1f),
                     )
                     // Ends a review of several notes; the ones not yet seen stay as they are.

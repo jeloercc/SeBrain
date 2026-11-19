@@ -29,7 +29,7 @@ import com.sebrain.app.ui.BrainBar
 import com.sebrain.app.ui.ChatScreen
 import com.sebrain.app.ui.GraphScreen
 import com.sebrain.app.ui.ModelsScreen
-import com.sebrain.app.ui.Neon
+import com.sebrain.app.ui.Palette
 import com.sebrain.app.ui.NotesScreen
 import com.sebrain.app.ui.ProfilePage
 import com.sebrain.app.ui.ProfileScreen
@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun PostPunkNavigation(selected: Int, onSelected: (Int) -> Unit) {
-        NavigationBar(containerColor = Neon.Void, tonalElevation = 0.dp) {
+        NavigationBar(containerColor = Palette.Ink, tonalElevation = 0.dp) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 listOf("NOTES", "GRAPH", "ASK", "MODELS", "PROFILE").forEachIndexed { index, label ->
                     Box(
@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                             .drawBehind {
                                 if (index == selected) {
                                     drawRect(
-                                        Neon.Coral,
+                                        Palette.Coral,
                                         topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.25f, size.height - 3.dp.toPx()),
                                         size = androidx.compose.ui.geometry.Size(size.width * 0.5f, 3.dp.toPx()),
                                     )
@@ -136,7 +136,7 @@ class MainActivity : ComponentActivity() {
                         Text(
                             label,
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (index == selected) Neon.Coral else Neon.Dim,
+                            color = if (index == selected) Palette.Coral else Palette.Dim,
                         )
                     }
                 }

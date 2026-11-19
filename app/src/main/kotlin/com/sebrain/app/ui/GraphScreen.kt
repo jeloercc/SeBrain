@@ -38,10 +38,10 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val NODE = Neon.Coral
-private val MISSING = Neon.Dim
-private val EDGE = Neon.Line.copy(alpha = 0.7f)
-private val BACKGROUND = Neon.Void
+private val NODE = Palette.Coral
+private val MISSING = Palette.Dim
+private val EDGE = Palette.Line.copy(alpha = 0.7f)
+private val BACKGROUND = Palette.Ink
 
 /** Where each node is drawn, in graph units, and how many links it has. */
 private class Layout(val x: FloatArray, val y: FloatArray, val degree: IntArray)
@@ -186,10 +186,10 @@ fun GraphScreen(state: AppState, modifier: Modifier = Modifier) {
             }
         }
         Column(Modifier.align(Alignment.TopStart).padding(16.dp)) {
-            Text("NETWORK GRAPH", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+            Text("NETWORK GRAPH", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
             Text(
                 "${graph.nodes.count { it.id != null }} notes · ${graph.edges.size} links",
-                color = Neon.Dim,
+                color = Palette.Dim,
                 style = MaterialTheme.typography.labelMedium,
             )
             Row(

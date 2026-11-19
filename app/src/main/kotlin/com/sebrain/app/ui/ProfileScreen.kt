@@ -65,7 +65,7 @@ private fun ProfileHome(onPage: (ProfilePage) -> Unit, modifier: Modifier) {
         Text(
             "${android.os.Build.MODEL} · ${ZoneId.systemDefault().id} · everything stays on this phone",
             style = MaterialTheme.typography.bodySmall,
-            color = Neon.Dim,
+            color = Palette.Dim,
             modifier = Modifier.padding(top = 6.dp, bottom = 16.dp),
         )
         NavRow("Settings", "Network, lock and inbox, AI providers") { onPage(ProfilePage.SETTINGS) }
@@ -121,9 +121,9 @@ private fun About() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("SeBrain ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
         Text("A private memory with an AI that runs on this phone.", style = MaterialTheme.typography.bodyMedium)
-        Text("No analytics, no tracking, no crash reporting.", style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+        Text("No analytics, no tracking, no crash reporting.", style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
         SectionLabel("Signing certificate (SHA-256)", Modifier.padding(top = 12.dp))
-        Text(fingerprint ?: "Unavailable", style = MaterialTheme.typography.labelSmall, color = Neon.Dim)
+        Text(fingerprint ?: "Unavailable", style = MaterialTheme.typography.labelSmall, color = Palette.Dim)
     }
 }
 

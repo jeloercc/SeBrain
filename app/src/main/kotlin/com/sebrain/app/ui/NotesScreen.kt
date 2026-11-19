@@ -116,15 +116,15 @@ private fun NoteList(state: AppState, modifier: Modifier) {
             ) {
                 SeBrainMark(Modifier.size(48.dp))
                 Column(Modifier.padding(start = 10.dp).weight(1f)) {
-                    Text("SeBrain", style = MaterialTheme.typography.titleLarge, color = Neon.Cyan)
-                    Text("01. NOTES / LOCAL VAULT", style = MaterialTheme.typography.labelSmall, color = Neon.Dim)
+                    Text("SeBrain", style = MaterialTheme.typography.titleLarge, color = Palette.Bone)
+                    Text("01. NOTES / LOCAL VAULT", style = MaterialTheme.typography.labelSmall, color = Palette.Dim)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("VAULT / SQLCIPHER", style = MaterialTheme.typography.labelSmall, color = Neon.Dim)
+                    Text("VAULT / SQLCIPHER", style = MaterialTheme.typography.labelSmall, color = Palette.Dim)
                     Text(
                         if (state.currentModel != null) "LOCAL AI: READY ●" else "LOCAL AI: NOT LOADED",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (state.currentModel != null) Neon.Coral else Neon.Dim,
+                        color = if (state.currentModel != null) Palette.Coral else Palette.Dim,
                     )
                 }
             }
@@ -144,13 +144,13 @@ private fun NoteList(state: AppState, modifier: Modifier) {
                 TextButton(onClick = { state.reviewVaultLinks() }) { Text("REVIEW LINKS") }
             }
             state.editStatus?.takeIf { state.detail == null }?.let {
-                Text(it, style = MaterialTheme.typography.labelMedium, color = Neon.Coral, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+                Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
             }
             state.vaultTransfer?.let {
                 Text(
                     it,
                     style = MaterialTheme.typography.labelMedium,
-                    color = Neon.Coral,
+                    color = Palette.Coral,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 )
             }
@@ -252,8 +252,8 @@ private fun NoteList(state: AppState, modifier: Modifier) {
         FloatingActionButton(
             onClick = { state.draft = NoteDraft(null, "") },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-            containerColor = Neon.Coral,
-            contentColor = Neon.Void,
+            containerColor = Palette.Coral,
+            contentColor = Palette.Ink,
         ) { Icon(Icons.Filled.Add, contentDescription = "New note") }
     }
 }
@@ -272,11 +272,11 @@ internal fun EmptyState(text: String) {
 private fun EmptyVaultState(onNewNote: () -> Unit, onImport: () -> Unit) {
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = Neon.Panel),
-        border = BorderStroke(1.dp, Neon.Line),
+        colors = CardDefaults.cardColors(containerColor = Palette.Panel),
+        border = BorderStroke(1.dp, Palette.Line),
     ) {
         Column(Modifier.padding(20.dp)) {
-            Text("No notes yet", style = MaterialTheme.typography.titleMedium, color = Neon.Cyan)
+            Text("No notes yet", style = MaterialTheme.typography.titleMedium, color = Palette.Bone)
             Text(
                 "Start with a local note or import Markdown. Nothing leaves this device.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -304,7 +304,7 @@ private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, if (priority) Neon.Coral else MaterialTheme.colorScheme.outline),
+        border = BorderStroke(1.dp, if (priority) Palette.Coral else MaterialTheme.colorScheme.outline),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -313,11 +313,11 @@ private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (priority) Neon.Coral else Neon.Cyan,
+                    color = if (priority) Palette.Coral else Palette.Bone,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (priority) Text("ACTIVE", style = MaterialTheme.typography.labelSmall, color = Neon.Coral)
+                if (priority) Text("ACTIVE", style = MaterialTheme.typography.labelSmall, color = Palette.Coral)
             }
             Spacer(Modifier.height(4.dp))
             InlineMarkdown(body, maxLines = 3)
@@ -325,7 +325,7 @@ private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
             val tags = Regex("""#[\p{L}\p{N}_-]+""").findAll(note.text).map { it.value }.distinct().take(3).toList()
             if (tags.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    tags.forEach { Text(it, style = MaterialTheme.typography.labelSmall, color = Neon.Yellow) }
+                    tags.forEach { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Olive) }
                 }
                 Spacer(Modifier.height(6.dp))
             }
@@ -342,8 +342,8 @@ private fun NoteCard(note: CaptureSummary, onClick: () -> Unit) {
 @Composable
 fun SeBrainMark(modifier: Modifier = Modifier) {
     Canvas(modifier) {
-        val coral = Neon.Coral
-        val bone = Neon.Cyan
+        val coral = Palette.Coral
+        val bone = Palette.Bone
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = size.minDimension * 0.43f
         drawCircle(bone, radius = radius, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5f))
@@ -375,26 +375,26 @@ private fun NetworkGraphCard(graph: NoteGraph?) {
     val nodes = graph?.nodes.orEmpty().take(9)
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        colors = CardDefaults.cardColors(containerColor = Neon.Panel),
-        border = BorderStroke(1.dp, Neon.Line),
+        colors = CardDefaults.cardColors(containerColor = Palette.Panel),
+        border = BorderStroke(1.dp, Palette.Line),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("NETWORK GRAPH", style = MaterialTheme.typography.labelLarge, color = Neon.Coral)
+                Text("NETWORK GRAPH", style = MaterialTheme.typography.labelLarge, color = Palette.Coral)
                 Spacer(Modifier.weight(1f))
                 Text(
                     if (graph == null) "SYNCING" else "${graph.nodes.count { it.id != null }} NODES",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Neon.Dim,
+                    color = Palette.Dim,
                 )
             }
-            Text("Local note topology", style = MaterialTheme.typography.titleMedium, color = Neon.Cyan)
+            Text("Local note topology", style = MaterialTheme.typography.titleMedium, color = Palette.Bone)
             Spacer(Modifier.height(8.dp))
             if (nodes.isEmpty()) {
                 Text(
                     if (graph == null) "Syncing local index…" else "Create or import a note to build the network.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Neon.Dim,
+                    color = Palette.Dim,
                     modifier = Modifier.padding(vertical = 18.dp),
                 )
             } else Box(Modifier.fillMaxWidth().height(150.dp)) {
@@ -414,11 +414,11 @@ private fun NetworkGraphCard(graph: NoteGraph?) {
                     graph?.edges
                         ?.filter { (a, b) -> a in points.indices && b in points.indices }
                         ?.forEach { (a, b) ->
-                            drawLine(Neon.Line, points[a], points[b], 1.2f)
+                            drawLine(Palette.Line, points[a], points[b], 1.2f)
                         }
                     points.forEachIndexed { index, point ->
                         drawCircle(
-                            if (nodes[index].id == null) Neon.Dim else Neon.Coral,
+                            if (nodes[index].id == null) Palette.Dim else Palette.Coral,
                             7f,
                             point,
                         )
@@ -427,7 +427,7 @@ private fun NetworkGraphCard(graph: NoteGraph?) {
                 Text(
                     "${graph?.edges?.size ?: 0} connections",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Neon.Dim,
+                    color = Palette.Dim,
                     modifier = Modifier.align(Alignment.BottomStart),
                 )
             }
@@ -494,7 +494,7 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                 TextButton(onClick = { editing = true }, enabled = !state.generating) { Text("EDIT…") }
             }
             state.editStatus?.let {
-                Text(it, style = MaterialTheme.typography.labelMedium, color = Neon.Coral, modifier = Modifier.padding(bottom = 8.dp))
+                Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.padding(bottom = 8.dp))
             }
             if (editing) {
                 AlertDialog(
@@ -540,7 +540,7 @@ private fun NoteDetailScreen(state: AppState, detail: NoteDetail) {
                 ) {
                     note.properties.forEach { property ->
                         Row {
-                            Text(property.key, style = MaterialTheme.typography.labelMedium, color = Neon.Dim, modifier = Modifier.width(110.dp))
+                            Text(property.key, style = MaterialTheme.typography.labelMedium, color = Palette.Dim, modifier = Modifier.width(110.dp))
                             Text(property.values.joinToString(", "), style = MaterialTheme.typography.bodySmall)
                         }
                     }

@@ -65,7 +65,7 @@ fun WelcomeFlow(state: AppState, onDone: (WelcomeExit) -> Unit) {
     val back: () -> Unit = { step -= 1 }
 
     // Outside the Scaffold nothing sets the text colour, so it would default to black.
-    Surface(Modifier.fillMaxSize(), color = Neon.Void, contentColor = Neon.Cyan) {
+    Surface(Modifier.fillMaxSize(), color = Palette.Ink, contentColor = Palette.Bone) {
     Box(Modifier.fillMaxSize().systemBarsPadding()) {
         when (step) {
             0 -> Splash { step = 1 }
@@ -113,7 +113,7 @@ private fun Splash(onNext: () -> Unit) {
     Box(Modifier.fillMaxSize().clickable(role = Role.Button, onClick = onNext)) {
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = "SeBrain logo", modifier = Modifier.size(176.dp))
-            Text("SEBRAIN", style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 6.sp), color = Neon.Cyan)
+            Text("SEBRAIN", style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 6.sp), color = Palette.Bone)
         }
         SectionLabel("Private · Local · Yours", Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
     }
@@ -159,9 +159,9 @@ private fun Intro() {
 @Composable
 private fun StaysOnPhone() {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Fact("Your notes, chats and search index", "Encrypted", Neon.Yellow)
-        Fact("Analytics, tracking, crash reports", "None", Neon.Yellow)
-        Fact("External AI providers", "Off", Neon.Dim)
+        Fact("Your notes, chats and search index", "Encrypted", Palette.Olive)
+        Fact("Analytics, tracking, crash reports", "None", Palette.Olive)
+        Fact("External AI providers", "Off", Palette.Dim)
     }
 }
 
@@ -175,9 +175,9 @@ private fun Ready() {
         Place("Ask", "Ask about anything you wrote. Answers cite the notes they used.")
         Place("Profile", "Settings, backup, guides and the models on this phone.")
     }
-    Column(Modifier.fillMaxWidth().border(1.dp, Neon.Line).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("TIP", style = MaterialTheme.typography.labelSmall, color = Neon.Yellow)
-        Body("In any app, tap Share › SeBrain to save text or a link to your memory, even with the phone locked.", Neon.Cyan)
+    Column(Modifier.fillMaxWidth().border(1.dp, Palette.Line).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("TIP", style = MaterialTheme.typography.labelSmall, color = Palette.Olive)
+        Body("In any app, tap Share › SeBrain to save text or a link to your memory, even with the phone locked.", Palette.Bone)
     }
 }
 
@@ -185,20 +185,20 @@ private fun Ready() {
 private fun Title(text: String) = Text(text, style = MaterialTheme.typography.titleLarge)
 
 @Composable
-private fun Body(text: String, color: androidx.compose.ui.graphics.Color = Neon.Dim) =
+private fun Body(text: String, color: androidx.compose.ui.graphics.Color = Palette.Dim) =
     Text(text, style = MaterialTheme.typography.bodyMedium, color = color)
 
 @Composable
 private fun Point(number: String, text: String) {
-    Row(Modifier.fillMaxWidth().clip(CardCut).background(Neon.Panel).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(number, style = MaterialTheme.typography.labelMedium, color = Neon.Coral)
+    Row(Modifier.fillMaxWidth().clip(CardCut).background(Palette.Panel).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(number, style = MaterialTheme.typography.labelMedium, color = Palette.Coral)
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun Fact(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color) {
-    Row(Modifier.fillMaxWidth().background(Neon.Panel).padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(Modifier.fillMaxWidth().background(Palette.Panel).padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Text(value.uppercase(), style = MaterialTheme.typography.labelSmall, color = valueColor, modifier = Modifier.padding(start = 12.dp))
     }
@@ -206,21 +206,21 @@ private fun Fact(label: String, value: String, valueColor: androidx.compose.ui.g
 
 @Composable
 private fun Place(name: String, text: String) {
-    Row(Modifier.fillMaxWidth().background(Neon.Panel).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(name.uppercase(), style = MaterialTheme.typography.labelMedium, color = Neon.Coral, modifier = Modifier.width(72.dp))
+    Row(Modifier.fillMaxWidth().background(Palette.Panel).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(name.uppercase(), style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.width(72.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun Choice(kind: String, title: String, text: String, emphasized: Boolean = false, onClick: () -> Unit) {
-    val frame = if (emphasized) Modifier.clip(CardCut).background(Neon.PanelHigh) else Modifier.border(1.dp, Neon.Line)
+    val frame = if (emphasized) Modifier.clip(CardCut).background(Palette.PanelHigh) else Modifier.border(1.dp, Palette.Line)
     Column(
         Modifier.fillMaxWidth().then(frame).clickable(role = Role.Button, onClick = onClick).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(kind.uppercase(), style = MaterialTheme.typography.labelSmall, color = if (emphasized) Neon.Coral else Neon.Dim)
+        Text(kind.uppercase(), style = MaterialTheme.typography.labelSmall, color = if (emphasized) Palette.Coral else Palette.Dim)
         Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-        Text(text, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+        Text(text, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
     }
 }

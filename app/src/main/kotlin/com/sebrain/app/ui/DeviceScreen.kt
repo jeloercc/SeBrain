@@ -54,7 +54,7 @@ fun ModelAdviceList(state: AppState) {
     LaunchedEffect(Unit) { hub.refreshInstalled() }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Column(Modifier.fillMaxWidth().clip(CardCut).background(Neon.Panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.fillMaxWidth().clip(CardCut).background(Palette.Panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionLabel("Detected")
             Text(
                 "${spec.model} · ${spec.soc} · ${formatBytes(spec.totalRamBytes)} memory · ${formatBytes(spec.freeBytes)} free",
@@ -67,7 +67,7 @@ fun ModelAdviceList(state: AppState) {
                     "No Tensor NPU: search runs on the CPU and chat on the GPU."
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = Neon.Dim,
+                color = Palette.Dim,
             )
         }
         val busy = hub.hubBusy || hub.downloadProgress != null
@@ -81,10 +81,10 @@ fun ModelAdviceList(state: AppState) {
             )
         }
         hub.downloadProgress?.let { progress ->
-            LinearProgressIndicator(progress = { progress }, color = Neon.Coral, modifier = Modifier.fillMaxWidth())
-            Text("Downloading… ${(progress * PERCENT).toInt()}%", style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+            LinearProgressIndicator(progress = { progress }, color = Palette.Coral, modifier = Modifier.fillMaxWidth())
+            Text("Downloading… ${(progress * PERCENT).toInt()}%", style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
         }
-        hub.hubMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Neon.Dim) }
+        hub.hubMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Dim) }
     }
 
     hub.pendingDownload?.let { file ->
@@ -106,25 +106,25 @@ fun ModelAdviceList(state: AppState) {
 @Composable
 private fun AdviceCard(advice: ModelAdvice, installed: Boolean, busy: Boolean, onDownload: () -> Unit, onImport: () -> Unit) {
     val emphasized = advice.recommended
-    val frame = if (emphasized) Modifier.clip(CardCut).background(Neon.PanelHigh) else Modifier.border(1.dp, Neon.Line)
+    val frame = if (emphasized) Modifier.clip(CardCut).background(Palette.PanelHigh) else Modifier.border(1.dp, Palette.Line)
     Column(Modifier.fillMaxWidth().then(frame).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
                 if (advice.role == Role.SEARCH) "Search by meaning" else "Chat · ${advice.model.description}",
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = if (emphasized) Neon.Cyan else Neon.Dim,
+                color = if (emphasized) Palette.Bone else Palette.Dim,
                 modifier = Modifier.weight(1f),
             )
             Tag(advice.hardware.name, filled = if (emphasized) hardwareColor(advice.hardware) else null)
         }
-        Text(advice.reason, style = MaterialTheme.typography.bodySmall, color = if (emphasized) Neon.Cyan else Neon.Dim)
+        Text(advice.reason, style = MaterialTheme.typography.bodySmall, color = if (emphasized) Palette.Bone else Palette.Dim)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             when {
                 installed -> SectionLabel("Installed")
                 else -> {
                     if (emphasized) SectionLabel("Recommended")
                     if (!busy && advice.model.repo != null) TextAction("Download", onDownload)
-                    if (!busy) TextAction("Import from file", onImport, color = Neon.Dim)
+                    if (!busy) TextAction("Import from file", onImport, color = Palette.Dim)
                 }
             }
         }
@@ -132,9 +132,9 @@ private fun AdviceCard(advice: ModelAdvice, installed: Boolean, busy: Boolean, o
 }
 
 private fun hardwareColor(hardware: Hardware) = when (hardware) {
-    Hardware.NPU -> Neon.Yellow
-    Hardware.GPU -> Neon.Cyan
-    Hardware.CPU -> Neon.Dim
+    Hardware.NPU -> Palette.Olive
+    Hardware.GPU -> Palette.Bone
+    Hardware.CPU -> Palette.Dim
 }
 
 private const val PERCENT = 100

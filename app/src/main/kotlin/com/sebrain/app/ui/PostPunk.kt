@@ -37,21 +37,21 @@ fun PrimaryAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
             .fillMaxWidth()
             .height(52.dp)
             .clip(ActionCut)
-            .background(if (enabled) Neon.Coral else Neon.PanelHigh)
+            .background(if (enabled) Palette.Coral else Palette.PanelHigh)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text.uppercase(),
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = 2.sp),
-            color = if (enabled) Neon.Void else Neon.Dim,
+            color = if (enabled) Palette.Ink else Palette.Dim,
         )
     }
 }
 
 /** A quiet text action, such as BACK, SKIP or LATER. */
 @Composable
-fun TextAction(text: String, onClick: () -> Unit, color: Color = Neon.Coral) {
+fun TextAction(text: String, onClick: () -> Unit, color: Color = Palette.Coral) {
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelMedium,
@@ -64,7 +64,7 @@ fun TextAction(text: String, onClick: () -> Unit, color: Color = Neon.Coral) {
 
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
-    Text(text.uppercase(), style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp), color = Neon.Dim, modifier = modifier)
+    Text(text.uppercase(), style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp), color = Palette.Dim, modifier = modifier)
 }
 
 /** A row that opens another page: title, a short line under it, and a chevron. */
@@ -74,17 +74,17 @@ fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .background(Neon.Panel)
+            .background(Palette.Panel)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = Neon.Cyan)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+            Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = Palette.Bone)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
         }
-        Text(">", style = MaterialTheme.typography.labelLarge, color = Neon.Dim, modifier = Modifier.padding(start = 8.dp))
+        Text(">", style = MaterialTheme.typography.labelLarge, color = Palette.Dim, modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -92,11 +92,11 @@ fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
 @Composable
 fun Tag(text: String, filled: Color? = null) {
     val base = Modifier.padding(0.dp)
-    val styled = if (filled != null) base.background(filled) else base.border(1.dp, Neon.Line)
+    val styled = if (filled != null) base.background(filled) else base.border(1.dp, Palette.Line)
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        color = if (filled != null) Neon.Void else Neon.Dim,
+        color = if (filled != null) Palette.Ink else Palette.Dim,
         modifier = styled.padding(horizontal = 7.dp, vertical = 3.dp),
     )
 }

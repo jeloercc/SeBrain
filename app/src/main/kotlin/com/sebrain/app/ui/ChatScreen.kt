@@ -90,7 +90,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                         else -> ""
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (remote != null) Neon.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (remote != null) Palette.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
@@ -111,7 +111,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                     // External models, added in the Models tab.
                     state.providers.forEach { provider ->
                         DropdownMenuItem(
-                            text = { Text("API · ${provider.name} · ${provider.model}", color = Neon.Coral) },
+                            text = { Text("API · ${provider.name} · ${provider.model}", color = Palette.Coral) },
                             onClick = { menuOpen = false; state.useProvider(provider) },
                         )
                     }
