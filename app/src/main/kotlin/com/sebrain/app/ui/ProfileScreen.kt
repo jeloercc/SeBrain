@@ -43,7 +43,13 @@ fun ProfileScreen(state: AppState, page: ProfilePage?, onPage: (ProfilePage?) ->
         ProfilePage.DEVICE -> DeviceScreen(state, back, modifier)
         ProfilePage.PROVIDERS -> Page("Settings › AI providers", { onPage(ProfilePage.SETTINGS) }, modifier) { ProvidersSection(state) }
         ProfilePage.GUIDES -> GuidesPage(back, modifier)
-        ProfilePage.ABOUT -> Page("Profile › About", back, modifier) { About() }
+        ProfilePage.ABOUT -> Page("Profile › About", back, modifier) {
+            About()
+            TextAction("Show the welcome again", {
+                onPage(null)
+                state.settings.replayWelcome()
+            })
+        }
     }
 }
 

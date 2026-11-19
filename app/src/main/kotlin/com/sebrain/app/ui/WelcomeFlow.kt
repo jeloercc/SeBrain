@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,7 +64,9 @@ fun WelcomeFlow(state: AppState, onDone: (WelcomeExit) -> Unit) {
     BackHandler(enabled = step > 1) { step-- }
     val back: () -> Unit = { step -= 1 }
 
-    Box(Modifier.fillMaxSize().background(Neon.Void).systemBarsPadding()) {
+    // Outside the Scaffold nothing sets the text colour, so it would default to black.
+    Surface(Modifier.fillMaxSize(), color = Neon.Void, contentColor = Neon.Cyan) {
+    Box(Modifier.fillMaxSize().systemBarsPadding()) {
         when (step) {
             0 -> Splash { step = 1 }
             1 -> Step(1, null, { TextAction("Skip", { finish(WelcomeExit.NOTES) }) }, "Get started", { step = 2 }) { Intro() }
@@ -97,6 +100,7 @@ fun WelcomeFlow(state: AppState, onDone: (WelcomeExit) -> Unit) {
             }
             else -> Step(5, back, null, "Open SeBrain", { finish(exit) }) { Ready() }
         }
+    }
     }
 }
 

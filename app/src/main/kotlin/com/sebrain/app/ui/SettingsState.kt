@@ -34,6 +34,12 @@ class SettingsState(private val app: SeBrainApp, private val gateway: TailnetGat
         welcomeSeen = true
     }
 
+    /** From Profile › About: the logo and welcome steps show again. */
+    fun replayWelcome() {
+        prefs.edit().putBoolean(KEY_WELCOME, false).apply()
+        welcomeSeen = false
+    }
+
     fun updateRequireTailscale(required: Boolean) {
         prefs.edit().putBoolean(KEY_TAILSCALE, required).apply()
         gateway.requireTailscale = required
