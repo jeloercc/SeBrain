@@ -161,7 +161,13 @@ object VaultContext {
             val shown = if (value.notes > found.size) ", the ${found.size} most recent are given" else ""
             found.map { it.id to "Notes with ${value.key}: ${value.value} (${value.notes} in total$shown)" }
         }
-        return byTime + byProperty
+        // "priority above 2", "due before Friday": numbers and dates compared, with the exact total too.
+        val byComparison = MemoryQuery.comparisons(message, store.propertyKeys(), today ?: LocalDate.now()).flatMap { comparison ->
+            val (total, found) = store.compared(comparison.key, comparison.operator, comparison.value, comparison.isDate, RECALLED_NOTES)
+            val shown = if (total > found.size) ", the ${found.size} most recent are given" else ""
+            found.map { it.id to "Notes with ${comparison.label} ($total in total$shown)" }
+        }
+        return byTime + byProperty + byComparison
     }
 
     /** A note's front matter as "key: value", for the model; tags and aliases are shown on their own. */

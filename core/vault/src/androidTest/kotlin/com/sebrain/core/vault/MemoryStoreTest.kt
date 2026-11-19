@@ -75,6 +75,22 @@ class MemoryStoreTest {
     }
 
     @Test
+    fun numbersAndDatesAreComparedWithTheExactTotal() {
+        note("Fix roof", "2026-11-10T08:00:00Z", properties = listOf(NoteProperty("priority", "number", listOf("3"), listOf(3.0)), NoteProperty("due", "date", listOf("2026-11-19"))))
+        note("Paint door", "2026-11-11T08:00:00Z", properties = listOf(NoteProperty("priority", "number", listOf("1"), listOf(1.0)), NoteProperty("due", "date", listOf("2026-11-25"))))
+        note("Clean car", "2026-11-12T08:00:00Z", properties = listOf(NoteProperty("priority", "number", listOf("5"), listOf(5.0))))
+        session.withDatabase { db ->
+            val store = NoteStore(db)
+            assertEquals(setOf("priority" to "number", "due" to "date"), store.propertyKeys().map { it.key to it.type }.toSet())
+            val (above, highNotes) = store.compared("priority", ">", "2", false, 10)
+            assertEquals(2, above)
+            assertEquals(setOf("Fix roof", "Clean car"), highNotes.map { it.title }.toSet())
+            val (dueSoon, soonNotes) = store.compared("due", "<", "2026-11-20", true, 10)
+            assertEquals(1 to listOf("Fix roof"), dueSoon to soonNotes.map { it.title })
+        }
+    }
+
+    @Test
     fun templatesAreNeitherABrainNorMemory() {
         note("Meeting", "2026-11-10T08:00:00Z", path = "Templates/Meeting", properties = listOf(NoteProperty("status", "text", listOf("pending"))))
         note("TCP", "2026-11-10T08:00:00Z", path = "Redes/TCP")

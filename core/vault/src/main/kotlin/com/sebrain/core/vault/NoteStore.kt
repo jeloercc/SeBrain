@@ -463,6 +463,35 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         emptyArray<String>(),
     ).use { c -> generateSequence { if (c.moveToNext()) PropertyValue(c.getString(0), c.getString(1), c.getInt(2)) else null }.toList() }
 
+    /** A front-matter key of the brain whose values can be compared: a number or a date. */
+    data class PropertyKey(val key: String, val type: String)
+
+    /** The brain's number and date keys, for comparisons such as "priority above 2" or "due before Friday". */
+    fun propertyKeys(): List<PropertyKey> = db.rawQuery(
+        "SELECT DISTINCT p.key, p.type FROM property p JOIN capture c ON c.id = p.capture_id " +
+            "WHERE p.type IN ('number', 'date') AND ${inBrain("c.path")} AND ${notTemplate("c.path")} LIMIT $MAX_PROPERTY_VALUES",
+        emptyArray<String>(),
+    ).use { c -> generateSequence { if (c.moveToNext()) PropertyKey(c.getString(0), c.getString(1)) else null }.toList() }
+
+    /**
+     * Notes of the brain whose [key] compares to [value] with [operator] (one of `<`, `<=`, `>`,
+     * `>=`): as a number, or as a `YYYY-MM-DD` date when [isDate]. Returns the exact total and
+     * the newest [limit] notes. The operator comes from a fixed list, never from the message.
+     */
+    fun compared(key: String, operator: String, value: String, isDate: Boolean, limit: Int): Pair<Int, List<CaptureSummary>> {
+        require(operator in COMPARISONS) { "Unknown comparison" }
+        val condition = if (isDate) "p.type = 'date' AND substr(p.value, 1, 10) $operator ?" else "p.number IS NOT NULL AND p.number $operator ?"
+        val operand: Any = if (isDate) value else value.toDouble()
+        val from = "FROM capture c JOIN property p ON p.capture_id = c.id WHERE p.key = ? AND $condition " +
+            "AND ${inBrain("c.path")} AND ${notTemplate("c.path")}"
+        val total = db.rawQuery("SELECT count(DISTINCT c.id) $from", key as Any, operand).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+        val notes = summaries(
+            "SELECT DISTINCT c.id, c.captured_at, c.source, c.text, c.title $from ORDER BY COALESCE(c.updated_at, c.captured_at) DESC, c.id DESC LIMIT $limit",
+            key, operand,
+        )
+        return total to notes
+    }
+
     /** Notes of the brain whose property [key] has the value [value], ignoring case. Newest first. */
     fun withProperty(key: String, value: String, limit: Int): List<CaptureSummary> = summaries(
         "SELECT DISTINCT c.id, c.captured_at, c.source, c.text, c.title FROM capture c JOIN property p ON p.capture_id = c.id " +
@@ -521,6 +550,7 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         private const val MAX_PROPERTY_VALUES = 2000
         private const val MAX_PROPERTY_CHARS = 60
         private const val MAX_TEMPLATES = 50
+        private val COMPARISONS = setOf("<", "<=", ">", ">=")
         private const val MIN_MENTION = 4
         private const val MAX_TAG_NOTES = 50
         private val WORD = Regex("[\\p{L}\\p{N}]+")
