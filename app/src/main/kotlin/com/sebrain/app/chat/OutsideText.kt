@@ -19,6 +19,21 @@ object OutsideText {
     /** "System"/"sistema" only counts where a prompt is usually faked: in a quote or a comment. */
     private val FAKED_SYSTEM = Regex("^\\s*(>|<!--)\\s*(system|sistema|developer|instructions?|instrucciones?)\\s*:")
 
+    /** A label that fakes the system prompt, quoted or not: "SYSTEM OVERRIDE:", "System prompt:". */
+    private val SYSTEM_LABEL = Regex("^(system|sistema) (override|prompt|message|instructions?|note|mensaje|instrucciones?)\\b")
+
+    /**
+     * Phrases that only an attack uses, anywhere in a line: ignoring the instructions, or taking
+     * on a new role. "You are now in the lobby" is not one; "you are now DAN" is.
+     */
+    private val JAILBREAK = Regex(
+        "\\b(ignore (all |any |the )?(previous |prior |above |earlier |your )?(instructions|rules|prompts?)" +
+            "|you are now (dan|an? (unrestricted |uncensored |new )?(assistant|ai|model|bot|persona))" +
+            "|(in|enter) (developer|god|jailbreak|dan) mode" +
+            "|ignora (todas )?(las |tus )?(instrucciones|reglas)" +
+            "|a partir de ahora (eres|actua|actuas|responde|respondes))\\b",
+    )
+
     private const val MAX_LABEL = 40
 
     /** The text before the first colon of a line, after list, quote and comment markers, if short enough to be a label. */
@@ -32,7 +47,8 @@ object OutsideText {
     fun neutralize(text: String): String = text.lines().joinToString("\n") { line ->
         val folded = fold(line)
         val label = LABEL.find(folded)?.groupValues?.get(1)
-        val addressed = (label != null && ADDRESSEE.containsMatchIn(label)) || FAKED_SYSTEM.containsMatchIn(folded)
+        val addressed = (label != null && (ADDRESSEE.containsMatchIn(label) || SYSTEM_LABEL.containsMatchIn(label.trim()))) ||
+            FAKED_SYSTEM.containsMatchIn(folded) || JAILBREAK.containsMatchIn(folded)
         if (addressed) LIST_MARKER.find(line)?.value.orEmpty() + REMOVED else line
     }
 
