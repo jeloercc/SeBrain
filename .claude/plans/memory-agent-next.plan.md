@@ -1,7 +1,7 @@
 # Plan: Next steps for the local agent's long-term memory
 
 **Complexity**: Medium overall; each phase is small to medium and ships on its own.
-**State**: approved 2026-11-18 (the user asked for the most positive decision). Phases 1–4 are implemented in order; phase 5 is the user's.
+**State**: approved 2026-11-18. Phases 1–3 done (74d3cc3, c8962c9, dd721a9). Phase 4 not started: it needs its own design (see the final report). Phase 5 is the user's.
 
 ## Summary
 
