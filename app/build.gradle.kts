@@ -3,6 +3,25 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+/** The release signing properties, or null if any is missing: then a release build fails instead of coming out unsigned. */
+val releaseSigning: Map<String, String>? =
+    listOf("SEBRAIN_STORE_FILE", "SEBRAIN_STORE_PASSWORD", "SEBRAIN_KEY_ALIAS", "SEBRAIN_KEY_PASSWORD")
+        .associateWith { (findProperty(it) as String?).orEmpty() }
+        .takeIf { properties -> properties.values.none { it.isEmpty() } }
+
+tasks.configureEach {
+    if (name == "assembleRelease" || name == "packageRelease") {
+        doFirst {
+            if (releaseSigning == null) {
+                throw GradleException(
+                    "Release signing is not set up: add SEBRAIN_STORE_FILE, SEBRAIN_STORE_PASSWORD, " +
+                        "SEBRAIN_KEY_ALIAS and SEBRAIN_KEY_PASSWORD to ~/.gradle/gradle.properties.",
+                )
+            }
+        }
+    }
+}
+
 android {
     namespace = "com.sebrain.app"
     compileSdk {
@@ -20,6 +39,28 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    // The release key and its password live outside the repo, in ~/.gradle/gradle.properties
+    // (SEBRAIN_STORE_FILE, SEBRAIN_STORE_PASSWORD, SEBRAIN_KEY_ALIAS, SEBRAIN_KEY_PASSWORD).
+    signingConfigs {
+        create("release") {
+            if (releaseSigning != null) {
+                storeFile = file(releaseSigning.getValue("SEBRAIN_STORE_FILE"))
+                storePassword = releaseSigning.getValue("SEBRAIN_STORE_PASSWORD")
+                keyAlias = releaseSigning.getValue("SEBRAIN_KEY_ALIAS")
+                keyPassword = releaseSigning.getValue("SEBRAIN_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = if (releaseSigning != null) signingConfigs.getByName("release") else null
+            // R8 stays off: LiteRT-LM and SQLCipher reach classes through reflection and JNI.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 
