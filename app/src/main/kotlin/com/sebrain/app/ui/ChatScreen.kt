@@ -137,7 +137,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 Bubble(message)
                 if (!message.fromUser && !message.isAction && message.text.isNotBlank()) {
                     if (message.saved) {
-                        Text("✓ Saved as a note", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                        Text("✓ Note drafted: review it to save", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     } else if (!state.generating) {
                         TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
                     }

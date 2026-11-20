@@ -31,6 +31,7 @@ import com.sebrain.app.ui.GraphScreen
 import com.sebrain.app.ui.ModelsScreen
 import com.sebrain.app.ui.Palette
 import com.sebrain.app.ui.NotesScreen
+import com.sebrain.app.ui.NewNoteScreen
 import com.sebrain.app.ui.ProfilePage
 import com.sebrain.app.ui.PrivateInput
 import com.sebrain.app.ui.ProfileScreen
@@ -96,6 +97,8 @@ class MainActivity : ComponentActivity() {
                 }
                 // A change the assistant proposes to a note is reviewed over whatever tab is open.
                 state.proposal?.let { ProposalScreen(state, it) }
+                // A note written in the chat waits here until it is saved or discarded; one review at a time.
+                if (state.proposal == null) state.newNote?.let { NewNoteScreen(state, it) }
             } }
         }
     }

@@ -52,6 +52,22 @@ class NoteTools(
         return if (created != null) done("Created the note \"${title.trim()}\"") else "A note with the same content already exists"
     }
 
+    /**
+     * The exact text [createNoteFrom] would store for these arguments, without storing it: the
+     * review screen shows this, so what the user approves is what is saved.
+     */
+    fun preview(
+        title: String,
+        text: String,
+        tags: List<String>,
+        source: String,
+        brain: String? = null,
+        aliases: List<String> = emptyList(),
+        templateProperties: List<Pair<String, List<String>>> = emptyList(),
+    ): String = session.withDatabase { db ->
+        noteText(title, text, tags, source, NoteAliases.choose(title, aliases, aliasChecks(NoteStore(db, brain)), cleanTags(tags)), templateProperties)
+    }
+
     /** The note in Obsidian format: where it came from and its other names, the title, the body, the tags. */
     private fun noteText(
         title: String,
@@ -93,9 +109,7 @@ class NoteTools(
         }
     }
 
-    private fun cleanTags(tags: List<String>): List<String> =
-        tags.map { it.trim().trimStart('#').lowercase().replace(Regex("[^\\p{L}\\p{N}_/-]"), "-").trim('-') }
-            .filter { it.isNotEmpty() && !it.first().isDigit() }.distinct()
+    private fun cleanTags(tags: List<String>): List<String> = com.sebrain.app.chat.NoteCheck.cleanTags(tags)
 
     private fun done(message: String): String {
         onAction(message)

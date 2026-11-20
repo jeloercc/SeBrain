@@ -16,6 +16,7 @@ import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
 import com.sebrain.app.chat.DailyNotes
+import com.sebrain.app.chat.NoteCheck
 import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.Pins
@@ -1312,10 +1313,33 @@ class AppState(private val app: SeBrainApp) {
         }
     }
 
+    /** A note written in the chat, checked and waiting for the user to save or discard it. */
+    class NewNote(
+        val title: String,
+        val body: String,
+        val tags: List<String>,
+        val aliases: List<String>,
+        val source: String,
+        val brain: String?,
+        val templateProperties: List<Pair<String, List<String>>>,
+        /** Exactly what SAVE stores. */
+        val preview: String,
+        val fixes: List<String>,
+        val warnings: List<String>,
+        /** The note that already answers to this title or an alias, as (id, title). */
+        val duplicate: Pair<Long, String>?,
+    )
+
+    var newNote by mutableStateOf<NewNote?>(null)
+        private set
+    var newNotesLeft by mutableStateOf(0)
+        private set
+    private val newNoteQueue = ArrayDeque<NewNote>()
+
     /**
-     * Stores the notes in a reply, one per `# Title`, in Obsidian format: the title, the cleaned
-     * body with each citation turned into a `[[link]]` to the cited note, only links to notes
-     * that exist, and `#tags`. Returns whether at least one note was created.
+     * Drafts the notes in a reply, one per `# Title`, for review: the body with each citation
+     * turned into a `[[link]]`, repaired by [NoteCheck], and shown exactly as it would be saved.
+     * Nothing is stored until SAVE. Returns whether at least one note was drafted. Runs off the main thread.
      */
     private fun createNoteFrom(
         reply: String,
@@ -1325,15 +1349,70 @@ class AppState(private val app: SeBrainApp) {
         /** The template the request named: the saved note gets its properties. */
         template: Templates.NoteTemplate? = null,
     ): Boolean {
-        var created = false
-        for (note in NoteFormat.parse(reply, question)) {
-            val text = Assistant.linkify(note.body, context, note.title)
-            val fromTemplate = template?.let { Templates.properties(it, note.title, LocalDateTime.now()) }.orEmpty()
-            val outcome = runCatching { tools.createNoteFrom(note.title, text, note.tags, source, scopeBrain, note.aliases, fromTemplate) }
-                .getOrElse { "The note could not be saved: ${it.message}" }
-            if (outcome.startsWith("Created")) created = true else onMain { messages += ChatMessage(false, outcome, isAction = true) }
+        val brain = scopeBrain
+        val drafts = runCatching {
+            val names = app.session.withDatabase { NoteStore(it, brain).names() }
+            NoteFormat.parse(reply, question).map { note ->
+                val checked = NoteCheck.check(note.title, Assistant.linkify(note.body, context, note.title), note.tags)
+                val fromTemplate = template?.let { Templates.properties(it, checked.title, LocalDateTime.now()) }.orEmpty()
+                val preview = tools.preview(checked.title, checked.body, checked.tags, source, brain, note.aliases, fromTemplate)
+                NewNote(
+                    checked.title, checked.body, checked.tags, note.aliases, source, brain, fromTemplate, preview,
+                    checked.fixes, checked.warnings, NoteCheck.duplicateOf(checked.title, note.aliases, names),
+                )
+            }
+        }.getOrElse {
+            Log.w(TAG, "drafting a note failed: ${it.javaClass.simpleName}")
+            onMain { messages += ChatMessage(false, "The note could not be prepared: ${it.message}", isAction = true) }
+            return false
         }
-        return created
+        if (drafts.isEmpty()) return false
+        onMain {
+            newNoteQueue.addAll(drafts)
+            if (newNote == null) nextNewNote() else newNotesLeft = newNoteQueue.size
+        }
+        return true
+    }
+
+    private fun nextNewNote() {
+        newNote = newNoteQueue.removeFirstOrNull()
+        newNotesLeft = newNoteQueue.size
+    }
+
+    /** Stores the note under review exactly as previewed. */
+    fun saveNewNote() {
+        val note = newNote ?: return
+        nextNewNote()
+        chatWorker.execute {
+            val outcome = runCatching {
+                tools.createNoteFrom(note.title, note.body, note.tags, note.source, note.brain, note.aliases, note.templateProperties)
+            }.getOrElse { "The note could not be saved: ${it.message}" }
+            // A success is reported by NoteTools itself; anything else is said here.
+            onMain {
+                if (!outcome.startsWith("Created")) messages += ChatMessage(false, outcome, isAction = true)
+                refreshNotes()
+            }
+        }
+    }
+
+    fun discardNewNote() = nextNewNote()
+
+    /** Instead of a second note with the same name: the new text as a section of the existing note, to review as a change. */
+    fun addNewNoteToExisting() {
+        val note = newNote ?: return
+        val (id, title) = note.duplicate ?: return
+        nextNewNote()
+        app.vault({ db -> NoteStore(db).get(id) }) { found ->
+            onMain {
+                val existing = found.getOrNull() ?: run {
+                    messages += ChatMessage(false, "\"$title\" could not be read", isAction = true)
+                    return@onMain
+                }
+                val after = existing.text.trimEnd() + "\n\n## " + note.title + "\n\n" + note.body.trim() + "\n"
+                val change = NoteProposal(id, title, NoteEdits.Kind.EDIT, existing.text, after, emptyList(), NoteEdits.diff(existing.text, after), label = "Add to \"$title\"")
+                if (proposal == null) proposal = change else proposalQueue.addLast(change)
+            }
+        }
     }
 
     // ---- Brains ----
