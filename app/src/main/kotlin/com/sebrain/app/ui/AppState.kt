@@ -686,18 +686,28 @@ class AppState(private val app: SeBrainApp) {
         loadingModel = true
         chatProblem = null
         chatWorker.execute {
+            // The chosen model, else the last one used, then every other installed one: one bad
+            // file must not leave the chat without a model.
+            val skipped = mutableListOf<String>()
             val result = runCatching {
-                val models = app.chat.languageModels()
+                val installed = app.chat.languageModels()
                 val saved = app.getSharedPreferences(PREFS, 0).getString(PREF_MODEL, null)
-                val model = choice ?: models.firstOrNull { it.fileName == saved } ?: models.firstOrNull()
-                if (model != null) {
-                    app.chat.load(model)
-                    app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, model.fileName).apply()
+                val candidates = if (choice != null) listOf(choice) else (installed.filter { it.fileName == saved } + installed).distinct()
+                var lastError: Throwable? = null
+                val model = candidates.firstOrNull { candidate ->
+                    runCatching { app.chat.load(candidate) }
+                        .onFailure { lastError = it; skipped += "${candidate.description}: ${it.message}" }
+                        .isSuccess
                 }
-                models to model
+                if (model == null) lastError?.let { throw it }
+                model?.let { app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, it.fileName).apply() }
+                app.chat.languageModels() to model
             }
             onMain {
                 loadingModel = false
+                if (result.isSuccess && result.getOrNull()?.second != null) {
+                    skipped.forEach { messages += ChatMessage(false, "Not loaded: $it", isAction = true) }
+                }
                 result.onSuccess { (models, model) ->
                     languageModels = models
                     currentModel = model

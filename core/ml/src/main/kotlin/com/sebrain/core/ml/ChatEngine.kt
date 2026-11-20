@@ -45,12 +45,27 @@ class ChatEngine(
             .getOrElse { !model.fileName.contains("embedding", ignoreCase = true) }
     }
 
+    /**
+     * A file that does not match its pinned SHA-256 is never loaded. It is removed, so the app
+     * does not stay stuck on it, and the log says what was found: hashes and size, never content.
+     */
+    private fun reject(model: KnownModel): Nothing {
+        val file = models.file(model)
+        val actual = if (file.exists()) runCatching { ModelFiles.sha256(file.inputStream()) }.getOrNull() else null
+        Log.w(TAG, "model rejected: ${model.fileName} exists=${file.exists()} size=${file.length()} expected=${model.sha256.take(12)} actual=${actual?.take(12)}")
+        models.remove(model)
+        throw IllegalStateException(
+            "${model.description} did not match its SHA-256 fingerprint, so the file was removed. " +
+                "Download it again in Profile › Device & models.",
+        )
+    }
+
     /** Loads [model], releasing any other. A file is hashed the first time it is loaded. */
     fun load(model: KnownModel) {
         if (loaded == model && engine != null) return
         close()
         val path = models.file(model).path
-        check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
+        if (!models.verifyOnce(model)) reject(model)
         if (benchmark) ExperimentalFlags.enableBenchmark = true
         var lastError: Throwable? = null
         for ((name, factory) in backends(model)) {
