@@ -52,20 +52,20 @@ ANDROID_SERIAL=$SERIAL ./gradlew -q :core:vault:installDebugAndroidTest :app:ins
 
 VAULT=com.sebrain.core.vault.test
 VAULT_CLASS=com.sebrain.core.vault.VaultSessionPhaseTest
-APP=com.sebrain.app.test
+APP=com.sebrain.app.debug.test
 APP_CLASS=com.sebrain.app.LockedPhaseTest
 
 echo "== 3. Share intent, end to end"
 $ADB logcat -c
 STAMP=$(date +%s)
 share() {
-    $ADB shell am start -W -n com.sebrain.app/com.sebrain.ingest.ShareActivity -a android.intent.action.SEND \
+    $ADB shell am start -W -n com.sebrain.app.debug/com.sebrain.ingest.ShareActivity -a android.intent.action.SEND \
         -t text/plain --es android.intent.extra.TEXT "'Phone test capture $STAMP'" > /dev/null 2>&1
     sleep 4
 }
 share
 share
-$ADB shell am start -W -n com.sebrain.app/.MainActivity > /dev/null 2>&1
+$ADB shell am start -W -n com.sebrain.app.debug/.MainActivity > /dev/null 2>&1
 sleep 4
 $ADB logcat -d -s SEBRAIN_INGEST:I SEBRAIN_APP:I > "$OUT/share.log"
 grep -q 'share result=Stored' "$OUT/share.log" && record "share: first share stored" PASS "" || record "share: first share stored" FAIL "see $OUT/share.log"
@@ -110,7 +110,7 @@ grep -q '^OK (1 test)' "$OUT/vault-lock.log" && record "vault: closes on lock an
 
 echo "== 7. Locked phases"
 if locked; then
-    $ADB shell am force-stop com.sebrain.app
+    $ADB shell am force-stop com.sebrain.app.debug
     phase "pipeline: locked" $APP "$APP_CLASS#phaseLocked" locked
     $ADB logcat -d -s SEBRAIN_APP_PHASE:I | sed 's/.*SEBRAIN_APP_PHASE: /    /' | tee -a "$OUT/locked-notes.log"
     locked || record "lock held" FAIL "the device was unlocked during the locked phases"
@@ -129,7 +129,7 @@ done
 echo "== 9. Phases after the unlock"
 if ! locked; then
     sleep 2
-    $ADB shell am force-stop com.sebrain.app
+    $ADB shell am force-stop com.sebrain.app.debug
     phase "pipeline: import after unlock" $APP "$APP_CLASS#phaseAfterUnlock" afterUnlock
     phase "vault: reopen after unlock" $VAULT "$VAULT_CLASS#phaseAfterUnlock" afterUnlock
 fi

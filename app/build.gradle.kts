@@ -67,6 +67,11 @@ android {
     }
 
     buildTypes {
+        // The debug app installs beside the release one, with its own vault, keys and models, so phone
+        // tests and evaluations never touch the real vault.
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             signingConfig = if (releaseSigning != null) signingConfigs.getByName("release") else null
             // R8 stays off: LiteRT-LM and SQLCipher reach classes through reflection and JNI.

@@ -25,7 +25,7 @@ $ADB get-state > /dev/null 2>&1 || { echo "Device $SERIAL not found"; exit 1; }
 $ADB shell dumpsys trust | grep '(current)' | grep -q 'deviceLocked=1' && { echo "The device is locked. Unlock it and start again."; exit 1; }
 
 # The vault must not be open in the app while the test opens it.
-$ADB shell am force-stop com.sebrain.app
+$ADB shell am force-stop com.sebrain.app.debug
 $ADB shell svc power stayon usb
 RUN_TIMEOUT=1800000
 SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r[:space:]')
@@ -43,7 +43,7 @@ $ADB logcat -c
 $ADB logcat -v time -s SEBRAIN_EVAL:I > "$LOG" &
 LOGCAT_PID=$!
 $ADB shell am instrument -w -e eval synthetic -e count "$COUNT" -e seed "$SEED" -e minChars "$MIN_CHARS" \
-    -e class com.sebrain.app.SyntheticRetrievalEval com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner > "$RESULT" 2>&1
+    -e class com.sebrain.app.SyntheticRetrievalEval com.sebrain.app.debug.test/androidx.test.runner.AndroidJUnitRunner > "$RESULT" 2>&1
 sleep 2
 kill $LOGCAT_PID 2> /dev/null
 

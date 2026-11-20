@@ -44,7 +44,7 @@ MODEL_ARG=""
 [ -n "$MODEL" ] && MODEL_ARG="-e model $MODEL"
 # shellcheck disable=SC2086 # MODEL_ARG is two words or none.
 $ADB shell am instrument -w -e scenario linux $MODEL_ARG \
-    -e class com.sebrain.app.LinuxScenarioTest com.sebrain.app.test/androidx.test.runner.AndroidJUnitRunner > "$RESULT" 2>&1
+    -e class com.sebrain.app.LinuxScenarioTest com.sebrain.app.debug.test/androidx.test.runner.AndroidJUnitRunner > "$RESULT" 2>&1
 
 sleep 2
 kill $LOGCAT_PID 2> /dev/null
