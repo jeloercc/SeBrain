@@ -72,16 +72,22 @@ class ModelHubState(
         val model = KnownModel(file.fileName, file.sha256, "${file.repo.substringAfterLast('/')} · ${file.fileName}", file.repo)
         downloadProgress = 0f
         var shown = 0L
+        // Keeps the network and the CPU on while the phone is locked.
+        com.sebrain.app.ModelDownloadService.start(app)
         network({
             hub.download(file, app.models.file(model)) { done, total ->
                 if (done - shown > PROGRESS_STEP) {
                     shown = done
+                    com.sebrain.app.ModelDownloadService.progress(app, (done * PERCENT / total).toInt())
                     onMain { downloadProgress = done.toFloat() / total }
                 }
             }
             // A file that fails this check is not left installed.
             runCatching { app.models.trust(model) }.onFailure { app.models.remove(model) }.getOrThrow()
-        }, onFinally = { downloadProgress = null }) {
+        }, onFinally = {
+            downloadProgress = null
+            com.sebrain.app.ModelDownloadService.stop(app)
+        }) {
             hubMessage = "Installed ${model.fileName}"
             refreshInstalled()
             app.requestImport()
@@ -141,5 +147,6 @@ class ModelHubState(
 
     private companion object {
         const val PROGRESS_STEP = 8L * 1024 * 1024
+        const val PERCENT = 100
     }
 }
