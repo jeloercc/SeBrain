@@ -70,6 +70,21 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
         ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
+    /**
+     * The ids of up to [limit] notes of the brain that contain [phrase] as whole words, by the same
+     * full-text query as [notesMentioning]. Empty if the phrase has no word.
+     */
+    fun idsMentioning(phrase: String, limit: Int): List<Long> {
+        val words = WORD.findAll(phrase).map { it.value }.toList()
+        if (words.isEmpty()) return emptyList()
+        return db.rawQuery(
+            "SELECT DISTINCT ch.capture_id FROM chunk_fts JOIN chunk ch ON ch.id = chunk_fts.rowid " +
+                "JOIN capture c ON c.id = ch.capture_id WHERE chunk_fts MATCH ? AND ${inBrain("c.path")} LIMIT ?",
+            "\"${words.joinToString(" ")}\"" as Any,
+            limit as Any,
+        ).use { c -> generateSequence { if (c.moveToNext()) c.getLong(0) else null }.toList() }
+    }
+
     fun count(): Long = db.rawQuery("SELECT count(*) FROM capture WHERE ${inBrain()}", emptyArray<String>()).use { c ->
         c.moveToFirst()
         c.getLong(0)

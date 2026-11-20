@@ -153,6 +153,24 @@ class BrainIsolationTest {
     }
 
     @Test
+    fun idsMentioningNamesTheNotesInsideTheBrain() {
+        val shell = note("Shell", "Linux/Shell", text = "the shell reads commands")
+        val cron = note("Cron", "Linux/Cron", text = "cron runs a shell script at night")
+        note("Kernel", "Linux/Kernel", text = "the kernel schedules processes")
+        note("Diario", "Personal/Diario", text = "a shell on the beach")
+        session.withDatabase { db ->
+            val linux = NoteStore(db, "Linux")
+            assertEquals(setOf(shell, cron), linux.idsMentioning("shell", 10).toSet())
+            assertEquals(listOf(cron), linux.idsMentioning("shell script", 10))
+            assertEquals(1, linux.idsMentioning("shell", 1).size)
+            // Whole words only, and FTS5 syntax in the input is only words.
+            assertTrue(linux.idsMentioning("she", 10).isEmpty())
+            assertTrue(linux.idsMentioning("shell\" OR \"kernel", 10).isEmpty())
+            assertEquals(3, NoteStore(db).idsMentioning("shell", 10).size)
+        }
+    }
+
+    @Test
     fun brainsAreListedFromFoldersAndRememberWhetherTheyArePrivate() {
         note("TCP", "Redes/TCP")
         session.withDatabase { db ->

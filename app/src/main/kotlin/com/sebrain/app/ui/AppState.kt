@@ -20,6 +20,7 @@ import com.sebrain.app.chat.FollowUp
 import com.sebrain.app.chat.NoteCheck
 import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
+import com.sebrain.app.chat.NoteLinks
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.Templates
 import com.sebrain.app.chat.VaultContext
@@ -1385,7 +1386,10 @@ class AppState(private val app: SeBrainApp) {
         val drafts = runCatching {
             val names = app.session.withDatabase { NoteStore(it, brain).names() }
             NoteFormat.parse(reply, question).map { note ->
-                val checked = NoteCheck.check(note.title, Assistant.linkify(note.body, context, note.title), note.tags)
+                // The app links what the note names, whether or not the model remembered to.
+                val (linkedBody, linkedCount) = NoteLinks.outgoing(Assistant.linkify(note.body, context, note.title), note.title, names)
+                val checked = NoteCheck.check(note.title, linkedBody, note.tags)
+                    .let { if (linkedCount > 0) it.copy(fixes = it.fixes + "Linked $linkedCount mention(s) of existing notes") else it }
                 val fromTemplate = template?.let { Templates.properties(it, checked.title, LocalDateTime.now()) }.orEmpty()
                 val preview = tools.preview(checked.title, checked.body, checked.tags, source, brain, note.aliases, fromTemplate)
                 val repeats = NoteCheck.repeats(checked.body, earlierTexts)
@@ -1421,12 +1425,50 @@ class AppState(private val app: SeBrainApp) {
             val outcome = runCatching {
                 tools.createNoteFrom(note.title, note.body, note.tags, note.source, note.brain, note.aliases, note.templateProperties)
             }.getOrElse { "The note could not be saved: ${it.message}" }
+            // The notes that already name the new one, each offered a link to it as a change to review.
+            val backlinks = if (outcome.startsWith("Created")) {
+                runCatching { backlinkProposals(note) }
+                    .onFailure { Log.w(TAG, "finding notes that name a new note failed: ${it.javaClass.simpleName}") }
+                    .getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
             // A success is reported by NoteTools itself; anything else is said here.
             onMain {
                 if (!outcome.startsWith("Created")) messages += ChatMessage(false, outcome, isAction = true)
+                if (backlinks.isNotEmpty()) {
+                    messages += ChatMessage(false, "${backlinks.size} note(s) name \"${note.title}\": review the link to it in each.", isAction = true)
+                    queueProposals(backlinks)
+                }
                 refreshNotes()
             }
         }
+    }
+
+    /**
+     * A link proposal for each existing note that names [note] by its title without linking it.
+     * Only the title: an alias the model proposed may have been dropped as too generic. Runs off the main thread.
+     */
+    private fun backlinkProposals(note: NewNote): List<NoteProposal> = app.session.withDatabase { db ->
+        val store = NoteStore(db, note.brain)
+        store.idsMentioning(note.title, BACKLINK_MAX)
+            .mapNotNull(store::get)
+            .filterNot { it.title.equals(note.title, ignoreCase = true) }
+            .mapNotNull { existing ->
+                NoteLinks.backlinked(existing.text, note.title, emptyList())?.let { after ->
+                    NoteProposal(
+                        existing.id, existing.title, NoteEdits.Kind.LINK, existing.text, after, emptyList(),
+                        NoteEdits.diff(existing.text, after), label = "Link to [[${note.title}]]",
+                    )
+                }
+            }
+    }
+
+    /** Adds changes to review after the one on screen, or shows the first if none is. */
+    private fun queueProposals(changes: List<NoteProposal>) {
+        if (changes.isEmpty()) return
+        proposalQueue.addAll(changes)
+        if (proposal == null) nextProposal() else proposalsLeft = proposalQueue.size
     }
 
     fun discardNewNote() = nextNewNote()
@@ -1452,7 +1494,7 @@ class AppState(private val app: SeBrainApp) {
                 }
                 val after = existing.text.trimEnd() + "\n\n## " + note.title + "\n\n" + note.body.trim() + "\n"
                 val change = NoteProposal(id, title, NoteEdits.Kind.EDIT, existing.text, after, emptyList(), NoteEdits.diff(existing.text, after), label = "Add to \"$title\"")
-                if (proposal == null) proposal = change else proposalQueue.addLast(change)
+                queueProposals(listOf(change))
             }
         }
     }
@@ -1771,6 +1813,8 @@ class AppState(private val app: SeBrainApp) {
         const val TAG = "SEBRAIN_APP"
         const val LIMIT = 100
         const val PREFS = "sebrain"
+        /** Notes that name a new one, offered a link to it at most. */
+        const val BACKLINK_MAX = 10
         const val PREF_MODEL = "language_model"
         const val PREF_PINS_MIGRATED = "pins_migrated"
         const val PREF_COMPACT = "compact_prompt_models"
