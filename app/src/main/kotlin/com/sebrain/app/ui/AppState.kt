@@ -1231,6 +1231,7 @@ class AppState(private val app: SeBrainApp) {
                 previousAnswer = previousAnswer,
                 today = now.toLocalDate(),
                 template = template?.let { Templates.structure(it, now) },
+                repeated = if (asNote) retryAvoiding.also { retryAvoiding = null } else null,
             )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
@@ -1278,7 +1279,8 @@ class AppState(private val app: SeBrainApp) {
                     }
                 }
                 val reply = result.getOrNull().orEmpty()
-                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped && createNoteFrom(reply, question, notes, template = template)
+                val saved = reply.isNotBlank() && asNote && !stopRequested && !looped &&
+                    createNoteFrom(reply, question, notes, template = template, previousAnswer = previousAnswer)
                 onMain {
                     // The screen may have been cleared by onStop meanwhile; the reply is still stored.
                     val visible = index < messages.size
@@ -1346,7 +1348,14 @@ class AppState(private val app: SeBrainApp) {
         val warnings: List<String>,
         /** The note that already answers to this title or an alias, as (id, title). */
         val duplicate: Pair<Long, String>?,
+        /** What the note mostly repeats ("your previous answer" or a note's title), if it does. */
+        val repeats: String?,
+        /** The request that wrote it, asked again by TRY AGAIN. */
+        val question: String,
     )
+
+    /** Set by TRY AGAIN: what the next note attempt is told not to repeat. */
+    private var retryAvoiding: String? = null
 
     var newNote by mutableStateOf<NewNote?>(null)
         private set
@@ -1366,17 +1375,24 @@ class AppState(private val app: SeBrainApp) {
         source: String = "assistant",
         /** The template the request named: the saved note gets its properties. */
         template: Templates.NoteTemplate? = null,
+        /** The answer before this one: a note that only repeats it is flagged. */
+        previousAnswer: String? = null,
     ): Boolean {
         val brain = scopeBrain
+        // What a new note should not merely copy: the answer before it and the notes it was given.
+        val earlierTexts = listOfNotNull(previousAnswer?.let { "your previous answer" to it }) +
+            context.map { "\"${it.title}\"" to it.text }
         val drafts = runCatching {
             val names = app.session.withDatabase { NoteStore(it, brain).names() }
             NoteFormat.parse(reply, question).map { note ->
                 val checked = NoteCheck.check(note.title, Assistant.linkify(note.body, context, note.title), note.tags)
                 val fromTemplate = template?.let { Templates.properties(it, checked.title, LocalDateTime.now()) }.orEmpty()
                 val preview = tools.preview(checked.title, checked.body, checked.tags, source, brain, note.aliases, fromTemplate)
+                val repeats = NoteCheck.repeats(checked.body, earlierTexts)
                 NewNote(
                     checked.title, checked.body, checked.tags, note.aliases, source, brain, fromTemplate, preview,
-                    checked.fixes, checked.warnings, NoteCheck.duplicateOf(checked.title, note.aliases, names),
+                    checked.fixes, checked.warnings + listOfNotNull(repeats?.let { "This mostly repeats $it" }),
+                    NoteCheck.duplicateOf(checked.title, note.aliases, names), repeats, question,
                 )
             }
         }.getOrElse {
@@ -1414,6 +1430,14 @@ class AppState(private val app: SeBrainApp) {
     }
 
     fun discardNewNote() = nextNewNote()
+
+    /** Asks the same request again, telling the model what the first attempt only repeated. */
+    fun retryNewNote() {
+        val note = newNote ?: return
+        nextNewNote()
+        retryAvoiding = note.repeats
+        ask(note.question)
+    }
 
     /** Instead of a second note with the same name: the new text as a section of the existing note, to review as a change. */
     fun addNewNoteToExisting() {

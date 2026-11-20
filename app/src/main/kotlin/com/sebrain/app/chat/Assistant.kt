@@ -314,11 +314,13 @@ object Assistant {
         today: LocalDate? = null,
         /** The structure of the template the request names (see [Templates]), for a note. */
         template: String? = null,
+        /** What a first attempt at this note only repeated (see [NoteCheck.repeats]), for a second try. */
+        repeated: String? = null,
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
-        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template)
+        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated)
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
             built = compose(message, notes, parts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
@@ -336,6 +338,7 @@ object Assistant {
         val previousAnswer: String?,
         val today: LocalDate?,
         val template: String?,
+        val repeated: String?,
     )
 
     private fun compose(
@@ -425,6 +428,10 @@ object Assistant {
             } else {
                 append('\n')
             }
+        }
+        if (asNote && parts.repeated != null) {
+            append("A first attempt at this note only repeated ").append(parts.repeated).append(". ")
+            append("Write new content that answers the request itself; do not copy that text.\n\n")
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(NoteFormat.instructions(message, notes.map { it.title }, tags, parts.template))

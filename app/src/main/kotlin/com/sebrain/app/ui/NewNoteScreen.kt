@@ -46,6 +46,10 @@ fun NewNoteScreen(state: AppState, note: AppState.NewNote) {
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = state::discardNewNote, modifier = Modifier.weight(1f)) { Text("DISCARD") }
+                    // The draft only copied an earlier text: ask again, telling the model so.
+                    if (note.repeats != null) {
+                        OutlinedButton(onClick = state::retryNewNote, modifier = Modifier.weight(1f)) { Text("TRY AGAIN") }
+                    }
                     if (note.duplicate != null) {
                         Button(onClick = state::addNewNoteToExisting, modifier = Modifier.weight(1f)) { Text("ADD TO IT") }
                     } else {

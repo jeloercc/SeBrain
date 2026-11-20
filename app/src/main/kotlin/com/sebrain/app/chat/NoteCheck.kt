@@ -61,6 +61,29 @@ object NoteCheck {
         return names.firstOrNull { (_, _, name) -> name.trim().lowercase() in wanted }?.let { (id, noteTitle, _) -> id to noteTitle }
     }
 
+    /** A draft sharing at least this share of its content words with an earlier text repeats it. */
+    const val REPEAT_SHARE = 0.7
+    private const val MIN_WORD = 4
+    private val WORD = Regex("[\\p{L}\\p{N}]+")
+
+    /**
+     * The label of the first of [earlier] (label, text) that [draft] mostly repeats, or null. A
+     * small model asked about one point rewrote the whole previous answer (Pixel, 2026-11-19).
+     */
+    fun repeats(draft: String, earlier: List<Pair<String, String>>): String? =
+        earlier.firstOrNull { (_, text) -> overlap(draft, text) >= REPEAT_SHARE }?.first
+
+    /** The share of [draft]'s distinct content words (four letters or more) that also appear in [other]. */
+    fun overlap(draft: String, other: String): Double {
+        val words = contentWords(draft)
+        if (words.isEmpty()) return 0.0
+        val others = contentWords(other)
+        return words.count { it in others }.toDouble() / words.size
+    }
+
+    private fun contentWords(text: String): Set<String> =
+        WORD.findAll(text.lowercase()).map { it.value }.filter { it.length >= MIN_WORD }.toSet()
+
     private fun body(body: String): Pair<String, List<String>> {
         val fixes = linkedSetOf<String>()
         var inCode = false

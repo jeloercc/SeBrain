@@ -78,6 +78,33 @@ class NoteCheckTest {
         assertEquals(2, checked.warnings.size)
     }
 
+    // The previous answer and the note the Pixel wrote from "the first one" on 2026-11-19.
+    private val previous = "Linux is a family of free and open-source Unix-like operating systems based on the Linux kernel. " +
+        "Open-source and free to use. Based on the Linux kernel. Highly customizable. Used in servers and embedded systems."
+    private val repeated = "Linux is a family of free and open-source Unix-like operating systems based on the Linux kernel. " +
+        "Highly customizable. Used in servers and embedded systems. Strong community support."
+
+    @Test
+    fun `a draft that mostly copies an earlier text is a repeat of it`() {
+        val found = NoteCheck.repeats(repeated, listOf("your previous answer" to previous, "\"Docker\"" to "Containers package software."))
+
+        assertEquals("your previous answer", found)
+    }
+
+    @Test
+    fun `a draft that explains one point in new words is not a repeat`() {
+        val point = "Open-source software publishes its source code under a licence such as the GPL, so anyone can study, " +
+            "change and share it. Free here means freedom, and usually no price either. Example: patching a driver yourself."
+
+        assertNull(NoteCheck.repeats(point, listOf("your previous answer" to previous)))
+    }
+
+    @Test
+    fun `overlap counts the draft's content words found in the other text`() {
+        assertEquals(1.0, NoteCheck.overlap("Kernel modules load drivers", "drivers, kernel and modules load"), 0.001)
+        assertEquals(0.0, NoteCheck.overlap("", "anything"), 0.001)
+    }
+
     @Test
     fun `a title that is another note's title or alias is a duplicate`() {
         val names = listOf(Triple(1L, "Vector search", "Vector search"), Triple(1L, "Vector search", "Semantic search"), Triple(2L, "Atlas", "Atlas"))
