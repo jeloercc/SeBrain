@@ -16,6 +16,7 @@ import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
 import com.sebrain.app.chat.DailyNotes
+import com.sebrain.app.chat.FollowUp
 import com.sebrain.app.chat.NoteCheck
 import com.sebrain.app.chat.NoteEdits
 import com.sebrain.app.chat.NoteFormat
@@ -1203,10 +1204,17 @@ class AppState(private val app: SeBrainApp) {
         val earlier = messages.dropLast(1).filter { !it.isAction && it.text.isNotBlank() }
         val memory = Assistant.remember(earlier.map { Assistant.Line(it.fromUser, it.text) }, summary, summarized)
         val history = memory.recent.map { ChatEngine.Turn(it.fromUser, it.text) }
-        val query = Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
+        val asNote = Assistant.wantsNote(question)
+        // A note about one point of the previous answer searches for that point, not for "the first one".
+        val previousAnswer = earlier.lastOrNull { !it.fromUser }?.text
+        val point = if (asNote) FollowUp.of(question, previousAnswer)?.point else null
+        val query = if (point != null) {
+            listOfNotNull(previousAnswer?.let(Assistant::heading), point).joinToString(": ")
+        } else {
+            Assistant.retrievalQuery(question, earlier.lastOrNull { it.fromUser }?.text)
+        }
         messages += ChatMessage(false, "")
         val index = messages.lastIndex
-        val asNote = Assistant.wantsNote(question)
         // What this conversation already wrote is not searched again, or the model copies it. For
         // a question, only what is still word for word in the history is left out, so nothing is lost.
         val exclude = if (asNote) memory.covered else memory.recent.filter { !it.fromUser }.mapNotNull { Assistant.heading(it.text) }
@@ -1220,7 +1228,7 @@ class AppState(private val app: SeBrainApp) {
             val template = context?.template
             val prompt = Assistant.prompt(
                 question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty(),
-                previousAnswer = earlier.lastOrNull { !it.fromUser }?.text,
+                previousAnswer = previousAnswer,
                 today = now.toLocalDate(),
                 template = template?.let { Templates.structure(it, now) },
             )

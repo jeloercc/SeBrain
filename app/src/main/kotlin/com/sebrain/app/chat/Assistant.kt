@@ -396,15 +396,35 @@ object Assistant {
             }
             append('\n')
         }
-        // "Haz una nota de tu sugerencia": the note is about the answer just given. A small model
-        // took the first message of the conversation as the topic instead, so it is spelled out.
-        if (asNote && previousAnswer != null && refersToPrevious(message)) {
-            append("The request below is about your previous answer. Write the note about what that answer says, ")
-            append("with a title that names its topic. ")
+        // A note that follows up the answer just given: "haz una nota de tu sugerencia", "the first one",
+        // "each key point". A small model took the first message of the conversation as the topic, or
+        // rewrote the whole previous answer, so the part is spelled out (see FollowUp).
+        val follow = if (asNote) FollowUp.of(message, previousAnswer) else null
+        if (follow != null && previousAnswer != null) {
+            when {
+                follow.point != null -> {
+                    append("The request below is about one point of your previous answer: \"").append(follow.point).append("\". ")
+                    append("Write the note only about that point: what it means, why it matters and an example, with a ")
+                    append("title that names the point itself. Do not repeat the other points or the previous answer as a whole. ")
+                }
+                follow.everyPoint -> {
+                    append("Write one note for each of these points of your previous answer, in this order, at most ")
+                    append(NoteFormat.MAX_NOTES).append(". Each note explains its own point; do not repeat the previous answer as a whole.\n")
+                    follow.points.take(NoteFormat.MAX_NOTES).forEachIndexed { i, point -> append(i + 1).append(". ").append(point).append('\n') }
+                }
+                else -> {
+                    append("The request below is about your previous answer. Write the note about what that answer says, ")
+                    append("with a title that names its topic. ")
+                }
+            }
             // Given its own words in another language, a small model copies them instead of translating.
             requestedLanguage(message)?.let { append("Translate it: every sentence of the note must be in $it. ") }
-            append("Your previous answer was:\n")
-            append(shorten(previousAnswer.trim(), PREVIOUS_CHARS)).append("\n\n")
+            if (!follow.everyPoint) {
+                append("Your previous answer was:\n")
+                append(shorten(previousAnswer.trim(), PREVIOUS_CHARS)).append("\n\n")
+            } else {
+                append('\n')
+            }
         }
         append(if (asNote) "Request: " else "Message: ").append(message.trim())
         if (asNote) append(NoteFormat.instructions(message, notes.map { it.title }, tags, parts.template))
