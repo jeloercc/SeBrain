@@ -40,6 +40,8 @@ import com.sebrain.app.ui.SeBrainTheme
 import com.sebrain.app.ui.WelcomeExit
 import com.sebrain.app.ui.WelcomeFlow
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -50,13 +52,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!BuildConfig.DEBUG) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        }
+        applyScreenProtection()
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         setContent {
             // Every text field and selection below: no keyboard learning, copies marked sensitive.
             PrivateInput { SeBrainTheme {
+                // Screenshots stay blocked unless the user lifted the block in Settings, and only until it expires.
+                val screenshotsUntil = state.settings.screenshotsUntil
+                LaunchedEffect(screenshotsUntil) {
+                    applyScreenProtection()
+                    val remaining = screenshotsUntil - System.currentTimeMillis()
+                    if (remaining > 0) {
+                        delay(remaining)
+                        applyScreenProtection()
+                    }
+                }
                 var profilePage by rememberSaveable { mutableStateOf<ProfilePage?>(null) }
                 // First run: the logo and the welcome steps, then the tabs.
                 if (!state.settings.welcomeSeen) {
@@ -103,12 +113,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** FLAG_SECURE on vault screens (release builds), except while the user allows screenshots. */
+    private fun applyScreenProtection() {
+        if (BuildConfig.DEBUG || state.settings.screenshotsAllowed()) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     private companion object {
         const val PROFILE_TAB = 4
     }
 
     override fun onStart() {
         super.onStart()
+        applyScreenProtection()
         state.start()
     }
 

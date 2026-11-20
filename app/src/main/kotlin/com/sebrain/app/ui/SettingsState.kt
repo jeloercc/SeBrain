@@ -25,6 +25,19 @@ class SettingsState(private val app: SeBrainApp, private val gateway: TailnetGat
     var inboxMode by mutableStateOf(InboxSettings.mode(app))
         private set
 
+    /** Until when screenshots are allowed (epoch ms); 0 when they are blocked, the default. */
+    var screenshotsUntil by mutableStateOf(prefs.getLong(KEY_SCREENSHOTS, 0L))
+        private set
+
+    fun screenshotsAllowed(now: Long = System.currentTimeMillis()): Boolean = now < screenshotsUntil
+
+    /** Lifts the screenshot block for [SCREENSHOT_WINDOW_MS], or puts it back at once. */
+    fun allowScreenshots(allowed: Boolean) {
+        val until = if (allowed) System.currentTimeMillis() + SCREENSHOT_WINDOW_MS else 0L
+        prefs.edit().putLong(KEY_SCREENSHOTS, until).apply()
+        screenshotsUntil = until
+    }
+
     init {
         gateway.requireTailscale = requireTailscale
     }
@@ -63,7 +76,10 @@ class SettingsState(private val app: SeBrainApp, private val gateway: TailnetGat
         private const val KEY_WELCOME = "welcome_seen"
         private const val KEY_TAILSCALE = "require_tailscale"
         private const val KEY_IDLE = "idle_minutes"
+        private const val KEY_SCREENSHOTS = "screenshots_until"
         private const val MINUTE_MS = 60_000L
+        /** Screenshots come back off by themselves after this long. */
+        const val SCREENSHOT_WINDOW_MS = 60 * MINUTE_MS
         const val DEFAULT_IDLE_MINUTES = 5
         val IDLE_CHOICES = listOf(1, 5, 15)
 

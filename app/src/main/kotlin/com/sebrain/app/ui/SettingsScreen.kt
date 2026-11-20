@@ -63,6 +63,14 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenProviders: () -> U
             )
         }
 
+        SectionLabel("Screen", Modifier.padding(top = 12.dp))
+        SwitchRow(
+            title = "Allow screenshots for 1 hour",
+            subtitle = "SeBrain blocks screenshots and screen recording to protect your notes. This lifts the block for one hour; it comes back on by itself.",
+            checked = settings.screenshotsAllowed(),
+            onChange = settings::allowScreenshots,
+        )
+
         SectionLabel("AI", Modifier.padding(top = 12.dp))
         Row(
             Modifier.fillMaxWidth().border(1.dp, Palette.Line).padding(12.dp),
