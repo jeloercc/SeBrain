@@ -25,13 +25,14 @@ class HuggingFaceClient(private val gateway: TailnetGateway) {
     fun files(repo: String): List<HubFile> = parseFiles(repo, get("$API/$repo/tree/main"))
 
     /**
-     * Downloads [file] into [target] and checks it against the published SHA-256.
-     * A mismatch deletes the file and fails. [onProgress] receives bytes done and total.
+     * Downloads [file] into [target] and checks it against the published SHA-256. Each download
+     * writes its own temporary file, and the hash is taken again from what is on disk before the
+     * file takes [target]'s place: a write that went wrong, or another download of the same
+     * file, can never leave a bad file installed. [onProgress] receives bytes done and total.
      */
     fun download(file: HubFile, target: File, onProgress: (Long, Long) -> Unit = { _, _ -> }) {
-        val partial = File(target.path + ".part")
         target.parentFile?.mkdirs()
-        val digest = MessageDigest.getInstance("SHA-256")
+        val partial = File.createTempFile(target.name + ".", ".part", target.parentFile)
         val connection = gateway.openFollowingRedirects(URL("$HOST/${file.repo}/resolve/main/${file.path}"))
         try {
             if (connection.responseCode != 200) throw IOException("Download failed: HTTP ${connection.responseCode}")
@@ -42,20 +43,32 @@ class HuggingFaceClient(private val gateway: TailnetGateway) {
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
-                        digest.update(buffer, 0, read)
                         output.write(buffer, 0, read)
                         done += read
                         onProgress(done, file.sizeBytes)
                     }
+                    output.fd.sync()
                 }
             }
-            val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (actual != file.sha256) throw IOException("SHA-256 mismatch: the download was discarded")
+            if (sha256(partial) != file.sha256) throw IOException("SHA-256 mismatch: the download was discarded")
             if (!partial.renameTo(target)) throw IOException("Could not store ${target.name}")
         } finally {
             connection.disconnect()
             partial.delete()
         }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun get(url: String): String {

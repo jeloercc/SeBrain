@@ -63,7 +63,12 @@ class ModelHubState(
         hubRepo = null
     }
 
+    /** One download at a time: two of the same file must never run together. */
     fun download(file: HubFile) {
+        if (downloadProgress != null) {
+            hubMessage = "A download is already running. Wait for it to finish."
+            return
+        }
         val model = KnownModel(file.fileName, file.sha256, "${file.repo.substringAfterLast('/')} · ${file.fileName}", file.repo)
         downloadProgress = 0f
         var shown = 0L
@@ -74,7 +79,8 @@ class ModelHubState(
                     onMain { downloadProgress = done.toFloat() / total }
                 }
             }
-            app.models.trust(model)
+            // A file that fails this check is not left installed.
+            runCatching { app.models.trust(model) }.onFailure { app.models.remove(model) }.getOrThrow()
         }, onFinally = { downloadProgress = null }) {
             hubMessage = "Installed ${model.fileName}"
             refreshInstalled()
