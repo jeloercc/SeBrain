@@ -23,8 +23,7 @@ object Extraction {
             "Keep values in the original language of the text. " +
             // ExtractionEvalTest, 2026-11-20: E2B put the capture date in 16 of 27 captures and
             // left out requests such as "bring snacks" in 9 of 19.
-            "dates: only the dates the text mentions, as yyyy-MM-dd, looked up in the calendar given; " +
-            "never the capture date unless the text means today. " +
+            "dates: only the dates the text mentions, as yyyy-MM-dd; never the capture date unless the text means today. " +
             "tasks: everything the text asks or reminds someone to do, as a short phrase."
 
     /** The minimal schema of §6: compact JSON (no whitespace loop) and the title last. */
@@ -54,8 +53,6 @@ object Extraction {
 
     private const val MIN_TITLE_LETTERS = 2
 
-    /** Days listed after the capture date: two weeks covers "next Friday" and "the 20th" of the same month. */
-    private const val CALENDAR_DAYS = 14L
     private val KEYS = listOf("people", "dates", "topics", "tasks")
 
     /** The extracted fields. Lists are never null; the title is trimmed and not empty. */
@@ -90,14 +87,7 @@ object Extraction {
             append("Capture date and time: ").append(local.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)).append(" (").append(day).append(").\n")
             append("Resolve relative dates (\"tomorrow\", \"on Thursday\", \"the 14th\") against that date. ")
             append("If the text does not give the year, use the capture date's year, or the next one if the date has already passed. ")
-            append("If a date cannot be resolved, keep it as literal text instead of inventing it.\n")
-            // A small model does not do calendar arithmetic well; it can look a day up.
-            append("Calendar: ")
-            append((1..CALENDAR_DAYS).joinToString(", ") { n ->
-                val date = local.toLocalDate().plusDays(n)
-                "${date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)} $date"
-            })
-            append(".\n\n")
+            append("If a date cannot be resolved, keep it as literal text instead of inventing it.\n\n")
             append(text)
             if (retry) append("\n\n").append(RETRY_NOTE)
         }
@@ -116,9 +106,21 @@ object Extraction {
      */
     fun extract(text: String, capturedAt: Instant, timeZone: ZoneId, send: (String) -> Reply): Result {
         val first = send(message(text, capturedAt, timeZone)).let { parse(it.text, it.cut) }
-        if (first is Outcome.Valid) return Result(first, 1)
+        if (first is Outcome.Valid) return Result(withDates(first, text, capturedAt, timeZone), 1)
         val second = send(message(text, capturedAt, timeZone, retry = true)).let { parse(it.text, it.cut) }
-        return Result(second, 2)
+        return Result(if (second is Outcome.Valid) withDates(second, text, capturedAt, timeZone) else second, 2)
+    }
+
+    /**
+     * The dates the code resolves ([DateMentions]) replace the model's, which were wrong in 10 of
+     * 27 captures even with a calendar in the prompt (2026-11-20). With none found, the model's
+     * are kept, less the capture date it tends to copy.
+     */
+    private fun withDates(valid: Outcome.Valid, text: String, capturedAt: Instant, timeZone: ZoneId): Outcome.Valid {
+        val captured = capturedAt.atZone(timeZone).toLocalDate()
+        val resolved = DateMentions.resolve(text, captured).map { it.toString() }
+        val dates = resolved.ifEmpty { valid.fields.dates.filterNot { it.startsWith(captured.toString()) } }
+        return Outcome.Valid(valid.fields.copy(dates = dates))
     }
 
     /** Judges a raw reply by the rules of §4. [cut] is true when the reply was stopped early. */

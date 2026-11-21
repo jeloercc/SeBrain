@@ -117,13 +117,25 @@ class ExtractionTest {
     }
 
     @Test
-    fun `the message lists the next two weeks so relative days can be looked up`() {
-        val message = Extraction.message("el jueves", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("America/Mexico_City"))
+    fun `dates the code resolves replace the model's`() {
+        val wrongDay = """{"people":["Laura"],"dates":["2026-11-14"],"topics":[],"tasks":[],"title":"Reunión de diseño"}"""
 
-        // Captured on Saturday 7 November local time: the next Thursday is the 12th.
-        assertTrue(message, message.contains("Sunday 2026-11-08, Monday 2026-11-09"))
-        assertTrue(message.contains("Thursday 2026-11-12"))
-        assertTrue(message.contains("Saturday 2026-11-21."))
+        val result = Extraction.extract("la reunión pasa al jueves", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("America/Mexico_City")) {
+            Extraction.Reply(wrongDay, cut = false)
+        }
+
+        assertEquals(listOf("2026-11-12"), (result.outcome as Outcome.Valid).fields.dates)
+    }
+
+    @Test
+    fun `without a date in the text the copied capture date is dropped`() {
+        val copied = """{"people":[],"dates":["2026-11-07T21:24:00-06:00"],"topics":[],"tasks":[],"title":"Idea para el blog"}"""
+
+        val result = Extraction.extract("idea para el blog", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("America/Mexico_City")) {
+            Extraction.Reply(copied, cut = false)
+        }
+
+        assertEquals(emptyList<String>(), (result.outcome as Outcome.Valid).fields.dates)
     }
 
     @Test
