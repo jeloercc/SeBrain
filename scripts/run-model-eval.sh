@@ -32,7 +32,13 @@ $ADB shell svc power stayon usb
 RUN_TIMEOUT=1800000
 SCREEN_TIMEOUT=$($ADB shell settings get system screen_off_timeout | tr -d '\r[:space:]')
 [ "$SCREEN_TIMEOUT" = "$RUN_TIMEOUT" ] && SCREEN_TIMEOUT=60000
-trap '$ADB shell svc power stayon false; $ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"; $ADB shell rm -f /data/local/tmp/sebrain-model.litertlm' EXIT
+# KEEP_AWAKE=1 leaves the screen settings to a caller that chains several runs: restoring a
+# one-minute timeout after a long run turns the screen off, and locks the phone, at once.
+if [ -n "${KEEP_AWAKE:-}" ]; then
+    trap '$ADB shell rm -f /data/local/tmp/sebrain-model.litertlm' EXIT
+else
+    trap '$ADB shell svc power stayon false; $ADB shell settings put system screen_off_timeout "$SCREEN_TIMEOUT"; $ADB shell rm -f /data/local/tmp/sebrain-model.litertlm' EXIT
+fi
 $ADB shell settings put system screen_off_timeout $RUN_TIMEOUT
 
 ANDROID_SERIAL=$SERIAL ./gradlew -q :app:installDebug :app:installDebugAndroidTest > "$OUT/install.log" 2>&1 \

@@ -71,6 +71,63 @@ class PostQuantumProbe {
         log("pq ML-DSA-65 keygen=$dsaGen sign=$sign verify=$verify verified=$verified signature=${signature.size} B pss=${Debug.getPss() / KB} MB")
     }
 
+    /**
+     * The platform's own ML-KEM and ML-DSA (Conscrypt), and ML-DSA keys in Android Keystore,
+     * in StrongBox and in the TEE: what the design assumed did not exist.
+     */
+    @Test
+    fun platformSpeed() {
+        // Measured 2026-11-20: javax.crypto.KEM compiles against SDK 37 but is missing at run
+        // time, and Conscrypt lists ML-KEM only as KeyPairGenerator and KeyFactory. Checked by
+        // name so this class still loads where it is missing.
+        platformTry("javax.crypto.KEM class") { Class.forName("javax.crypto.KEM") }
+        runCatching {
+            val keys = KeyPairGenerator.getInstance("ML-KEM-768", "AndroidOpenSSL")
+            log("pq conscrypt ML-KEM-768 keygen=${timed { keys.generateKeyPair() }} (no encapsulation API on the platform)")
+        }.onFailure { log("pq conscrypt ML-KEM-768 failed: ${it.javaClass.simpleName}: ${it.message?.take(120)}") }
+
+        runCatching {
+            val keys = KeyPairGenerator.getInstance("ML-DSA-65", "AndroidOpenSSL")
+            val pair = keys.generateKeyPair()
+            val message = ByteArray(MANIFEST_BYTES).also(SecureRandom()::nextBytes)
+            var signature = ByteArray(0)
+            val sign = timed { signature = Signature.getInstance("ML-DSA-65", "AndroidOpenSSL").run { initSign(pair.private); update(message); sign() } }
+            log("pq conscrypt ML-DSA-65 sign=$sign signature=${signature.size} B")
+        }.onFailure { log("pq conscrypt ML-DSA-65 failed: ${it.javaClass.simpleName}: ${it.message?.take(120)}") }
+
+        for (strongBox in listOf(true, false)) keystoreMlDsa(strongBox)
+    }
+
+    private fun keystoreMlDsa(strongBox: Boolean) {
+        val alias = "pq_probe_mldsa_${if (strongBox) "sb" else "tee"}"
+        val store = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        runCatching {
+            val spec = android.security.keystore.KeyGenParameterSpec.Builder(alias, android.security.keystore.KeyProperties.PURPOSE_SIGN)
+                .setIsStrongBoxBacked(strongBox).build()
+            val start = System.nanoTime()
+            val pair = KeyPairGenerator.getInstance("ML-DSA-65", "AndroidKeyStore").apply { initialize(spec) }.generateKeyPair()
+            val genMs = (System.nanoTime() - start) / NANOS_PER_MS
+            val info = java.security.KeyFactory.getInstance(pair.private.algorithm, "AndroidKeyStore")
+                .getKeySpec(pair.private, android.security.keystore.KeyInfo::class.java)
+            val message = ByteArray(MANIFEST_BYTES).also(SecureRandom()::nextBytes)
+            var signature = ByteArray(0)
+            val sign = timedFew { signature = Signature.getInstance("ML-DSA-65").run { initSign(pair.private); update(message); sign() } }
+            val verified = Signature.getInstance("ML-DSA-65").run { initVerify(pair.public); update(message); verify(signature) }
+            log("pq keystore ML-DSA-65 strongBox=$strongBox securityLevel=${info.securityLevel} keygen=%.0f ms sign=$sign verified=$verified".format(genMs))
+        }.onFailure { log("pq keystore ML-DSA-65 strongBox=$strongBox failed: ${it.javaClass.simpleName}: ${it.message?.take(120)}") }
+        runCatching { store.deleteEntry(alias) }
+    }
+
+    /** Like [timed], with fewer runs: a hardware key signs much more slowly. */
+    private fun timedFew(block: () -> Unit): String {
+        val ms = (1..FEW_RUNS).map {
+            val start = System.nanoTime()
+            block()
+            (System.nanoTime() - start) / NANOS_PER_MS
+        }.sorted()
+        return "median %.1f ms max %.1f ms".format(ms[ms.size / 2], ms.last())
+    }
+
     private fun platformTry(name: String, block: () -> Any) {
         val result = runCatching(block)
         log("pq platform $name: ${result.fold({ "available (${it.javaClass.name})" }, { "unavailable (${it.javaClass.simpleName}: ${it.message?.take(100)})" })}")
@@ -93,6 +150,7 @@ class PostQuantumProbe {
 
     private companion object {
         const val RUNS = 100
+        const val FEW_RUNS = 10
         const val WARMUP = 10
         const val P95 = 0.95
         const val NANOS_PER_MS = 1e6
