@@ -46,6 +46,9 @@ class TrustEvalTest {
     /** A question whose answer is in [source]; [fact] is a pattern the reply must contain. */
     private class Covered(val question: String, val source: String, val fact: String)
 
+    /** A general question: the reply must have [fact] and must not talk about the notes. */
+    private class General(val question: String, val fact: String)
+
     /** A question the notes do not answer; [invented] is a pattern that would mean a made-up answer. */
     private class Uncovered(val question: String, val invented: String? = null)
 
@@ -90,6 +93,8 @@ class TrustEvalTest {
         var honest = 0
         var covered = 0
         var uncovered = 0
+        var general = 0
+        var generalOk = 0
         COVERED.forEachIndexed { i, case ->
             val number = i + 1
             if (only != null && number !in only) return@forEachIndexed
@@ -120,10 +125,22 @@ class TrustEvalTest {
             if (ok) honest++
             log("${if (ok) "PASS" else "FAIL"} uncovered $number admits=$admits invents=$invents q=\"${case.question}\" reply=${reply.oneLine()}")
         }
+        // 2026-11-20: a rule for personal facts made E2B answer "nothing about NASA in your notes".
+        GENERAL.forEachIndexed { i, case ->
+            val number = COVERED.size + UNCOVERED.size + i + 1
+            if (only != null && number !in only) return@forEachIndexed
+            general++
+            val reply = ask(case.question, notesFor(case.question))
+            val hasFact = Regex(case.fact, RegexOption.IGNORE_CASE).containsMatchIn(reply)
+            val talksOfNotes = Regex(NOTES_WORD, RegexOption.IGNORE_CASE).containsMatchIn(reply)
+            val ok = hasFact && !talksOfNotes
+            if (ok) generalOk++
+            log("${if (ok) "PASS" else "FAIL"} general $number fact=$hasFact talksOfNotes=$talksOfNotes q=\"${case.question}\" reply=${reply.oneLine()}")
+        }
         val sorted = searchMs.sorted()
         log(
             "eval trust model=${model.fileName} notes=${all.size} found=$found/$covered answered=$answered/$covered cited=$cited/$covered " +
-                "honest=$honest/$uncovered search median=${sorted.getOrNull(sorted.size / 2)} ms max=${sorted.lastOrNull()} ms",
+                "honest=$honest/$uncovered general=$generalOk/$general search median=${sorted.getOrNull(sorted.size / 2)} ms max=${sorted.lastOrNull()} ms",
         )
     }
 
@@ -152,6 +169,18 @@ class TrustEvalTest {
 
     private companion object {
         const val REPLY_LOGGED = 220
+
+        /** A general answer has no reason to bring up the notes. */
+        const val NOTES_WORD = "\\b(notes?|notas?|vault)\\b"
+
+        val GENERAL = listOf(
+            General("¿Quién fue el primer fotógrafo?", "Ni[eé]pce|Daguerre"),
+            General("¿Qué me puedes decir de la NASA?", "espacia|space|agencia"),
+            General("What is the capital of Australia?", "Canberra"),
+            General("What is DNS?", "domain|name system"),
+            General("Explica la fotosíntesis en una frase", "luz|sol|energ"),
+            General("hola, ¿cómo estás?", "\\S"),
+        )
         const val NANOS_PER_MS = 1_000_000L
         const val DEFAULT_DATE = "2026-11-15T10:00:00Z"
 
