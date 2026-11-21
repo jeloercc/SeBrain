@@ -26,15 +26,18 @@ enum class Route {
 
 /**
  * How close a note must be to the message, in vector distance (L2 over unit vectors, 0 to about
- * 1.41), to be given to the model. Calibrated on TrustEvalTest (see docs/benchmarks.md): the note
- * that answers a personal question must pass; for a general question, nothing should.
+ * 1.41), to be given to the model. Calibrated on TrustEvalTest, 2026-11-20 (docs/benchmarks.md):
+ * the note that answers a personal question was at 0.48 to 0.83, and the closest note to a
+ * general question at 0.79 to 0.91. The ranges overlap, so the route sets the threshold: a
+ * general question takes only notes under 0.75 (every answering note of a question that could be
+ * routed general was under 0.70), a personal one takes any note that search finds.
  */
 object RelevanceGate {
     /** A personal question or an action: the notes are the point, so the gate is wide. */
-    const val PERSONAL = 1.10
+    const val PERSONAL = 1.0
 
     /** A general question: only a note that is clearly about the same thing. */
-    const val GENERAL = 0.85
+    const val GENERAL = 0.75
 
     /** The farthest a search hit may be for [route]; small talk takes none. */
     fun maxDistance(route: Route): Double = when (route) {

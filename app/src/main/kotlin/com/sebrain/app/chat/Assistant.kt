@@ -367,6 +367,9 @@ object Assistant {
         }
         // Seen on the phone: with no note given, the model still cited "[1]".
         if (notes.isEmpty()) append(NO_NOTES.getValue(parts.route)).append("\n\n")
+        // TrustEvalTest, 2026-11-20: E2B gave a network's name as its password and a flight's date as
+        // its time. The check is asked in the turn, where a small model follows it, and only here.
+        if (notes.isNotEmpty() && parts.route == Route.PERSONAL) append(EXACT_FACT).append("\n\n")
         if (parts.route == Route.CHAT) append(SMALL_TALK).append("\n\n")
         if (past.isNotEmpty()) {
             append("From earlier conversations with the user:\n")
@@ -439,6 +442,11 @@ object Assistant {
             "own life, say briefly that their notes do not have it and offer to save it once they know; never guess it. " +
             "If it asks for something general, answer from your own knowledge.",
     )
+
+    private const val EXACT_FACT =
+        "Before answering, check whether a note states exactly what the message asks for (the same kind of thing: a time, " +
+            "a password, a number, a name). If none does, say that the notes do not have it, then what they do have, " +
+            "for example: \"Your notes don't have the door code; they only give the building's address [1].\""
 
     private const val SMALL_TALK =
         "This is casual conversation. Reply like a friendly person would: naturally and briefly, and ask something back if it fits."
