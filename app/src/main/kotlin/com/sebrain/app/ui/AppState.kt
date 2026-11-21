@@ -696,7 +696,9 @@ class AppState(private val app: SeBrainApp) {
             val result = runCatching {
                 val installed = app.chat.languageModels()
                 val saved = app.getSharedPreferences(PREFS, 0).getString(PREF_MODEL, null)
-                val candidates = if (choice != null) listOf(choice) else (installed.filter { it.fileName == saved } + installed).distinct()
+                // The user's last choice first; otherwise the model recommended for this phone.
+                val byAdvice = ModelAdvisor.preferred(DeviceSpec.current(app), installed)
+                val candidates = if (choice != null) listOf(choice) else (installed.filter { it.fileName == saved } + byAdvice).distinct()
                 var lastError: Throwable? = null
                 val model = candidates.firstOrNull { candidate ->
                     runCatching { app.chat.load(candidate) }
