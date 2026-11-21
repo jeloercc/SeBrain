@@ -50,6 +50,7 @@ import com.sebrain.core.net.RemoteMessage
 import com.sebrain.core.net.RemoteProvider
 import com.sebrain.core.vault.CaptureRecord
 import com.sebrain.core.ml.KnownModel
+import com.sebrain.core.ml.ModelFiles
 import com.sebrain.core.net.TailnetGateway
 import com.sebrain.core.vault.CaptureStore
 import com.sebrain.core.vault.CaptureSummary
@@ -705,7 +706,7 @@ class AppState(private val app: SeBrainApp) {
     @Volatile private var stopRequested = false
 
     /** Loads [choice], or the model used last, or the first installed one. Does nothing if it is already loaded. */
-    fun ensureModel(choice: KnownModel? = null) {
+    fun ensureModel(choice: KnownModel? = null, remember: Boolean = true) {
         if (loadingModel || (choice == null && currentModel != null)) return
         loadingModel = true
         chatProblem = null
@@ -726,7 +727,8 @@ class AppState(private val app: SeBrainApp) {
                         .isSuccess
                 }
                 if (model == null) lastError?.let { throw it }
-                model?.let { app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, it.fileName).apply() }
+                // "Go deeper" borrows the larger model without changing the user's choice.
+                if (remember) model?.let { app.getSharedPreferences(PREFS, 0).edit().putString(PREF_MODEL, it.fileName).apply() }
                 app.chat.languageModels() to model
             }
             onMain {
@@ -943,6 +945,20 @@ class AppState(private val app: SeBrainApp) {
             prepareRemote(provider, text)
             return
         }
+        // Opt-in: a general question goes to the user's provider (typed text only, confirmed in the
+        // outgoing dialog); anything about the user stays on the phone. Never in a private brain.
+        val provider = providers.firstOrNull()
+        if (settings.generalToProvider && provider != null && currentBrain?.private != true && attachedNotes.isEmpty() && !Assistant.wantsNote(text)) {
+            app.search(text, { _, vector -> Routing.route(text, vector, app.router()) }) { found ->
+                onMain { if (found.getOrNull() == Route.GENERAL) prepareRemote(provider, text) else answerOnPhone(text) }
+            }
+            return
+        }
+        answerOnPhone(text)
+    }
+
+    private fun answerOnPhone(text: String) {
+        if (generating) return
         markGenerating(true)
         stopRequested = false
         if (currentModel == null) {
@@ -1291,6 +1307,7 @@ class AppState(private val app: SeBrainApp) {
             val route = found.getOrNull()?.first ?: Route.GENERAL
             val context = found.getOrNull()?.second
             val notes = context?.notes.orEmpty()
+            val isDeep = deep.also { deep = false }
             // A personal question the gate found no note for: the model searches by itself, with its
             // own words (a typo, another phrasing) and can read a note whole. Read-only.
             val tools = if (route == Route.PERSONAL && notes.isEmpty() && app.embedder.isAvailable) NoteToolRunner(app, scopeBrain) else null
@@ -1303,10 +1320,15 @@ class AppState(private val app: SeBrainApp) {
                 repeated = if (asNote) retryAvoiding.also { retryAvoiding = null } else null,
                 route = route,
                 withTools = tools != null,
+                deep = isDeep,
             )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
-                val limit = if (asNote) Assistant.NOTE_TOKENS else Assistant.ANSWER_TOKENS
+                val limit = when {
+                    asNote -> Assistant.NOTE_TOKENS
+                    isDeep -> Assistant.DEEP_TOKENS
+                    else -> Assistant.ANSWER_TOKENS
+                }
                 var echoed = false
 
                 /** One reply. Its first characters are held back until they are known not to be the instructions. */
@@ -1376,6 +1398,8 @@ class AppState(private val app: SeBrainApp) {
                     }
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
                     markGenerating(false)
+                    // After "go deeper", the user's own model comes back.
+                    restoreModel?.let { model -> restoreModel = null; ensureModel(model, remember = false) }
                     if (started) {
                         if (!visible) conversationId?.let(::openConversation) else if (!stopRequested) summarizeIfDue()
                         refreshNotes()
@@ -1395,13 +1419,43 @@ class AppState(private val app: SeBrainApp) {
      * conversation, so the history keeps one answer per question, and the question is answered anew.
      */
     fun regenerate() {
-        if (generating) return
-        val last = messages.lastOrNull() ?: return
-        if (last.fromUser || last.isAction) return
-        val question = messages.dropLast(1).lastOrNull { it.fromUser }?.text ?: return
+        dropLastAnswer()?.let(::answer)
+    }
+
+    /**
+     * "Go deeper": the last question answered again, completely, by the larger model when it is
+     * installed (E4B), which is loaded for this answer only; the user's model comes back after it.
+     */
+    fun deeper() {
+        val question = dropLastAnswer() ?: return
+        deep = true
+        val large = languageModels.firstOrNull { it == ModelFiles.LLM_E4B_ABLITERATED }
+        if (large == null || large == currentModel || remoteProvider != null) {
+            answerOnPhone(question)
+            return
+        }
+        restoreModel = currentModel
+        markGenerating(true)
+        stopRequested = false
+        pendingQuestion = question
+        ensureModel(large, remember = false)
+    }
+
+    /** True for the next reply only: answer in depth, with [Assistant.DEEP_TOKENS]. */
+    private var deep = false
+
+    /** The model to load again after a "go deeper" answer, or null. */
+    private var restoreModel: KnownModel? = null
+
+    /** Removes the last answer from the screen and the stored conversation; returns its question. */
+    private fun dropLastAnswer(): String? {
+        if (generating) return null
+        val last = messages.lastOrNull() ?: return null
+        if (last.fromUser || last.isAction) return null
+        val question = messages.dropLast(1).lastOrNull { it.fromUser }?.text ?: return null
         messages.removeAt(messages.lastIndex)
         storedConversation?.let { id -> app.vault({ db -> chats(db).removeLastReply(id) }) }
-        answer(question)
+        return question
     }
 
     fun stopGenerating() {

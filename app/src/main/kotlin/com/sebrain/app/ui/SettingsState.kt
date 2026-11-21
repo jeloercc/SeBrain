@@ -53,6 +53,19 @@ class SettingsState(private val app: SeBrainApp, private val gateway: TailnetGat
         welcomeSeen = false
     }
 
+    /**
+     * Off by default. When on and an AI provider is set up, general questions (not about the user)
+     * go to the provider; only the typed message is sent, the user confirms each request, and
+     * questions about the user, notes and memory never leave the phone.
+     */
+    var generalToProvider by mutableStateOf(prefs.getBoolean(KEY_GENERAL_PROVIDER, false))
+        private set
+
+    fun updateGeneralToProvider(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GENERAL_PROVIDER, enabled).apply()
+        generalToProvider = enabled
+    }
+
     fun updateRequireTailscale(required: Boolean) {
         prefs.edit().putBoolean(KEY_TAILSCALE, required).apply()
         gateway.requireTailscale = required
@@ -77,6 +90,7 @@ class SettingsState(private val app: SeBrainApp, private val gateway: TailnetGat
         private const val KEY_TAILSCALE = "require_tailscale"
         private const val KEY_IDLE = "idle_minutes"
         private const val KEY_SCREENSHOTS = "screenshots_until"
+        private const val KEY_GENERAL_PROVIDER = "general_to_provider"
         private const val MINUTE_MS = 60_000L
         /** Screenshots come back off by themselves after this long. */
         const val SCREENSHOT_WINDOW_MS = 60 * MINUTE_MS

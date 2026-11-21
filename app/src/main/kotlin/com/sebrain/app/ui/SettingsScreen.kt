@@ -45,6 +45,14 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenProviders: () -> U
             onChange = settings::updateRequireTailscale,
         )
         NavRow("External AI providers", "Off unless you set one up. Keys stay encrypted.", onOpenProviders)
+        if (state.providers.isNotEmpty()) {
+            SwitchRow(
+                title = "Send general questions to ${state.providers.first().name}",
+                subtitle = "Only what you type, and you confirm each one. Questions about you, your notes and what SeBrain knows about you stay on this phone.",
+                checked = settings.generalToProvider,
+                onChange = settings::updateGeneralToProvider,
+            )
+        }
 
         SectionLabel("Lock & inbox", Modifier.padding(top = 12.dp))
         InboxModeChoice(settings.inboxMode, settings::updateInboxMode)

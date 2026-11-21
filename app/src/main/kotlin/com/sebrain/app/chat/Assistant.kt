@@ -85,6 +85,9 @@ object Assistant {
      * 120 words needs about 250.
      */
     const val ANSWER_TOKENS = 1000
+
+    /** The limit for "go deeper". */
+    const val DEEP_TOKENS = 2400
     const val NOTE_TOKENS = 1400
     const val SUMMARY_TOKENS = 300
     const val SUMMARY_WORDS = 120
@@ -294,11 +297,13 @@ object Assistant {
         route: Route = Route.GENERAL,
         /** True when the model has the note tools ([NoteToolSet]) for this reply and should search itself. */
         withTools: Boolean = false,
+        /** True for "go deeper": a complete answer instead of the short default. */
+        deep: Boolean = false,
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
-        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated, route, withTools)
+        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated, route, withTools, deep)
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
             built = compose(message, notes, parts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
@@ -319,6 +324,7 @@ object Assistant {
         val repeated: String?,
         val route: Route,
         val withTools: Boolean,
+        val deep: Boolean,
     )
 
     private fun compose(
@@ -374,6 +380,7 @@ object Assistant {
         // its time. The check is asked in the turn, where a small model follows it, and only here.
         if (notes.isNotEmpty() && parts.route == Route.PERSONAL) append(EXACT_FACT).append("\n\n")
         if (parts.route == Route.CHAT) append(SMALL_TALK).append("\n\n")
+        if (parts.deep) append(DEEP).append("\n\n")
         if (past.isNotEmpty()) {
             append("From earlier conversations with the user:\n")
             past.forEach {
@@ -445,6 +452,10 @@ object Assistant {
             "own life, say briefly that their notes do not have it and offer to save it once they know; never guess it. " +
             "If it asks for something general, answer from your own knowledge.",
     )
+
+    private const val DEEP =
+        "The user asked you to go deeper this time: give a complete, well-structured answer with the key details, the " +
+            "reasoning and an example, using headings or a list where they help."
 
     /** For a personal question with the note tools: search before saying anything is missing. */
     private const val SEARCH_FIRST =

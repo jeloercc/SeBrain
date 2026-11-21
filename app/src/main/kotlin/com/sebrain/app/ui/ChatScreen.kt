@@ -277,8 +277,8 @@ private fun Bubble(message: ChatMessage) {
 }
 
 /**
- * Under an answer: the notes it used (only when it cited any), regenerate for the last one, a
- * menu with save and copy, and the next questions to tap.
+ * Under an answer: the notes it used (only when it cited any), regenerate and "go deeper" for the
+ * last one, a menu with save and copy, and the next questions to tap.
  */
 @Composable
 private fun ReplyActions(state: AppState, index: Int, message: ChatMessage, isLast: Boolean) {
@@ -298,7 +298,10 @@ private fun ReplyActions(state: AppState, index: Int, message: ChatMessage, isLa
                 }
             }
         }
-        if (isLast) TextButton(onClick = { state.regenerate() }) { Text("Regenerate") }
+        if (isLast) {
+            TextButton(onClick = { state.regenerate() }) { Text("Regenerate") }
+            TextButton(onClick = { state.deeper() }) { Text("Go deeper") }
+        }
         Box {
             TextButton(onClick = { moreOpen = true }) { Text("⋯") }
             DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
