@@ -23,6 +23,7 @@ object Pins {
     private fun token(tag: String) = Regex("(?<![\\p{L}\\p{N}_#/&=?.:])#$tag(?![\\p{L}\\p{N}_/-])", RegexOption.IGNORE_CASE)
     private val HEADING = Regex("(?m)^#\\s.*$")
     private val SPACE = Regex("\\s+")
+    private val COMMENT = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
 
     fun isPinned(text: String) = TAG in NoteMarkup.parse(text).tags
 
@@ -45,7 +46,8 @@ object Pins {
 
     /** What the model reads of a pinned note: its title and its text on one line, without the pin. */
     fun line(title: String, text: String): String {
-        val body = unpin(HEADING.replace(FrontMatter.body(text), "")).replace(SPACE, " ").trim()
+        // HTML comments are hidden keys (see UserFacts), not text for the model.
+        val body = unpin(HEADING.replace(FrontMatter.body(text), "")).replace(COMMENT, "").replace(SPACE, " ").trim()
         val name = title.trim().removePrefix("Memory:").trim()
         // A title cut with "…" that only repeats the start of the text adds nothing.
         val stem = name.trimEnd('…', '.', ' ')

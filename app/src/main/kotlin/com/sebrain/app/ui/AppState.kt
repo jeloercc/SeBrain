@@ -29,6 +29,7 @@ import com.sebrain.app.chat.Templates
 import com.sebrain.app.chat.Routing
 import com.sebrain.app.chat.NoteToolSet
 import com.sebrain.app.chat.Suggestions
+import com.sebrain.app.chat.UserFacts
 import com.sebrain.app.chat.RelevanceGate
 import com.sebrain.app.chat.Route
 import com.sebrain.app.chat.VaultContext
@@ -858,6 +859,8 @@ class AppState(private val app: SeBrainApp) {
         }
         messages += ChatMessage(true, text)
         persist(fromUser = true, text = text)
+        // "me llamo…", "my dentist is…", "remember that…": kept in the pinned "About me" note.
+        UserFacts.detect(text)?.let(::remember)
         // "Save this in today's note": an entry in today's daily note, not an answer.
         DailyNotes.request(text)?.let { request ->
             saveToDaily(request)
@@ -1216,6 +1219,38 @@ class AppState(private val app: SeBrainApp) {
                     // The vault is closed while the screen is off. Keep the reply and store it on return.
                     .onFailure { if (!fromUser) unsavedReply = text }
                 if (started) loadConversations()
+            }
+        }
+    }
+
+    /**
+     * Keeps [fact] in the pinned [UserFacts.TITLE] note of the current brain, creating it the first
+     * time; a newer fact about the same thing replaces the older one. Queued on the vault thread
+     * before the answer's search, so the answer already knows it.
+     */
+    private fun remember(fact: UserFacts.Fact) {
+        app.vault({ db ->
+            val store = notes(db)
+            val now = Instant.now().toString()
+            db.beginTransaction()
+            try {
+                val existing = store.names().firstOrNull { it.third.equals(UserFacts.TITLE, ignoreCase = true) }?.let { store.get(it.first) }
+                val text = UserFacts.merge(existing?.text, fact)
+                val id = if (existing != null) {
+                    existing.id.takeIf { store.updateText(it, text, NoteIndexer.sha256Hex(text), now) }
+                } else {
+                    store.create(text, NoteIndexer.sha256Hex(text), now, ZoneId.systemDefault().id)
+                        ?.also { id -> scopeBrain?.let { store.setPath(id, store.freePath(it, UserFacts.TITLE)) } }
+                }
+                id?.let { app.indexer.index(db, it, text) }
+                db.setTransactionSuccessful()
+                id != null
+            } finally {
+                db.endTransaction()
+            }
+        }) { result ->
+            onMain {
+                if (result.getOrDefault(false)) messages += ChatMessage(false, "📌 Remembered in “${UserFacts.TITLE}”: ${fact.line}", isAction = true)
             }
         }
     }
