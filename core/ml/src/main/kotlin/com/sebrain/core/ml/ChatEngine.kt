@@ -14,8 +14,11 @@ import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
+import com.google.ai.edge.litertlm.ResponseFormat
+import com.google.ai.edge.litertlm.ThinkingConfig
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs a language model the user installed, fully on the device.
@@ -214,6 +217,70 @@ class ChatEngine(
         return synchronized(reply) { reply.toString() }
     }
 
+    /** A structured reply: the raw text, whether [stopWhen] cut it, and what creating its conversation cost. */
+    class Structured(val text: String, val cut: Boolean, val createMs: Double)
+
+    /**
+     * Answers [text] with JSON that follows [schema] (constrained decoding), in a fresh
+     * conversation without thinking. [stopWhen] sees the reply as it is written and stops it,
+     * such as on the whitespace loop of `docs/design-cognition-worker.md` §4. Blocks until done.
+     */
+    fun structured(systemInstruction: String, text: String, schema: String, maxTokens: Int, stopWhen: (CharSequence) -> Boolean = { false }): Structured {
+        val engine = checkNotNull(engine) { "No model is loaded" }
+        val start = System.nanoTime()
+        val conversation = engine.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(systemInstruction),
+                maxOutputToken = maxTokens,
+                thinkingConfig = ThinkingConfig(false),
+                enableResponseFormat = true,
+            ),
+        )
+        val createMs = (System.nanoTime() - start) / NANOS_PER_MS
+        val done = CountDownLatch(1)
+        val reply = StringBuilder()
+        var failure: Throwable? = null
+        val cut = AtomicBoolean(false)
+        cancelled = false
+        active = conversation
+        try {
+            conversation.sendMessageAsync(
+                text,
+                object : MessageCallback {
+                    override fun onMessage(message: Message) {
+                        if (cut.get() || cancelled) return
+                        val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                        val stop = synchronized(reply) { reply.append(piece); stopWhen(reply) }
+                        if (stop) {
+                            cut.set(true)
+                            runCatching { conversation.cancelProcess() }
+                        }
+                    }
+
+                    override fun onDone() = done.countDown()
+
+                    override fun onError(throwable: Throwable) {
+                        failure = throwable
+                        done.countDown()
+                    }
+                },
+                responseFormat = ResponseFormat.json(schema),
+            )
+            while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
+                if (cut.get() || cancelled) {
+                    done.await(CANCEL_GRACE_MS, TimeUnit.MILLISECONDS)
+                    break
+                }
+            }
+        } finally {
+            active = null
+            lastStats = if (cancelled) null else readStats(conversation)
+            runCatching { conversation.close() }
+        }
+        if (!cut.get() && !cancelled) failure?.let { throw it }
+        return Structured(synchronized(reply) { reply.toString() }, cut.get(), createMs)
+    }
+
     private fun readStats(conversation: Conversation): Stats? = runCatching {
         val tokens = runCatching { conversation.getTokenCount() }.getOrDefault(0)
         val info = if (benchmark) runCatching { conversation.getBenchmarkInfo() }.getOrNull() else null
@@ -246,5 +313,6 @@ class ChatEngine(
         const val TAG = "SEBRAIN_ML"
         const val POLL_MS = 200L
         const val CANCEL_GRACE_MS = 2000L
+        const val NANOS_PER_MS = 1e6
     }
 }

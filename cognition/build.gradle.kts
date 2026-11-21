@@ -25,4 +25,6 @@ dependencies {
     implementation(project(":core:vault"))
 
     testImplementation("junit:junit:4.13.2")
+    // android.jar only has stubs of org.json.
+    testImplementation("org.json:json:20240303")
 }
