@@ -69,9 +69,13 @@ object Routing {
         }
     }
 
-    /** The route: rules first, then meaning; [Route.GENERAL] when neither is sure. */
+    /**
+     * The route: rules first, then meaning; [Route.GENERAL] when neither is sure. Small talk comes
+     * from the rules only: by meaning, "¿a qué soy alérgico?" was closer to "estoy cansado hoy"
+     * than to any personal example, and small talk gets no notes.
+     */
     fun route(message: String, vector: FloatArray?, router: SemanticRouter?): Route =
-        byRules(message) ?: vector?.let { router?.route(it) } ?: Route.GENERAL
+        byRules(message) ?: vector?.let { router?.route(it) }?.takeIf { it != Route.CHAT } ?: Route.GENERAL
 
     private const val GREETING =
         "hola|hi|hey|hello|buenas|buenos d[ií]as|buenas (tardes|noches)|good (morning|afternoon|evening)|" +
@@ -86,6 +90,8 @@ object Routing {
         "(?i)\\b(mi|mis|nuestro|nuestra|nuestros|nuestras|my|mine|our)\\b|" +
             "\\b(did|do|have|had|was|am) i\\b|\\bi (have|had|did|was|wrote|saved|said|told|need|put|left)\\b|" +
             "\\b(tengo|ten[ií]a|hice|guard[eé]|escrib[ií]|dije|apunt[eé]|anot[eé]|dej[eé]|me toca)\\b|" +
+            // First-person verbs: "¿qué días hago fuerza?", "¿a qué soy alérgico?" (routed as small talk on 2026-11-21).
+            "\\b(soy|hago|uso|llevo|tomo|debo|necesito|voy|estoy|trabajo|vivo)\\b|\\bi (am|use|take|go|work|live|owe)\\b|" +
             "\\b(ayer|yesterday|la semana pasada|last week|el mes pasado|last month)\\b|" +
             "\\b(notas?|notes?|apuntes|vault|b[oó]veda)\\b",
     )

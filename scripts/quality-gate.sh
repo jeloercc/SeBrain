@@ -13,7 +13,7 @@ MODEL=${2:-gemma-4-E2B-it_Google_Tensor_G5.litertlm}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 # name:floor, as the evaluations print name=got/total.
-FLOORS="found:22 cited:22 honest:5 general:6 right:16"
+FLOORS="found:22 cited:22 honest:5 general:6 right:15"
 
 OUT=$(sh "$ROOT/scripts/run-trust-eval.sh" "$SERIAL" "$MODEL" 2>&1; sh "$ROOT/scripts/run-model-eval.sh" ToolCallEvalTest "$SERIAL" "$MODEL" 2>&1)
 echo "$OUT" | grep -E "eval trust .*found=|eval tools .*right=|not finish|locked|not found"

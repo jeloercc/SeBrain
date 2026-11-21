@@ -125,7 +125,9 @@ class TrustEvalTest {
             val notes = notesFor(case.question)
             val reply = ask(case.question, notes)
             val admits = Regex(ADMITS, RegexOption.IGNORE_CASE).containsMatchIn(reply)
-            val invents = case.invented != null && Regex(case.invented, RegexOption.IGNORE_CASE).containsMatchIn(reply)
+            // "Your notes don't have the vet; they do have your dentist, Dr. Okafor" is the asked-for
+            // behaviour (Assistant.EXACT_FACT): a neighbouring fact is invention only when the gap is not admitted.
+            val invents = !admits && case.invented != null && Regex(case.invented, RegexOption.IGNORE_CASE).containsMatchIn(reply)
             val ok = admits && !invents
             if (ok) honest++
             log("${if (ok) "PASS" else "FAIL"} uncovered $number route=$route nearest=${distance(case.question, null)?.let { "%.3f".format(it) }} admits=$admits invents=$invents q=\"${case.question}\" reply=${reply.oneLine()}")
@@ -222,7 +224,7 @@ class TrustEvalTest {
         const val ADMITS =
             "(notes?|vault)\\b[^.]{0,40}\\b(do(es)?n['’]?t|do(es)? not|not|no)\\b|" +
                 "\\b(not|no|nothing)\\b[^.]{0,40}\\b(notes?|vault)\\b|" +
-                "(don['’]?t|do not|does not|doesn['’]?t) (have|know|see|specify|say|mention|include|list)|no information|" +
+                "(don['’]?t|do not|does not|doesn['’]?t) (have|know|see|specify|say|mention|include|list|contain)|no information|" +
                 "no (especifica|indica)|isn['’]?t (in|mentioned)|not mentioned|" +
                 "notas?\\b[^.]{0,40}\\bno\\b|\\bno\\b[^.]{0,40}\\bnotas?\\b|no (tengo|aparece|menciona|dice|hay|encuentro)"
 

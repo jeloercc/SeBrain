@@ -5,6 +5,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.NoteToolSet
+import com.sebrain.app.chat.Route
+import com.sebrain.app.chat.Routing
+import com.sebrain.app.chat.SemanticRouter
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.ml.ChatEngine
@@ -66,7 +69,11 @@ class ToolCallEvalTest {
         CASES.forEachIndexed { i, case ->
             val start = System.nanoTime()
             val reply = runCatching {
-                chat.replyWithTools(Assistant.SYSTEM, emptyList(), case.message, NoteToolSet(), Assistant.ANSWER_TOKENS) { name, args -> run(name, args) }
+                // The prompt the app sends: the route decides, and a personal question gets the
+                // "search first" instruction (AppState.generate with no gated note).
+                val route = Routing.route(case.message, if (embedder.isAvailable) embedder.embedQuery(case.message) else null, router)
+                val prompt = Assistant.prompt(case.message, emptyList(), asNote = false, tags = emptyList(), route = route, withTools = route == Route.PERSONAL)
+                chat.replyWithTools(Assistant.SYSTEM, emptyList(), prompt, NoteToolSet(), Assistant.ANSWER_TOKENS) { name, args -> run(name, args) }
             }
             ms += (System.nanoTime() - start) / NANOS_PER_MS
             val steps = reply.getOrNull()?.steps.orEmpty()
@@ -83,6 +90,8 @@ class ToolCallEvalTest {
         val sorted = ms.sorted()
         log("eval tools model=${model.fileName} right=$right/${CASES.size} answered=$answered/${CASES.size} median=${sorted[sorted.size / 2]} ms max=${sorted.last()} ms")
     }
+
+    private val router by lazy { if (embedder.isAvailable) SemanticRouter.build(embedder::embedQuery) else null }
 
     /** What the app would do for each tool: read-only here, and a write is only drafted. */
     private fun run(name: String, args: Map<String, Any?>): String = when (name) {
@@ -127,9 +136,12 @@ class ToolCallEvalTest {
             Case("what's my locker combination", NoteToolSet.SEARCH),
             Case("¿qué lleva la receta de lentejas de la abuela?", NoteToolSet.SEARCH),
             Case("Read my note Project Heron", NoteToolSet.READ),
-            Case("Apunta que mañana tengo que llamar al banco", NoteToolSet.CREATE),
-            Case("Remember that my bike lock code is 4417", NoteToolSet.CREATE),
-            Case("Guarda una nota con ideas para el cumpleaños de Marta: un libro y flores", NoteToolSet.CREATE),
+            // Writes are not offered to the model: "apunta que…" goes to today's note and "remember that…"
+            // to the About me note before the model runs (2026-11-21: E2B said "Anoto…" and called nothing).
+            // Here the tools must not be reached for them.
+            Case("Apunta que mañana tengo que llamar al banco", null),
+            Case("Remember that my bike lock code is 4417", null),
+            Case("Guarda una nota con ideas para el cumpleaños de Marta: un libro y flores", null),
             Case("¿Quién fue el primer fotógrafo?", null),
             Case("What can you tell me about NASA?", null),
             Case("¿Cuál es la capital de Australia?", null),

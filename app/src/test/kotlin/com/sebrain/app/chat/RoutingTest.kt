@@ -57,4 +57,24 @@ class RoutingTest {
     fun `without rules or a router the message is general`() {
         assertEquals(Route.GENERAL, Routing.route("explícame la relatividad", floatArrayOf(1f), null))
     }
+
+    @Test
+    fun `first-person questions found on the phone are personal`() {
+        assertEquals(Route.PERSONAL, Routing.byRules("¿Qué días hago fuerza?"))
+        assertEquals(Route.PERSONAL, Routing.byRules("¿A qué soy alérgico?"))
+    }
+
+    @Test
+    fun `the semantic router never makes a message small talk`() {
+        val chatOnly = SemanticRouter(mapOf(Route.CHAT to List(3) { floatArrayOf(1f, 0f) }, Route.GENERAL to List(3) { floatArrayOf(0f, 1f) }))
+
+        assertEquals(Route.GENERAL, Routing.route("algo que las reglas no reconocen", floatArrayOf(1f, 0f), chatOnly))
+    }
+
+    @Test
+    fun `quick notes go to today's note`() {
+        assertEquals("mañana tengo que llamar al banco", DailyNotes.request("Apunta que mañana tengo que llamar al banco")?.text)
+        assertEquals("the plumber comes at 9", DailyNotes.request("write down that the plumber comes at 9")?.text)
+        assertEquals(Route.ACTION, Routing.byRules("Apunta que mañana tengo que llamar al banco"))
+    }
 }

@@ -23,8 +23,18 @@ object DailyNotes {
     private val TODAYS_NOTE = Regex("\\b(today'?s note|daily note|note (for|of) today|nota de hoy|nota diaria|diario de hoy)\\b")
     private val SAVE = Regex("\\b(save|add|append|put|write|log|record|note down|guarda\\w*|anad\\w*|agreg\\w*|apunt\\w*|anot\\w*|escrib\\w*|pon\\w*|mete\\w*)\\b")
 
+    /**
+     * "Apunta que mañana llamo al banco", "write down that…": a quick entry for today's note. Seen
+     * on 2026-11-21: without this the model answered "¡Claro! Anoto…" and saved nothing.
+     */
+    private val QUICK = Regex("(?i)^\\s*(?:por favor,? |please )?(?:ap[uú]nta(?:me)?|an[oó]ta(?:me)?|write down|jot down|note down|make a note) (?:que |that )?(.+)$")
+
     /** The request [message] makes, or null if it does not ask to save into today's note. */
     fun request(message: String): Request? {
+        QUICK.matchEntire(message.trim())?.let { quick ->
+            val entry = quick.groupValues[1].trim()
+            if (!entry.endsWith("?") && !entry.startsWith("about ") && !entry.startsWith("sobre ")) return Request(entry)
+        }
         val text = fold(message)
         if (!TODAYS_NOTE.containsMatchIn(text) || !SAVE.containsMatchIn(text)) return null
         // "What is in today's note?" asks about it; it does not save.
