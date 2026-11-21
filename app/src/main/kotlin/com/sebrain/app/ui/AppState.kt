@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import com.sebrain.app.GenerationService
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
+import com.sebrain.app.NoteToolRunner
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.profile.DeviceSpec
 import com.sebrain.app.profile.ModelAdvisor
@@ -26,6 +27,7 @@ import com.sebrain.app.chat.NoteLinks
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.Templates
 import com.sebrain.app.chat.Routing
+import com.sebrain.app.chat.NoteToolSet
 import com.sebrain.app.chat.Suggestions
 import com.sebrain.app.chat.RelevanceGate
 import com.sebrain.app.chat.Route
@@ -1254,6 +1256,9 @@ class AppState(private val app: SeBrainApp) {
             val route = found.getOrNull()?.first ?: Route.GENERAL
             val context = found.getOrNull()?.second
             val notes = context?.notes.orEmpty()
+            // A personal question the gate found no note for: the model searches by itself, with its
+            // own words (a typo, another phrasing) and can read a note whole. Read-only.
+            val tools = if (route == Route.PERSONAL && notes.isEmpty() && app.embedder.isAvailable) NoteToolRunner(app, scopeBrain) else null
             val template = context?.template
             val prompt = Assistant.prompt(
                 question, notes, asNote, context?.tags.orEmpty(), memory, context?.pinned.orEmpty(), context?.past.orEmpty(),
@@ -1262,6 +1267,7 @@ class AppState(private val app: SeBrainApp) {
                 template = template?.let { Templates.structure(it, now) },
                 repeated = if (asNote) retryAvoiding.also { retryAvoiding = null } else null,
                 route = route,
+                withTools = tools != null,
             )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
@@ -1270,6 +1276,11 @@ class AppState(private val app: SeBrainApp) {
 
                 /** One reply. Its first characters are held back until they are known not to be the instructions. */
                 fun attempt(system: String): String {
+                    if (tools != null) {
+                        val text = timed { app.chat.replyWithTools(system, history, prompt, NoteToolSet(), limit, execute = tools::run).text }
+                        if (!stopRequested) onMain { if (index < messages.size) messages[index] = messages[index].copy(text = text) }
+                        return text
+                    }
                     val streamed = StringBuilder()
                     var checked = false
                     return timed {
@@ -1321,9 +1332,10 @@ class AppState(private val app: SeBrainApp) {
                         looped -> reply.trimEnd() + "\n\n" + Assistant.LOOP_NOTICE
                         else -> Assistant.dropPreamble(reply)
                     }
-                    val final = Assistant.dropUnknownCitations(body, notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
+                    val used = tools?.notes ?: notes
+                    val final = Assistant.dropUnknownCitations(body, used.size).ifBlank { if (stopRequested) "[stopped]" else "" }
                     if (visible) {
-                        val sources = Suggestions.sources(final, notes)
+                        val sources = Suggestions.sources(final, used)
                         val next = if (stopRequested || echoed) emptyList() else Suggestions.next(route, question, final, sources.isNotEmpty())
                         messages[index] = messages[index].copy(text = final, saved = saved, sources = sources, suggestions = next)
                     }

@@ -292,11 +292,13 @@ object Assistant {
         repeated: String? = null,
         /** What the message is for (see [Routing]); it decides how the model is told to use the notes. */
         route: Route = Route.GENERAL,
+        /** True when the model has the note tools ([NoteToolSet]) for this reply and should search itself. */
+        withTools: Boolean = false,
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
-        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated, route)
+        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated, route, withTools)
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
             built = compose(message, notes, parts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
@@ -316,6 +318,7 @@ object Assistant {
         val template: String?,
         val repeated: String?,
         val route: Route,
+        val withTools: Boolean,
     )
 
     private fun compose(
@@ -366,7 +369,7 @@ object Assistant {
             connected.forEach { append(render(it, CONNECTED_CHARS)).append("\n\n") }
         }
         // Seen on the phone: with no note given, the model still cited "[1]".
-        if (notes.isEmpty()) append(NO_NOTES.getValue(parts.route)).append("\n\n")
+        if (notes.isEmpty()) append(if (parts.withTools) SEARCH_FIRST else NO_NOTES.getValue(parts.route)).append("\n\n")
         // TrustEvalTest, 2026-11-20: E2B gave a network's name as its password and a flight's date as
         // its time. The check is asked in the turn, where a small model follows it, and only here.
         if (notes.isNotEmpty() && parts.route == Route.PERSONAL) append(EXACT_FACT).append("\n\n")
@@ -442,6 +445,12 @@ object Assistant {
             "own life, say briefly that their notes do not have it and offer to save it once they know; never guess it. " +
             "If it asks for something general, answer from your own knowledge.",
     )
+
+    /** For a personal question with the note tools: search before saying anything is missing. */
+    private const val SEARCH_FIRST =
+        "This message is about the user. Before answering, call search_notes with the key words (fix any typo), and " +
+            "read_note if a result looks right but is cut. Answer from what you find and cite it as [1], [2]. If nothing " +
+            "you find has the exact fact asked for, say their notes do not have it; never guess it."
 
     private const val EXACT_FACT =
         "Before answering, check whether a note states exactly what the message asks for (the same kind of thing: a time, " +
