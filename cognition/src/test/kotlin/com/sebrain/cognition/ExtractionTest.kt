@@ -117,6 +117,16 @@ class ExtractionTest {
     }
 
     @Test
+    fun `the message lists the next two weeks so relative days can be looked up`() {
+        val message = Extraction.message("el jueves", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("America/Mexico_City"))
+
+        // Captured on Saturday 7 November local time: the next Thursday is the 12th.
+        assertTrue(message, message.contains("Sunday 2026-11-08, Monday 2026-11-09"))
+        assertTrue(message.contains("Thursday 2026-11-12"))
+        assertTrue(message.contains("Saturday 2026-11-21."))
+    }
+
+    @Test
     fun `the retry message adds the corrective note`() {
         val message = Extraction.message("texto", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("UTC"), retry = true)
 
