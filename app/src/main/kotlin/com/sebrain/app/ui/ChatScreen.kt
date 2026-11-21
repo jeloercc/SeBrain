@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenuItem
@@ -55,6 +56,7 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
+    var attachOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     // Asked once, on the first message: it lets SeBrain say when a reply finished in the background.
     val context = LocalContext.current
@@ -69,9 +71,11 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             val model = state.currentModel
+            val remote = state.remoteProvider
             Column(Modifier.weight(1f)) {
                 Text(
                     when {
+                        remote != null -> "${remote.name} · ${remote.model}"
                         state.loadingModel -> "Loading the model…"
                         model != null -> model.description
                         else -> "No model loaded"
@@ -80,12 +84,13 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 )
                 Text(
                     when {
+                        remote != null -> "External API · only your message and attached notes leave the phone"
                         state.loadingModel -> "The first load of a model can take a minute"
                         model != null -> "On device · ${state.modelBackend} · say “make a note about…” to save an answer"
                         else -> ""
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (remote != null) Palette.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
@@ -98,7 +103,17 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                         DropdownMenuItem(text = { Text("None installed") }, onClick = { menuOpen = false })
                     }
                     state.languageModels.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.description) }, onClick = { menuOpen = false; state.ensureModel(option) })
+                        DropdownMenuItem(
+                            text = { Text("On device · " + option.description) },
+                            onClick = { menuOpen = false; state.useLocalModel(); state.ensureModel(option) },
+                        )
+                    }
+                    // External models, added in the Models tab.
+                    state.providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text("API · ${provider.name} · ${provider.model}", color = Palette.Coral) },
+                            onClick = { menuOpen = false; state.useProvider(provider) },
+                        )
                     }
                 }
             }
@@ -122,13 +137,23 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 Bubble(message)
                 if (!message.fromUser && !message.isAction && message.text.isNotBlank()) {
                     if (message.saved) {
-                        Text("✓ Saved as a note", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                    } else if (!state.generating) {
-                        TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
+                        Text("✓ Note drafted: review it to save", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     }
+                    if (!state.generating) ReplyActions(state, i, message, isLast = i == state.messages.lastIndex)
                 }
             }
         }
+        if (state.remoteProvider != null) {
+            // Notes go to the external model only when attached here, one by one.
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { attachOpen = true }, enabled = !state.generating) { Text("ATTACH NOTES") }
+                state.attachedNotes.forEach { (id, title) ->
+                    AssistChip(onClick = { state.detachNote(id) }, label = { Text("$title ✕", maxLines = 1) }, modifier = Modifier.padding(start = 4.dp))
+                }
+            }
+        }
+        if (attachOpen) AttachNotesDialog(state) { attachOpen = false }
+        state.outgoing?.let { OutgoingDialog(state, it) }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
                 value = input,
@@ -247,6 +272,49 @@ private fun Bubble(message: ChatMessage) {
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             MarkdownBody(message.text.ifEmpty { "…" }, "script", if (message.fromUser) colors.onPrimaryContainer else colors.onSurface)
+        }
+    }
+}
+
+/**
+ * Under an answer: the notes it used (only when it cited any), regenerate and "go deeper" for the
+ * last one, a menu with save and copy, and the next questions to tap.
+ */
+@Composable
+private fun ReplyActions(state: AppState, index: Int, message: ChatMessage, isLast: Boolean) {
+    val context = LocalContext.current
+    var sourcesOpen by remember { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (message.sources.isNotEmpty()) {
+            Box {
+                TextButton(onClick = { sourcesOpen = true }) {
+                    Text("📒 ${message.sources.size} ${if (message.sources.size == 1) "note" else "notes"}")
+                }
+                DropdownMenu(expanded = sourcesOpen, onDismissRequest = { sourcesOpen = false }) {
+                    message.sources.forEach { (id, title) ->
+                        DropdownMenuItem(text = { Text(title, maxLines = 1) }, onClick = { sourcesOpen = false; state.openFromGraph(id) })
+                    }
+                }
+            }
+        }
+        if (isLast) {
+            TextButton(onClick = { state.regenerate() }) { Text("Regenerate") }
+            TextButton(onClick = { state.deeper() }) { Text("Go deeper") }
+        }
+        Box {
+            TextButton(onClick = { moreOpen = true }) { Text("⋯") }
+            DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                if (!message.saved) DropdownMenuItem(text = { Text("Save as note") }, onClick = { moreOpen = false; state.saveAsNote(index) })
+                DropdownMenuItem(text = { Text("Copy") }, onClick = { moreOpen = false; copySensitive(context, message.text) })
+            }
+        }
+    }
+    if (isLast && message.suggestions.isNotEmpty()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            message.suggestions.forEach { suggestion ->
+                AssistChip(onClick = { state.ask(suggestion) }, label = { Text(suggestion, maxLines = 1) })
+            }
         }
     }
 }

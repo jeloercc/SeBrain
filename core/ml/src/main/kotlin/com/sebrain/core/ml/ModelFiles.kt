@@ -129,7 +129,17 @@ class ModelFiles(private val dir: File) {
             "Gemma 4 E2B Uncensored MAX",
             "PeppX/gemma-4-e2b-uncensored-litertlm",
         )
-        val ALL = listOf(EMBEDDING_NPU, EMBEDDING_CPU, LLM_E4B_ABLITERATED, LLM_E2B_UNCENSORED)
+        // litert-community/gemma-4-E2B-it-litert-lm (Apache-2.0, not gated), compiled for the Tensor G5. Hash checked on 2026-11-18.
+        val LLM_E2B_TENSOR_G5 = KnownModel(
+            "gemma-4-E2B-it_Google_Tensor_G5.litertlm",
+            "72d056066f34362adcecf6b76995de67ad899f6f33dfe9079593c1acd2984191",
+            "Gemma 4 E2B for the Tensor G5 NPU",
+            "litert-community/gemma-4-E2B-it-litert-lm",
+        )
+        val ALL = listOf(EMBEDDING_NPU, EMBEDDING_CPU, LLM_E4B_ABLITERATED, LLM_E2B_UNCENSORED, LLM_E2B_TENSOR_G5)
+
+        /** Builds compiled ahead of time for the Tensor G5 NPU run only there. */
+        fun compiledForTensorNpu(model: KnownModel): Boolean = model.fileName.contains("_Google_Tensor_G5")
 
         fun sha256(input: InputStream): String {
             val digest = MessageDigest.getInstance("SHA-256")

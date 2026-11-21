@@ -39,6 +39,11 @@ class CaptureStore(private val db: SQLiteDatabase) {
             statement.executeInsert().takeIf { it != -1L }
         }
 
+    /** Marks every capture to be indexed again, for when the shape of the stored chunks changes. */
+    fun markAllPending() {
+        db.execSQL("UPDATE capture SET index_status = 'pending'")
+    }
+
     /** Captures that have no search index yet, oldest first. */
     fun withoutIndex(limit: Int): List<Pair<Long, String>> = db.rawQuery(
         "SELECT id, text FROM capture WHERE index_status = 'pending' ORDER BY id LIMIT $limit",

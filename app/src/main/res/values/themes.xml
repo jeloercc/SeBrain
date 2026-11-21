@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launch screen Android draws before the app: the SeBrain logo on the app's ink black. -->
+    <style name="Theme.SeBrain" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:windowSplashScreenBackground">@color/ink</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

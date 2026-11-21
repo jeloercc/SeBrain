@@ -14,11 +14,15 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
  *
  * Format version 2 (approved 2026-11-12) adds the saved conversations after the notes.
  * Version 3 adds each note's path in the folder tree; aliases and properties are not stored,
- * because they are read again from the note's text. Older versions are still read.
+ * because they are read again from the note's text. Version 4 adds the brains' settings (above
+ * all whether each one is private), their pins and the brain of each conversation; a backup
+ * without them restores every brain as private (docs/design-vault-restore.md). Older versions
+ * are still read.
  */
 object VaultBackupSnapshot {
     private val MAGIC = "SBSN".toByteArray(StandardCharsets.US_ASCII)
-    private const val VERSION = 3
+    private const val VERSION = 4
+    private const val BRAINS_VERSION = 4
     private const val FIRST_VERSION = 1
     private const val MAX_RECORDS = 1_000_000
     private const val MAX_FIELD_BYTES = 16 * 1024 * 1024
@@ -42,14 +46,40 @@ object VaultBackupSnapshot {
         /** How many messages from the start the summary covers. */
         val summarized: Int,
         val messages: List<Message>,
+        /** The brain the conversation belongs to, by name; null for the universal brain. */
+        val brain: String? = null,
     )
 
-    class Snapshot(val records: List<Record>, val conversations: List<Conversation>)
+    /** A row of the `brain` table. [egress] is [BrainRegistry.DEVICE] for a private brain. */
+    data class BrainSetting(
+        val name: String,
+        val scope: String,
+        val instructions: String,
+        val model: String?,
+        val egress: String,
+        val createdAt: String,
+        val updatedAt: String,
+    )
+
+    /** A note pinned in a brain, by the brain's name and the note's segment id: row ids change on restore. */
+    data class Pin(val brain: String, val segmentId: UUID, val position: Int)
+
+    class Snapshot(
+        val records: List<Record>,
+        val conversations: List<Conversation>,
+        val brains: List<BrainSetting> = emptyList(),
+        val pins: List<Pin> = emptyList(),
+        val version: Int = VERSION,
+    )
+
+    /** What a restore wrote. [brainsMadePrivate] counts the brains of an old backup, restored private. */
+    data class Restored(val notes: Int, val conversations: Int, val brains: Int, val brainsMadePrivate: Int)
 
     private fun exportConversations(db: SQLiteDatabase): List<Conversation> {
         val store = ConversationStore(db)
         return db.rawQuery(
-            "SELECT id, title, created_at, updated_at FROM conversation ORDER BY id", emptyArray<String>(),
+            "SELECT c.id, c.title, c.created_at, c.updated_at, b.name FROM conversation c LEFT JOIN brain b ON b.id = c.brain_id ORDER BY c.id",
+            emptyArray<String>(),
         ).use { c ->
             buildList {
                 while (c.moveToNext()) {
@@ -58,11 +88,28 @@ object VaultBackupSnapshot {
                         "SELECT from_user, text, created_at FROM message WHERE conversation_id = ? ORDER BY id", id as Any,
                     ).use { m -> buildList { while (m.moveToNext()) add(Message(m.getInt(0) == 1, m.getString(1), m.getString(2))) } }
                     val summary = store.summary(id)
-                    add(Conversation(c.getString(1), c.getString(2), c.getString(3), summary?.first, summary?.second ?: 0, messages))
+                    val brain = if (c.isNull(4)) null else c.getString(4)
+                    add(Conversation(c.getString(1), c.getString(2), c.getString(3), summary?.first, summary?.second ?: 0, messages, brain))
                 }
             }
         }
     }
+
+    private fun exportBrains(db: SQLiteDatabase): List<BrainSetting> = db.rawQuery(
+        "SELECT name, scope, instructions, model, egress, created_at, updated_at FROM brain ORDER BY id", emptyArray<String>(),
+    ).use { c ->
+        buildList {
+            while (c.moveToNext()) {
+                add(BrainSetting(c.getString(0), c.getString(1), c.getString(2), if (c.isNull(3)) null else c.getString(3), c.getString(4), c.getString(5), c.getString(6)))
+            }
+        }
+    }
+
+    private fun exportPins(db: SQLiteDatabase): List<Pin> = db.rawQuery(
+        "SELECT b.name, c.segment_id, p.position FROM brain_pin p JOIN brain b ON b.id = p.brain_id " +
+            "JOIN capture c ON c.id = p.capture_id ORDER BY p.brain_id, p.position",
+        emptyArray<String>(),
+    ).use { c -> buildList { while (c.moveToNext()) add(Pin(c.getString(0), UUID.fromString(c.getString(1)), c.getInt(2))) } }
 
     private fun restoreConversations(db: SQLiteDatabase, conversations: List<Conversation>) {
         val store = ConversationStore(db)
@@ -71,7 +118,38 @@ object VaultBackupSnapshot {
             conversation.messages.forEach { store.add(id, it.fromUser, it.text, it.createdAt) }
             if (conversation.summary != null) store.setSummary(id, conversation.summary, conversation.summarized)
             db.execSQL("UPDATE conversation SET updated_at = ? WHERE id = ?", arrayOf<Any>(conversation.updatedAt, id))
+            if (conversation.brain != null) {
+                db.execSQL("UPDATE conversation SET brain_id = (SELECT id FROM brain WHERE name = ?) WHERE id = ?", arrayOf<Any>(conversation.brain, id))
+            }
         }
+    }
+
+    /**
+     * The brains' settings: as saved, from a v4 backup; from an older one, which did not save
+     * them, every brain folder is made private, so no note becomes sendable to an external AI.
+     * Returns how many brains were made private that way.
+     */
+    private fun restoreBrains(db: SQLiteDatabase, decoded: Snapshot, now: String): Int {
+        if (decoded.version >= BRAINS_VERSION) {
+            for (brain in decoded.brains) {
+                db.execSQL(
+                    "INSERT INTO brain(name, scope, instructions, model, egress, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    arrayOf<Any?>(brain.name, brain.scope, brain.instructions, brain.model, brain.egress, brain.createdAt, brain.updatedAt),
+                )
+            }
+            for (pin in decoded.pins) {
+                db.execSQL(
+                    "INSERT OR IGNORE INTO brain_pin(brain_id, capture_id, position) " +
+                        "SELECT b.id, c.id, ? FROM brain b, capture c WHERE b.name = ? AND c.segment_id = ?",
+                    arrayOf<Any>(pin.position, pin.brain, pin.segmentId.toString()),
+                )
+            }
+            return 0
+        }
+        val folders = decoded.records.mapNotNull { BrainRegistry.of(it.path) }.distinctBy { it.lowercase() }
+        val registry = BrainRegistry(db)
+        folders.forEach { registry.create(it, private = true, now = now) }
+        return folders.size
     }
 
     fun export(db: SQLiteDatabase): ByteArray {
@@ -112,14 +190,14 @@ object VaultBackupSnapshot {
                 )
             }
         }
-        return encode(records, exportConversations(db))
+        return encode(records, exportConversations(db), brains = exportBrains(db), pins = exportPins(db))
     }
 
     /**
      * Restores only into an empty database. Derived search data must be rebuilt separately.
      * Returns the number of notes restored.
      */
-    fun restore(db: SQLiteDatabase, snapshot: ByteArray): Int {
+    fun restore(db: SQLiteDatabase, snapshot: ByteArray, now: String = java.time.Instant.now().toString()): Restored {
         val decoded = decode(snapshot)
         val records = decoded.records
         val count = CaptureStore(db).count()
@@ -150,18 +228,27 @@ object VaultBackupSnapshot {
                     )
                 }
             }
+            // Brains before conversations and pins, which point to them by name.
+            val madePrivate = restoreBrains(db, decoded, now)
             restoreConversations(db, decoded.conversations)
             db.setTransactionSuccessful()
+            return Restored(records.size, decoded.conversations.size, if (decoded.version >= BRAINS_VERSION) decoded.brains.size else madePrivate, madePrivate)
         } finally {
             db.endTransaction()
         }
-        return records.size
     }
 
     /** [version] exists so a test can write the old format; the app always writes the current one. */
-    internal fun encode(records: List<Record>, conversations: List<Conversation> = emptyList(), version: Int = VERSION): ByteArray {
+    internal fun encode(
+        records: List<Record>,
+        conversations: List<Conversation> = emptyList(),
+        version: Int = VERSION,
+        brains: List<BrainSetting> = emptyList(),
+        pins: List<Pin> = emptyList(),
+    ): ByteArray {
         require(records.size <= MAX_RECORDS) { "Too many backup records" }
         require(conversations.size <= MAX_RECORDS) { "Too many backup conversations" }
+        require(brains.size <= MAX_RECORDS && pins.size <= MAX_RECORDS) { "Too many backup brains or pins" }
         require(version in FIRST_VERSION..VERSION) { "Unsupported snapshot version" }
         val output = ByteArrayOutputStream()
         DataOutputStream(output).use { data ->
@@ -197,6 +284,25 @@ object VaultBackupSnapshot {
                         writeString(data, message.text)
                         writeString(data, message.createdAt)
                     }
+                    if (version >= BRAINS_VERSION) writeNullable(data, conversation.brain)
+                }
+            }
+            if (version >= BRAINS_VERSION) {
+                data.writeInt(brains.size)
+                brains.forEach { brain ->
+                    writeString(data, brain.name)
+                    writeString(data, brain.scope)
+                    writeString(data, brain.instructions)
+                    writeNullable(data, brain.model)
+                    writeString(data, brain.egress)
+                    writeString(data, brain.createdAt)
+                    writeString(data, brain.updatedAt)
+                }
+                data.writeInt(pins.size)
+                pins.forEach { pin ->
+                    writeString(data, pin.brain)
+                    writeString(data, pin.segmentId.toString())
+                    data.writeInt(pin.position)
                 }
             }
         }
@@ -229,7 +335,7 @@ object VaultBackupSnapshot {
                     add(Record(capture, title, updatedAt, tags, links, if (version >= 3) readNullable(data) else null))
                 }
             }
-            if (version < 2) return Snapshot(records, emptyList())
+            if (version < 2) return Snapshot(records, emptyList(), version = version)
             val conversationCount = data.readInt()
             require(conversationCount in 0..MAX_RECORDS) { "Invalid snapshot conversation count" }
             val conversations = List(conversationCount) {
@@ -241,9 +347,19 @@ object VaultBackupSnapshot {
                 val messageCount = data.readInt()
                 require(messageCount in 0..MAX_RECORDS) { "Invalid snapshot message count" }
                 val messages = List(messageCount) { Message(data.readBoolean(), readString(data), readString(data)) }
-                Conversation(title, createdAt, updatedAt, summary, summarized, messages)
+                val brain = if (version >= BRAINS_VERSION) readNullable(data) else null
+                Conversation(title, createdAt, updatedAt, summary, summarized, messages, brain)
             }
-            return Snapshot(records, conversations)
+            if (version < BRAINS_VERSION) return Snapshot(records, conversations, version = version)
+            val brainCount = data.readInt()
+            require(brainCount in 0..MAX_RECORDS) { "Invalid snapshot brain count" }
+            val brains = List(brainCount) {
+                BrainSetting(readString(data), readString(data), readString(data), readNullable(data), readString(data), readString(data), readString(data))
+            }
+            val pinCount = data.readInt()
+            require(pinCount in 0..MAX_RECORDS) { "Invalid snapshot pin count" }
+            val pins = List(pinCount) { Pin(readString(data), UUID.fromString(readString(data)), data.readInt()) }
+            return Snapshot(records, conversations, brains, pins, version)
         }
     }
 

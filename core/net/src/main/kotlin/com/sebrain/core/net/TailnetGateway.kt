@@ -18,7 +18,11 @@ class TailnetUnavailableException(message: String) : IOException(message)
  * through the tunnel as Tailscale is configured. With [requireTailscale], every connection is
  * bound to the Tailscale VPN network instead and nothing connects while Tailscale is off.
  */
-class TailnetGateway(context: Context, private val requireTailscale: Boolean = false) {
+class TailnetGateway(context: Context, requireTailscale: Boolean = false) {
+    /** Changed from Settings; read on every connection. */
+    @Volatile
+    var requireTailscale: Boolean = requireTailscale
+
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
     /** Whether the Tailscale tunnel is up. */

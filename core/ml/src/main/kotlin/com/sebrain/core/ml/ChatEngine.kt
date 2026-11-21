@@ -14,21 +14,26 @@ import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
+import com.google.ai.edge.litertlm.ResponseFormat
+import com.google.ai.edge.litertlm.ThinkingConfig
+import com.google.ai.edge.litertlm.ToolSet
+import com.google.ai.edge.litertlm.tool
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs a language model the user installed, fully on the device.
  *
- * Backend chain: GPU, then CPU. Third-party models are not compiled for the Tensor NPU, and
- * `Backend` does not fall back by itself, so the chain is explicit. Not thread-safe: use it
+ * Backend chain: a build compiled for the Tensor G5 runs on the NPU only; any other model runs on
+ * the GPU, then the CPU. `Backend` does not fall back by itself, so the chain is explicit. Not thread-safe: use it
  * from one thread.
  */
 @OptIn(ExperimentalApi::class)
 class ChatEngine(
     context: Context,
     private val models: ModelFiles,
-    /** Collects speed figures for [lastStats]. Off in the app; on for measurements. */
+    /** Collects speed figures for [lastStats] and the log: token counts and tok/s, never text. */
     private val benchmark: Boolean = false,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -45,21 +50,46 @@ class ChatEngine(
             .getOrElse { !model.fileName.contains("embedding", ignoreCase = true) }
     }
 
-    /** Loads [model], releasing any other. A file is hashed the first time it is loaded. */
-    fun load(model: KnownModel) {
-        if (loaded == model && engine != null) return
+    /**
+     * A file that does not match its pinned SHA-256 is never loaded. It is removed, so the app
+     * does not stay stuck on it, and the log says what was found: hashes and size, never content.
+     */
+    private fun reject(model: KnownModel): Nothing {
+        val file = models.file(model)
+        val actual = if (file.exists()) runCatching { ModelFiles.sha256(file.inputStream()) }.getOrNull() else null
+        Log.w(TAG, "model rejected: ${model.fileName} exists=${file.exists()} size=${file.length()} expected=${model.sha256.take(12)} actual=${actual?.take(12)}")
+        models.remove(model)
+        throw IllegalStateException(
+            "${model.description} did not match its SHA-256 fingerprint, so the file was removed. " +
+                "Download it again in Profile › Device & models.",
+        )
+    }
+
+    /** The context window [loaded] was given, in tokens; null for the model's own default (4096 measured). */
+    var window: Int? = null
+        private set
+
+    /**
+     * Loads [model], releasing any other. A file is hashed the first time it is loaded.
+     * [maxNumTokens] asks for a larger context window (input and reply together); a build compiled
+     * for the Tensor NPU has its window fixed at compile time, so it is not passed there.
+     */
+    fun load(model: KnownModel, maxNumTokens: Int? = null) {
+        val tokens = maxNumTokens.takeUnless { ModelFiles.compiledForTensorNpu(model) }
+        if (loaded == model && window == tokens && engine != null) return
         close()
         val path = models.file(model).path
-        check(models.verifyOnce(model)) { "SHA-256 mismatch for ${model.fileName}" }
+        if (!models.verifyOnce(model)) reject(model)
         if (benchmark) ExperimentalFlags.enableBenchmark = true
         var lastError: Throwable? = null
-        for ((name, factory) in listOf<Pair<String, () -> Backend>>("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })) {
+        for ((name, factory) in backends(model)) {
             try {
-                engine = Engine(EngineConfig(modelPath = path, backend = factory(), cacheDir = appContext.cacheDir.path))
+                engine = Engine(EngineConfig(modelPath = path, backend = factory(), maxNumTokens = tokens, cacheDir = appContext.cacheDir.path))
                     .also { it.initialize() }
                 loaded = model
                 backend = name
-                Log.i(TAG, "language model loaded on $name")
+                window = tokens
+                Log.i(TAG, "language model loaded on $name window=${tokens ?: "default"}")
                 return
             } catch (e: Throwable) {
                 lastError = e
@@ -68,6 +98,13 @@ class ChatEngine(
         }
         throw IllegalStateException("No backend could load ${model.fileName}", lastError)
     }
+
+    private fun backends(model: KnownModel): List<Pair<String, () -> Backend>> =
+        if (ModelFiles.compiledForTensorNpu(model)) {
+            listOf("npu" to { Backend.NPU(appContext.applicationInfo.nativeLibraryDir) })
+        } else {
+            listOf("gpu" to { Backend.GPU() }, "cpu" to { Backend.CPU() })
+        }
 
     @Volatile private var active: Conversation? = null
     @Volatile private var cancelled = false
@@ -182,6 +219,155 @@ class ChatEngine(
         return synchronized(reply) { reply.toString() }
     }
 
+    /**
+     * A structured reply: the raw text, whether [stopWhen] cut it, whether [cancelStructured]
+     * stopped it, and what creating its conversation cost.
+     */
+    class Structured(val text: String, val cut: Boolean, val cancelled: Boolean, val createMs: Double)
+
+    /** One tool the model called, with its arguments and what the app answered. */
+    class ToolStep(val name: String, val arguments: Map<String, Any?>, val result: String)
+
+    /** A reply written with tools: the final text and every tool call that led to it. */
+    class ToolReply(val text: String, val steps: List<ToolStep>)
+
+    /**
+     * Answers [text] with [tools] available, in manual mode: the model asks for a tool, [execute]
+     * runs it and its result goes back, until the model answers in words or [maxSteps] calls have
+     * been made. Manual, not automatic, so the app checks every call (privacy, review before a
+     * write) and to stay clear of the automatic mode's stall (LiteRT-LM issue 3266).
+     * Blocks; [cancel] stops it.
+     */
+    fun replyWithTools(
+        systemInstruction: String,
+        history: List<Turn>,
+        text: String,
+        tools: ToolSet,
+        maxTokens: Int,
+        maxSteps: Int = MAX_TOOL_STEPS,
+        execute: (name: String, arguments: Map<String, Any?>) -> String,
+    ): ToolReply {
+        val engine = checkNotNull(engine) { "No model is loaded" }
+        val conversation = engine.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(systemInstruction),
+                initialMessages = history.map { if (it.fromUser) Message.user(it.text) else Message.model(it.text) },
+                tools = listOf(tool(tools)),
+                automaticToolCalling = false,
+                maxOutputToken = maxTokens,
+            ),
+        )
+        cancelled = false
+        active = conversation
+        val steps = mutableListOf<ToolStep>()
+        try {
+            var message = conversation.sendMessage(text)
+            while (!cancelled && message.toolCalls.isNotEmpty() && steps.size < maxSteps) {
+                val calls = message.toolCalls.map { call ->
+                    val result = runCatching { execute(call.name, call.arguments) }.getOrElse { "error: ${it.javaClass.simpleName}" }
+                    ToolStep(call.name, call.arguments, result).also { steps += it }
+                }
+                message = conversation.sendMessage(
+                    Message.tool(Contents.of(calls.joinToString("\n") { "{\"name\":\"${it.name}\",\"response\":${quoted(it.result)}}" })),
+                )
+            }
+            val answer = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+            return ToolReply(if (cancelled) "" else answer, steps)
+        } finally {
+            active = null
+            lastStats = if (cancelled) null else readStats(conversation)
+            runCatching { conversation.close() }
+        }
+    }
+
+    /** [text] as a JSON string literal. */
+    private fun quoted(text: String): String = buildString {
+        append('"')
+        for (c in text) {
+            when {
+                c == '"' -> append("\\\"")
+                c == '\\' -> append("\\\\")
+                c == '\n' -> append("\\n")
+                c < ' ' -> append("\\u%04x".format(c.code))
+                else -> append(c)
+            }
+        }
+        append('"')
+    }
+
+    @Volatile private var structuredActive: Conversation? = null
+    private val structuredCancelled = AtomicBoolean(false)
+
+    /**
+     * Stops a [structured] call in progress, and only that: a chat reply is never touched, so
+     * background work can make way for the user without risking their answer. Safe from any thread.
+     */
+    fun cancelStructured() {
+        structuredCancelled.set(true)
+        runCatching { structuredActive?.cancelProcess() }
+    }
+
+    /**
+     * Answers [text] with JSON that follows [schema] (constrained decoding), in a fresh
+     * conversation without thinking. [stopWhen] sees the reply as it is written and stops it,
+     * such as on the whitespace loop of `docs/design-cognition-worker.md` §4. Blocks until done.
+     */
+    fun structured(systemInstruction: String, text: String, schema: String, maxTokens: Int, stopWhen: (CharSequence) -> Boolean = { false }): Structured {
+        val engine = checkNotNull(engine) { "No model is loaded" }
+        val start = System.nanoTime()
+        val conversation = engine.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(systemInstruction),
+                maxOutputToken = maxTokens,
+                thinkingConfig = ThinkingConfig(false),
+                enableResponseFormat = true,
+            ),
+        )
+        val createMs = (System.nanoTime() - start) / NANOS_PER_MS
+        val done = CountDownLatch(1)
+        val reply = StringBuilder()
+        var failure: Throwable? = null
+        val cut = AtomicBoolean(false)
+        structuredCancelled.set(false)
+        structuredActive = conversation
+        try {
+            conversation.sendMessageAsync(
+                text,
+                object : MessageCallback {
+                    override fun onMessage(message: Message) {
+                        if (cut.get() || structuredCancelled.get()) return
+                        val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                        val stop = synchronized(reply) { reply.append(piece); stopWhen(reply) }
+                        if (stop) {
+                            cut.set(true)
+                            runCatching { conversation.cancelProcess() }
+                        }
+                    }
+
+                    override fun onDone() = done.countDown()
+
+                    override fun onError(throwable: Throwable) {
+                        failure = throwable
+                        done.countDown()
+                    }
+                },
+                responseFormat = ResponseFormat.json(schema),
+            )
+            while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
+                if (cut.get() || structuredCancelled.get()) {
+                    done.await(CANCEL_GRACE_MS, TimeUnit.MILLISECONDS)
+                    break
+                }
+            }
+        } finally {
+            structuredActive = null
+            runCatching { conversation.close() }
+        }
+        val stopped = structuredCancelled.get()
+        if (!cut.get() && !stopped) failure?.let { throw it }
+        return Structured(synchronized(reply) { reply.toString() }, cut.get(), stopped, createMs)
+    }
+
     private fun readStats(conversation: Conversation): Stats? = runCatching {
         val tokens = runCatching { conversation.getTokenCount() }.getOrDefault(0)
         val info = if (benchmark) runCatching { conversation.getBenchmarkInfo() }.getOrNull() else null
@@ -207,11 +393,15 @@ class ChatEngine(
         engine = null
         loaded = null
         backend = null
+        window = null
     }
 
     private companion object {
         const val TAG = "SEBRAIN_ML"
         const val POLL_MS = 200L
         const val CANCEL_GRACE_MS = 2000L
+        const val NANOS_PER_MS = 1e6
+        /** Tool calls in one reply: enough to search, read and answer, not enough to loop. */
+        const val MAX_TOOL_STEPS = 4
     }
 }

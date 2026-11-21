@@ -64,4 +64,12 @@ class ChunkerTest {
             chunks.joinToString("") { it.text }.filterNot { it.isWhitespace() },
         )
     }
+
+    @Test
+    fun aHeadingAlwaysStartsANewChunk() {
+        val text = "# Nota\n\nIntro corta.\n\n## Detalles\n\nTexto de detalles.\n\n```bash\n# comentario\nls\n```\n\n## Historia\nNació en 1995."
+        val chunks = Chunker.chunk(text)
+        assertEquals(listOf("# Nota\n\nIntro corta.", "## Detalles\n\nTexto de detalles.\n\n```bash\n# comentario\nls\n```", "## Historia\nNació en 1995."), chunks.map { it.text })
+        chunks.forEach { assertEquals(it.text, text.substring(it.startOffset, it.endOffset)) }
+    }
 }

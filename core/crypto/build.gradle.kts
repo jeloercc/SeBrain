@@ -28,4 +28,6 @@ dependencies {
 
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    // Post-quantum provider probe only (docs/design-post-quantum.md); not shipped in the app.
+    androidTestImplementation("org.bouncycastle:bcprov-jdk18on:1.86")
 }

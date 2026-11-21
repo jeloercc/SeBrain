@@ -45,19 +45,19 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
     var words by remember { mutableStateOf("") }
     var toDownload by remember { mutableStateOf<HubFile?>(null) }
     var toRemove by remember { mutableStateOf<KnownModel?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(state::importFile) }
-    val repo = state.hubRepo
-    val results = state.hubModels
-    BackHandler(enabled = repo != null) { state.closeRepo() }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(state.modelHub::importFile) }
+    val repo = state.modelHub.hubRepo
+    val results = state.modelHub.hubModels
+    BackHandler(enabled = repo != null) { state.modelHub.closeRepo() }
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(
                 when {
-                    !state.online -> "No internet connection"
-                    state.tailscale -> "Online · Tailscale active"
+                    !state.modelHub.online -> "No internet connection"
+                    state.modelHub.tailscale -> "Online · Tailscale active"
                     else -> "Online"
-                } + " · Semantic search ${if (state.semanticSearch) "on" else "off"}",
+                } + " · Semantic search ${if (state.modelHub.semanticSearch) "on" else "off"}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -72,11 +72,12 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
                 singleLine = true,
                 shape = MaterialTheme.shapes.extraLarge,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { state.searchHub(words) }),
+                keyboardActions = KeyboardActions(onSearch = { state.modelHub.searchHub(words) }),
             )
         }
-        if (state.hubBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        state.downloadProgress?.let { progress ->
+        item { ProvidersSection(state) }
+        if (state.modelHub.hubBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        state.modelHub.downloadProgress?.let { progress ->
             item {
                 Column {
                     Text("Downloading ${(progress * 100).toInt()} %", style = MaterialTheme.typography.labelLarge)
@@ -84,12 +85,12 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
                 }
             }
         }
-        state.hubMessage?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
+        state.modelHub.hubMessage?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
 
         when {
             repo != null -> {
-                item { Header(repo) { TextButton(onClick = state::closeRepo) { Text("Back") } } }
-                items(state.hubFiles, key = { it.path }) { file ->
+                item { Header(repo) { TextButton(onClick = state.modelHub::closeRepo) { Text("Back") } } }
+                items(state.modelHub.hubFiles, key = { it.path }) { file ->
                     Entry(file.fileName, "%.2f GB".format(file.sizeBytes / 1e9)) { toDownload = file }
                 }
             }
@@ -99,7 +100,7 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
                     Entry(
                         model.repo,
                         "${model.downloads} downloads · ${model.likes} likes" + if (model.gated) " · needs an account" else "",
-                    ) { state.openRepo(model.repo) }
+                    ) { state.modelHub.openRepo(model.repo) }
                 }
             }
         }
@@ -107,8 +108,8 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
         item {
             Header("Installed") { OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Import file") } }
         }
-        if (state.installed.isEmpty()) item { Text("No model installed", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(state.installed, key = { it.fileName }) { model ->
+        if (state.modelHub.installed.isEmpty()) item { Text("No model installed", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        items(state.modelHub.installed, key = { it.fileName }) { model ->
             Entry(model.description, model.repo ?: model.fileName) { toRemove = model }
         }
     }
@@ -120,10 +121,10 @@ fun ModelsScreen(state: AppState, modifier: Modifier = Modifier) {
                 "It is a file from a third party. SeBrain checks the download against this hash.",
             "Download",
             onDismiss = { toDownload = null },
-        ) { state.download(file) }
+        ) { state.modelHub.download(file) }
     }
     toRemove?.let { model ->
-        Confirm("Remove this model?", "${model.description}\n${model.fileName}", "Remove", onDismiss = { toRemove = null }) { state.remove(model) }
+        Confirm("Remove this model?", "${model.description}\n${model.fileName}", "Remove", onDismiss = { toRemove = null }) { state.modelHub.remove(model) }
     }
 }
 

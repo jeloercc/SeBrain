@@ -18,6 +18,13 @@ class DedupIndex(private val file: File, private val tagger: (ByteArray) -> Byte
     @Synchronized
     fun contains(tag: ByteArray): Boolean = hex(tag) in tags
 
+    /** Forgets every tag, in memory and on disk: after a vault restore, the index no longer matches the vault. */
+    @Synchronized
+    fun clear() {
+        tags.clear()
+        file.delete()
+    }
+
     /** Stores the tag durably before returning. */
     @Synchronized
     fun remember(tag: ByteArray) {

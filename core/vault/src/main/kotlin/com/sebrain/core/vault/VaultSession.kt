@@ -34,8 +34,12 @@ class VaultSession(
     context: Context,
     private val databaseFile: File,
     private val dekStore: WrappedDekStore,
-    private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
 ) : AutoCloseable {
+    /** Changed from Settings; the next idle check uses the new value. */
+    @Volatile
+    var idleTimeoutMs: Long = idleTimeoutMs
+
     private val appContext = context.applicationContext
     private val keyguard = appContext.getSystemService(KeyguardManager::class.java)
     private val power = appContext.getSystemService(PowerManager::class.java)
@@ -93,6 +97,17 @@ class VaultSession(
                 }
             }
         }
+    }
+
+    /**
+     * Closes the vault and runs [block] while nothing can open it: for [VaultSwap], which moves
+     * the vault's folder. Refuses with [VaultSessionClosingException] if work is in progress, so
+     * no open database is ever moved. The next [withDatabase] opens whatever vault is then in place.
+     */
+    fun <T> whileClosed(block: () -> T): T = lock.withLock {
+        if (activeUses > 0) throw VaultSessionClosingException()
+        if (database != null) closeLocked()
+        block()
     }
 
     /** Closes the database now, or as soon as the work in progress ends. */

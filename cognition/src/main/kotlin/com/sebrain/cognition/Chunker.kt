@@ -17,7 +17,11 @@ object Chunker {
     fun chunk(text: String, maxChars: Int = DEFAULT_MAX_CHARS): List<Chunk> {
         require(maxChars > 0) { "maxChars must be positive" }
         // The front matter is not chunked: its values are indexed as properties instead.
-        val pieces = split(text, FrontMatter.parse(text).bodyStart, text.length, maxChars, listOf(PARAGRAPH, SENTENCE_END, SPACE))
+        // A heading always starts a new chunk, so a chunk never mixes two sections and its
+        // header names the section it is in.
+        val pieces = sections(text, FrontMatter.parse(text).bodyStart).flatMap { (from, to) ->
+            split(text, from, to, maxChars, listOf(PARAGRAPH, SENTENCE_END, SPACE)).map { Triple(it.first, it.second, from) }
+        }
         val chunks = ArrayList<Chunk>()
         var start = -1
         var end = -1
@@ -25,14 +29,36 @@ object Chunker {
             if (start >= 0) chunks += Chunk(chunks.size, start, end, text.substring(start, end))
             start = -1
         }
-        for ((pieceStart, pieceEnd) in pieces) {
-            // Merge neighbors while they fit, so chunks are not needlessly small.
-            if (start >= 0 && pieceEnd - start > maxChars) flush()
+        var section = -1
+        for ((pieceStart, pieceEnd, pieceSection) in pieces) {
+            // Merge neighbors while they fit and belong to the same section, so chunks are not
+            // needlessly small.
+            if (start >= 0 && (pieceEnd - start > maxChars || pieceSection != section)) flush()
+            section = pieceSection
             if (start < 0) start = pieceStart
             end = pieceEnd
         }
         flush()
         return chunks
+    }
+
+    private val HEADING = Regex("^#{1,6}\\s+\\S")
+    private val FENCE = Regex("^\\s*(```|~~~)")
+
+    /** The text from [from] cut at every heading line outside a code block, as ranges. */
+    private fun sections(text: String, from: Int): List<Pair<Int, Int>> {
+        val cuts = ArrayList<Int>()
+        var fenced = false
+        var lineStart = from
+        while (lineStart < text.length) {
+            val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+            val line = text.substring(lineStart, lineEnd)
+            if (FENCE.containsMatchIn(line)) fenced = !fenced
+            if (!fenced && lineStart > from && HEADING.containsMatchIn(line)) cuts += lineStart
+            lineStart = lineEnd + 1
+        }
+        val bounds = listOf(from) + cuts + text.length
+        return bounds.zipWithNext()
     }
 
     /** Ranges of non-blank text, each at most [maxChars] long. */

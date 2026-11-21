@@ -106,7 +106,7 @@ class InboxImporter(
             for ((id, text) in captures.withoutIndex(INDEX_BATCH)) indexer.index(db, id, text)
             for ((id, text) in captures.withoutTitle(INDEX_BATCH)) indexer.markup(db, id, text)
             val missing = chunks.chunksWithoutVector(INDEX_BATCH)
-            val vectors = if (missing.isEmpty()) null else indexer.embedOrNull(missing.map { it.text })
+            val vectors = if (missing.isEmpty()) null else indexer.embedPending(db, missing)
             if (vectors != null) missing.forEachIndexed { i, chunk -> chunks.addVector(chunk, vectors[i]) }
         }
     }

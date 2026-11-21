@@ -75,4 +75,41 @@ class NoteFormatTest {
         assertTrue(english.contains("## Key points"))
         assertFalse(english.contains("Existing notes"))
     }
+
+    @Test
+    fun instructionsAskForAliasesBeforeTheTags() {
+        val text = NoteFormat.instructions("make a note about TCP", emptyList(), emptyList())
+        assertTrue(text.indexOf("\nAliases:") in 0 until text.indexOf("\nTags:"))
+        // General words link every note to one; the model is told so.
+        assertTrue(text.contains("not general words"))
+    }
+
+    @Test
+    fun aTemplateReplacesTheDefaultSections() {
+        val text = NoteFormat.instructions("make a meeting note", emptyList(), emptyList(), template = "# Title of the topic\n\n## Attendees\n\n## Decisions")
+        assertTrue(text.contains("## Attendees\n\n## Decisions"))
+        assertFalse(text.contains("## Key points"))
+        // The closing lines stay, so aliases and tags are still parsed.
+        assertTrue(text.indexOf("\nAliases:") in 0 until text.indexOf("\nTags:"))
+    }
+
+    @Test
+    fun anAliasesLineIsParsedAndLeftOutOfTheBody() {
+        val reply = "# Package Management with apt\n\nInstalls software.\n\nAliases: apt, **APT**, \"apt-get\"\nTags: linux, apt"
+        val note = NoteFormat.parse(reply, "fallback").single()
+        assertEquals(listOf("apt", "apt-get"), note.aliases)
+        assertEquals("Installs software.", note.body)
+        assertEquals(listOf("linux", "apt"), note.tags)
+    }
+
+    @Test
+    fun aliasesNoneOrMissingGivesNoAliases() {
+        val none = NoteFormat.parse("# systemd\n\nInit system.\n\nAliases: none\nTags: linux", "fallback").single()
+        assertEquals(emptyList<String>(), none.aliases)
+        assertEquals("Init system.", none.body)
+        val spanish = NoteFormat.parse("# UDP\n\nSin conexión.\n\nAlias: ninguno\nEtiquetas: redes", "fallback").single()
+        assertEquals(emptyList<String>(), spanish.aliases)
+        val missing = NoteFormat.parse("# Tea\n\nA drink.\n\nTags: tea", "fallback").single()
+        assertEquals(emptyList<String>(), missing.aliases)
+    }
 }

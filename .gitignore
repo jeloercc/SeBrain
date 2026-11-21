@@ -31,3 +31,6 @@ build/
 # Local agent and project context (keep on this machine, not in the code repository)
 /CLAUDE.md
 /docs/
+
+# Release signing key and its password: never committed (see app/build.gradle.kts).
+/secrets/

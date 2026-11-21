@@ -38,12 +38,12 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
     var filter by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf<String?>(null) }
     var showSystem by remember { mutableStateOf(false) }
-    val visibleApps = state.privacyApps.filter {
+    val visibleApps = state.privacy.privacyApps.filter {
         (showSystem || !it.system) &&
             (filter.isBlank() || it.label.contains(filter, ignoreCase = true) || it.packageName.contains(filter, ignoreCase = true))
     }
-    val scanned = state.privacyApps.count { it.trackers != null }
-    val withTrackers = state.privacyApps.count { !it.trackers.isNullOrEmpty() }
+    val scanned = state.privacy.privacyApps.count { it.trackers != null }
+    val withTrackers = state.privacy.privacyApps.count { !it.trackers.isNullOrEmpty() }
 
     LazyColumn(
         modifier.fillMaxSize(),
@@ -51,7 +51,7 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Text("PRIVACY", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+            Text("PRIVACY", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
             Text(
                 "What your apps can reach: trackers inside them, sensitive permissions you granted, " +
                     "and how much data they used. Everything is checked on the phone; nothing is sent or stored.",
@@ -63,7 +63,7 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val progress = state.scanProgress
+                    val progress = state.privacy.scanProgress
                     Text(
                         when {
                             progress != null -> "Scanning apps for trackers… $progress"
@@ -72,16 +72,16 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
                         },
                         style = MaterialTheme.typography.labelLarge,
                     )
-                    Button(onClick = state::scanTrackers, enabled = progress == null && state.privacyApps.isNotEmpty()) {
+                    Button(onClick = state.privacy::scanTrackers, enabled = progress == null && state.privacy.privacyApps.isNotEmpty()) {
                         Text(if (scanned == 0) "SCAN FOR TRACKERS" else "SCAN AGAIN")
                     }
-                    if (!state.usageAccess) {
+                    if (!state.privacy.usageAccess) {
                         Text(
                             "Data use per app needs usage access. Android asks you to turn it on for SeBrain.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        OutlinedButton(onClick = state::openUsageAccessSettings) { Text("ALLOW USAGE ACCESS") }
+                        OutlinedButton(onClick = state.privacy::openUsageAccessSettings) { Text("ALLOW USAGE ACCESS") }
                     }
                 }
             }
@@ -104,10 +104,9 @@ fun PrivacyScreen(state: AppState, modifier: Modifier = Modifier) {
                 app = app,
                 expanded = expanded == app.packageName,
                 onToggle = { expanded = if (expanded == app.packageName) null else app.packageName },
-                onOpenSettings = { state.openAppSettings(app.packageName) },
+                onOpenSettings = { state.privacy.openAppSettings(app.packageName) },
             )
         }
-        item { BackupSection(state) }
         if (state.graphSources.isNotEmpty()) item { MiniBrainSection(state) }
     }
 }
@@ -135,11 +134,11 @@ private fun AppPrivacyCard(app: AppPrivacy, expanded: Boolean, onToggle: () -> U
                 Text(
                     summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (!trackers.isNullOrEmpty()) Neon.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (!trackers.isNullOrEmpty()) Palette.Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (expanded) {
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = Neon.Dim)
+                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = Palette.Dim)
                 if (!trackers.isNullOrEmpty()) {
                     Text("Trackers", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
                     trackers.forEach {
@@ -161,7 +160,7 @@ private fun AppPrivacyCard(app: AppPrivacy, expanded: Boolean, onToggle: () -> U
     }
 }
 
-private fun formatBytes(bytes: Long): String = when {
+internal fun formatBytes(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
     bytes >= 1L shl 10 -> "%.0f KB".format(bytes / (1L shl 10).toDouble())
@@ -169,7 +168,7 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 @Composable
-private fun BackupSection(state: AppState) {
+internal fun BackupSection(state: AppState) {
     var showBackupDialog by remember { mutableStateOf(false) }
     var showRestoreDialog by remember { mutableStateOf(false) }
     var passphrase by remember { mutableStateOf("") }
@@ -179,28 +178,29 @@ private fun BackupSection(state: AppState) {
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         if (uri != null && pendingPassphrase.isNotEmpty()) {
-            state.exportBackup(uri, pendingPassphrase.toCharArray())
+            state.backup.exportBackup(uri, pendingPassphrase.toCharArray())
         }
         pendingPassphrase = ""
     }
     val restorePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && pendingRestorePassphrase.isNotEmpty()) {
-            state.restoreBackup(uri, pendingRestorePassphrase.toCharArray())
+            state.backup.restoreBackup(uri, pendingRestorePassphrase.toCharArray())
         }
         pendingRestorePassphrase = ""
     }
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("BACKUP", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+        Text("BACKUP", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
         Text(
             "Exports an encrypted logical snapshot. The destination is chosen through Android SAF.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(onClick = { showBackupDialog = true }) { Text("EXPORT ENCRYPTED BACKUP") }
-        Button(onClick = { showRestoreDialog = true }) { Text("VALIDATE BACKUP") }
-        state.backupStatus?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = Neon.Coral)
+        Button(onClick = { showRestoreDialog = true }) { Text("RESTORE FROM BACKUP") }
+        state.backup.backupStatus?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral)
         }
+        RestoreActions(state)
     }
     if (showBackupDialog || showRestoreDialog) {
         val restoring = showRestoreDialog
@@ -242,10 +242,70 @@ private fun BackupSection(state: AppState) {
     }
 }
 
+/**
+ * After a backup is checked: replace the vault with it, after a confirmation that shows counts
+ * only; and, after a replace, undo it or delete the previous vault.
+ */
+@Composable
+private fun RestoreActions(state: AppState) {
+    var confirmReplace by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val pending = state.backup.pendingRestore
+    if (pending != null) {
+        Text(
+            "Current vault: ${pending.currentNotes} note(s), ${pending.currentConversations} conversation(s)\n" +
+                "Backup (${pending.backupCreatedAt.take(DATE_CHARS)}): ${pending.notes} note(s), ${pending.conversations} conversation(s), ${pending.brains} brain(s)",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { confirmReplace = true }) { Text("REPLACE VAULT") }
+        Button(onClick = { state.backup.discardRestore() }) { Text("DISCARD") }
+    }
+    if (state.backup.hasPreviousVault) {
+        Button(onClick = { state.backup.undoRestore() }) { Text("UNDO RESTORE") }
+        Button(onClick = { confirmDelete = true }) { Text("DELETE PREVIOUS VAULT") }
+    }
+    if (confirmReplace && pending != null) {
+        AlertDialog(
+            onDismissRequest = { confirmReplace = false },
+            title = { Text("Replace the vault?") },
+            text = {
+                Text(
+                    "The vault with ${pending.currentNotes} note(s) is replaced by the backup with ${pending.notes} note(s). " +
+                        "The current vault is kept, encrypted, and UNDO RESTORE brings it back.",
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmReplace = false
+                    state.backup.replaceVault()
+                }) { Text("REPLACE") }
+            },
+            dismissButton = { Button(onClick = { confirmReplace = false }) { Text("CANCEL") } },
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete the previous vault?") },
+            text = { Text("The vault from before the last restore is deleted for good. UNDO RESTORE will no longer be possible.") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmDelete = false
+                    state.backup.deletePreviousVault()
+                }) { Text("DELETE") }
+            },
+            dismissButton = { Button(onClick = { confirmDelete = false }) { Text("CANCEL") } },
+        )
+    }
+}
+
+/** "2026-11-17" out of an ISO instant. */
+private const val DATE_CHARS = 10
+
 @Composable
 private fun MiniBrainSection(state: AppState) {
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("MINI-BRAINS", color = Neon.Coral, style = MaterialTheme.typography.labelLarge)
+        Text("MINI-BRAINS", color = Palette.Coral, style = MaterialTheme.typography.labelLarge)
         Text(
             "Save an encrypted view over one or more capture sources.",
             style = MaterialTheme.typography.bodySmall,

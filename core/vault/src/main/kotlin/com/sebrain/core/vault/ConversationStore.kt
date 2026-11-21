@@ -23,13 +23,20 @@ data class MessageHit(
 data class StoredMessage(val id: Long, val fromUser: Boolean, val text: String)
 
 /** Saved chat conversations. Use it inside [VaultSession.withDatabase]. */
-class ConversationStore(private val db: SQLiteDatabase) {
+class ConversationStore(
+    private val db: SQLiteDatabase,
+    /** The brain whose conversations these are (a `brain` row id); null is the universal brain, which sees them all. */
+    private val brainId: Long? = null,
+) {
+    private val inBrain: String get() = if (brainId == null) "1" else "c.brain_id = $brainId"
+
     fun create(title: String, now: String): Long = db.compileStatement(
-        "INSERT INTO conversation(title, created_at, updated_at) VALUES (?, ?, ?)",
+        "INSERT INTO conversation(title, created_at, updated_at, brain_id) VALUES (?, ?, ?, ?)",
     ).use { statement ->
         statement.bindString(1, title.ifBlank { "Conversation" }.take(TITLE_LENGTH))
         statement.bindString(2, now)
         statement.bindString(3, now)
+        if (brainId == null) statement.bindNull(4) else statement.bindLong(4, brainId)
         statement.executeInsert()
     }
 
@@ -60,7 +67,7 @@ class ConversationStore(private val db: SQLiteDatabase) {
         return db.rawQuery(
             "SELECT c.id, c.title, c.updated_at, m.from_user, m.text FROM message_fts " +
                 "JOIN message m ON m.id = message_fts.rowid JOIN conversation c ON c.id = m.conversation_id " +
-                "WHERE message_fts MATCH ? AND c.id != ? ORDER BY bm25(message_fts), m.id DESC LIMIT $limit",
+                "WHERE message_fts MATCH ? AND c.id != ? AND $inBrain ORDER BY bm25(message_fts), m.id DESC LIMIT $limit",
             match, exclude ?: -1L,
         ).use { c ->
             generateSequence {
@@ -106,7 +113,7 @@ class ConversationStore(private val db: SQLiteDatabase) {
     /** Most recently used first. */
     fun list(limit: Int = 100): List<ConversationSummary> = db.rawQuery(
         "SELECT c.id, c.title, c.updated_at, (SELECT count(*) FROM message m WHERE m.conversation_id = c.id) " +
-            "FROM conversation c ORDER BY c.updated_at DESC, c.id DESC LIMIT $limit",
+            "FROM conversation c WHERE $inBrain ORDER BY c.updated_at DESC, c.id DESC LIMIT $limit",
         emptyArray<String>(),
     ).use { c ->
         generateSequence {
@@ -122,6 +129,26 @@ class ConversationStore(private val db: SQLiteDatabase) {
     }
 
     /** Deletes the conversation and its messages. Messages are deleted explicitly, so this does not depend on foreign keys being on. */
+    /**
+     * Removes the conversation's last message if it is a reply, with its search entry: for
+     * "regenerate", so the history keeps one answer per question. Returns false if the last
+     * message is the user's or there is none.
+     */
+    fun removeLastReply(conversationId: Long): Boolean {
+        val last = db.rawQuery(
+            "SELECT id, from_user FROM message WHERE conversation_id = ? ORDER BY id DESC LIMIT 1", conversationId as Any,
+        ).use { c -> if (c.moveToFirst() && c.getInt(1) == 0) c.getLong(0) else null } ?: return false
+        db.beginTransaction()
+        try {
+            db.execSQL("INSERT INTO message_fts(message_fts, rowid, text) SELECT 'delete', id, text FROM message WHERE id = ?", arrayOf<Any>(last))
+            db.execSQL("DELETE FROM message WHERE id = ?", arrayOf<Any>(last))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return true
+    }
+
     fun delete(conversationId: Long) {
         db.beginTransaction()
         try {

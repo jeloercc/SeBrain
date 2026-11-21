@@ -84,7 +84,8 @@ internal fun sendToTermux(context: Context, name: String, text: String) {
     }
 }
 
-private fun copy(context: Context, text: String) {
+/** Copies [text] marked sensitive, so the clipboard preview does not show it. */
+internal fun copySensitive(context: Context, text: String) {
     val clip = ClipData.newPlainText("code", text)
     // Keeps the content out of the clipboard preview.
     clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
@@ -151,8 +152,8 @@ fun InlineMarkdown(
                 // The embedded note, shown in place. Links inside it work; its own embeds show as links.
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(Neon.PanelHigh, MaterialTheme.shapes.small)
-                        .border(BorderStroke(1.dp, Neon.Line), MaterialTheme.shapes.small)
+                        .background(Palette.PanelHigh, MaterialTheme.shapes.small)
+                        .border(BorderStroke(1.dp, Palette.Line), MaterialTheme.shapes.small)
                         .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -170,13 +171,13 @@ fun InlineMarkdown(
 fun LinkPill(title: String, onClick: () -> Unit) {
     Row(
         Modifier
-            .background(Neon.PanelHigh, MaterialTheme.shapes.small)
-            .border(BorderStroke(1.dp, Neon.Line), MaterialTheme.shapes.small)
+            .background(Palette.PanelHigh, MaterialTheme.shapes.small)
+            .border(BorderStroke(1.dp, Palette.Line), MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, color = Neon.Cyan, style = MaterialTheme.typography.labelSmall)
+        Text(title, color = Palette.Bone, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -188,17 +189,17 @@ private fun CodeBlock(segment: Segment, title: String) {
     Column(
         Modifier.fillMaxWidth()
             .background(Color(0xFF05050A), MaterialTheme.shapes.small)
-            .border(BorderStroke(1.dp, Neon.Line), MaterialTheme.shapes.small),
+            .border(BorderStroke(1.dp, Palette.Line), MaterialTheme.shapes.small),
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 segment.language.ifEmpty { "code" }.uppercase(),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelSmall,
-                color = Neon.Yellow,
+                color = Palette.Olive,
             )
-            TextButton(onClick = { copy(context, segment.text) }) { Text("COPY") }
-            TextButton(onClick = { confirm = true }) { Text("TERMUX", color = Neon.Magenta) }
+            TextButton(onClick = { copySensitive(context, segment.text) }) { Text("COPY") }
+            TextButton(onClick = { confirm = true }) { Text("TERMUX", color = Palette.Rust) }
         }
         SelectionContainer {
             Text(

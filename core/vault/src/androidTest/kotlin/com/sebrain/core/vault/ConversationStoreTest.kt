@@ -113,7 +113,7 @@ class ConversationStoreTest {
         val other = VaultSession(context, File(otherDir, "vault.db"), WrappedDekStore(File(otherDir, "dek.wrapped"), otherKey))
         try {
             other.withDatabase { db ->
-                assertEquals(0, VaultBackupSnapshot.restore(db, snapshot))
+                assertEquals(0, VaultBackupSnapshot.restore(db, snapshot).notes)
                 val store = ConversationStore(db)
                 val restored = store.list().single()
                 assertEquals("Kernels", restored.title)
