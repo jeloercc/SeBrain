@@ -65,6 +65,7 @@ class NoteModelTest {
         session.withDatabase { db ->
             // Take the database back to what version 5 looked like.
             for (sql in listOf(
+                "DROP TABLE extraction", "ALTER TABLE capture DROP COLUMN extraction_error",
                 "DROP TABLE property", "DROP TABLE alias", "DROP TABLE brain", "DROP TABLE brain_pin",
                 "DROP INDEX capture_by_path", "ALTER TABLE capture DROP COLUMN path",
                 "ALTER TABLE conversation DROP COLUMN brain_id",
@@ -76,7 +77,7 @@ class NoteModelTest {
         }
         session.close()
 
-        assertEquals(6, version())
+        assertEquals(7, version())
         session.withDatabase { db ->
             val store = NoteStore(db)
             assertEquals(listOf(morning), store.backlinks(coffee).map { it.id })

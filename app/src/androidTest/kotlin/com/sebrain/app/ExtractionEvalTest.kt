@@ -58,27 +58,24 @@ class ExtractionEvalTest {
 
     private class Run(val outcome: Extraction.Outcome, val attempts: Int, val ms: List<Double>, val createMs: List<Double>, val raw: String)
 
-    /** One capture as the worker will do it: a first try and, if it is not valid, one retry. */
+    /** One capture as the worker will do it ([Extraction.extract]), with each attempt timed. */
     private fun extract(capture: Capture): Run {
         val ms = mutableListOf<Double>()
         val create = mutableListOf<Double>()
         var raw = ""
-        var outcome: Extraction.Outcome = Extraction.Outcome.Invalid(Extraction.Failure.JSON_INVALID)
-        for (attempt in 1..2) {
-            val start = System.nanoTime()
-            val reply = runCatching {
-                chat.structured(
-                    Extraction.SYSTEM, Extraction.message(capture.text, CAPTURED_AT, ZONE, retry = attempt == 2),
-                    Extraction.SCHEMA, Extraction.MAX_TOKENS, Extraction::inWhitespaceLoop,
-                )
+        val result = runCatching {
+            Extraction.extract(capture.text, CAPTURED_AT, ZONE) { message ->
+                val start = System.nanoTime()
+                val reply = chat.structured(Extraction.SYSTEM, message, Extraction.SCHEMA, Extraction.MAX_TOKENS, Extraction::inWhitespaceLoop)
+                ms += (System.nanoTime() - start) / NANOS_PER_MS
+                create += reply.createMs
+                raw = reply.text
+                Extraction.Reply(reply.text, reply.cut)
             }
-            ms += (System.nanoTime() - start) / NANOS_PER_MS
-            reply.getOrNull()?.let { create += it.createMs }
-            raw = reply.getOrNull()?.text ?: "ERROR ${reply.exceptionOrNull()?.message?.take(100)}"
-            outcome = reply.getOrNull()?.let { Extraction.parse(it.text, it.cut) } ?: outcome
-            if (outcome is Extraction.Outcome.Valid) return Run(outcome, attempt, ms, create, raw)
         }
-        return Run(outcome, 2, ms, create, raw)
+        val outcome = result.getOrNull()?.outcome ?: Extraction.Outcome.Invalid(Extraction.Failure.JSON_INVALID)
+        if (result.isFailure) raw = "ERROR ${result.exceptionOrNull()?.message?.take(100)}"
+        return Run(outcome, result.getOrNull()?.attempts ?: 2, ms, create, raw)
     }
 
     private inner class Tally {

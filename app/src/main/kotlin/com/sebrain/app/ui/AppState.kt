@@ -58,7 +58,6 @@ import java.time.ZoneId
 import java.nio.charset.StandardCharsets
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 class NoteDetail(
@@ -172,6 +171,9 @@ class AppState(private val app: SeBrainApp) {
     }
 
     fun start() {
+        // Background extraction makes way at once: the model is the user's while the app is on screen.
+        app.uiActive = true
+        app.chat.cancelStructured()
         app.onImported = { onMain { refreshNotes() } }
         reindexIfNeeded()
         loadProviders()
@@ -194,6 +196,7 @@ class AppState(private val app: SeBrainApp) {
 
     /** Clears vault content from memory when the app leaves the screen. */
     fun stop() {
+        app.uiActive = false
         app.onImported = null
         notes = emptyList()
         tags = emptyList()
@@ -655,7 +658,8 @@ class AppState(private val app: SeBrainApp) {
     }
 
     // ---- Chat ----
-    private val chatWorker = Executors.newSingleThreadExecutor()
+    /** The model's one thread, shared with the CognitionWorker (see SeBrainApp.chatThread). */
+    private val chatWorker = app.chatThread
     private val tools = NoteTools(app.session, app.indexer) { action -> onMain { messages += ChatMessage(false, action, isAction = true) } }
     private var pendingQuestion: String? = null
     val messages = mutableStateListOf<ChatMessage>()

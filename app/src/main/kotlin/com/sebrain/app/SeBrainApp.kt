@@ -23,6 +23,16 @@ class SeBrainApp : Application() {
 
     private val executor = Executors.newSingleThreadExecutor()
 
+    /**
+     * The one thread that uses [chat]: the chat screen and the CognitionWorker take turns on it,
+     * one reply or one capture at a time, so the model is never loaded twice.
+     */
+    val chatThread = Executors.newSingleThreadExecutor()
+
+    /** True while the app is on screen. The CognitionWorker does nothing then. */
+    @Volatile
+    var uiActive = false
+
     /** The vault folders a restore swaps: `vault/`, `vault-incoming/` and `vault-previous/`. */
     val vaultSwap by lazy { VaultSwap(noBackupFilesDir) }
 
@@ -59,6 +69,7 @@ class SeBrainApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ShareActivity.onCaptureStored = { requestImport() }
+        CognitionWorker.schedule(this)
         executor.execute { com.sebrain.ingest.LegacyNotificationCleanup.run(this) }
     }
 
@@ -74,6 +85,7 @@ class SeBrainApp : Application() {
                         "quarantined=${result.quarantined} remaining=${result.remaining} stoppedBy=$problem",
                 )
                 val captures = if (problem == null) runCatching { session.withDatabase { CaptureStore(it).count() } }.getOrNull() else null
+                if (result.imported > 0) CognitionWorker.runSoon(this)
                 Status(result.remaining, captures, problem)
             } catch (e: Exception) {
                 Log.e(TAG, "import failed: ${e.javaClass.simpleName}")

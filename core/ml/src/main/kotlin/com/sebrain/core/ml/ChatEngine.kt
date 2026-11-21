@@ -217,8 +217,23 @@ class ChatEngine(
         return synchronized(reply) { reply.toString() }
     }
 
-    /** A structured reply: the raw text, whether [stopWhen] cut it, and what creating its conversation cost. */
-    class Structured(val text: String, val cut: Boolean, val createMs: Double)
+    /**
+     * A structured reply: the raw text, whether [stopWhen] cut it, whether [cancelStructured]
+     * stopped it, and what creating its conversation cost.
+     */
+    class Structured(val text: String, val cut: Boolean, val cancelled: Boolean, val createMs: Double)
+
+    @Volatile private var structuredActive: Conversation? = null
+    private val structuredCancelled = AtomicBoolean(false)
+
+    /**
+     * Stops a [structured] call in progress, and only that: a chat reply is never touched, so
+     * background work can make way for the user without risking their answer. Safe from any thread.
+     */
+    fun cancelStructured() {
+        structuredCancelled.set(true)
+        runCatching { structuredActive?.cancelProcess() }
+    }
 
     /**
      * Answers [text] with JSON that follows [schema] (constrained decoding), in a fresh
@@ -241,14 +256,14 @@ class ChatEngine(
         val reply = StringBuilder()
         var failure: Throwable? = null
         val cut = AtomicBoolean(false)
-        cancelled = false
-        active = conversation
+        structuredCancelled.set(false)
+        structuredActive = conversation
         try {
             conversation.sendMessageAsync(
                 text,
                 object : MessageCallback {
                     override fun onMessage(message: Message) {
-                        if (cut.get() || cancelled) return
+                        if (cut.get() || structuredCancelled.get()) return
                         val piece = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
                         val stop = synchronized(reply) { reply.append(piece); stopWhen(reply) }
                         if (stop) {
@@ -267,18 +282,18 @@ class ChatEngine(
                 responseFormat = ResponseFormat.json(schema),
             )
             while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
-                if (cut.get() || cancelled) {
+                if (cut.get() || structuredCancelled.get()) {
                     done.await(CANCEL_GRACE_MS, TimeUnit.MILLISECONDS)
                     break
                 }
             }
         } finally {
-            active = null
-            lastStats = if (cancelled) null else readStats(conversation)
+            structuredActive = null
             runCatching { conversation.close() }
         }
-        if (!cut.get() && !cancelled) failure?.let { throw it }
-        return Structured(synchronized(reply) { reply.toString() }, cut.get(), createMs)
+        val stopped = structuredCancelled.get()
+        if (!cut.get() && !stopped) failure?.let { throw it }
+        return Structured(synchronized(reply) { reply.toString() }, cut.get(), stopped, createMs)
     }
 
     private fun readStats(conversation: Conversation): Stats? = runCatching {

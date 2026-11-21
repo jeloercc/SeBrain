@@ -181,11 +181,14 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
             "SELECT count(*) FROM capture WHERE content_sha256 = ? AND id != ?", contentSha256 as Any, id as Any,
         ).use { c -> c.moveToFirst(); c.getLong(0) > 0 }
         if (taken) return false
-        // The title is cleared so it is derived again from the new text.
+        // The title is cleared so it is derived again from the new text, and what was extracted
+        // from the old text is dropped so the CognitionWorker reads the new one.
         db.execSQL(
-            "UPDATE capture SET text = ?, content_sha256 = ?, updated_at = ?, title = NULL WHERE id = ?",
+            "UPDATE capture SET text = ?, content_sha256 = ?, updated_at = ?, title = NULL, " +
+                "extraction_status = 'pending', extraction_attempts = 0, extraction_error = NULL WHERE id = ?",
             arrayOf<Any>(text, contentSha256, now, id),
         )
+        db.execSQL("DELETE FROM extraction WHERE capture_id = ?", arrayOf<Any>(id))
         return true
     }
 
@@ -441,6 +444,8 @@ class NoteStore(private val db: SQLiteDatabase, val brain: String? = null) {
             db.execSQL("DELETE FROM alias WHERE capture_id = ?", arrayOf<Any>(id))
             db.execSQL("DELETE FROM property WHERE capture_id = ?", arrayOf<Any>(id))
             db.execSQL("DELETE FROM brain_pin WHERE capture_id = ?", arrayOf<Any>(id))
+            // Foreign keys are off, so the cascade of `extraction` does not run by itself.
+            db.execSQL("DELETE FROM extraction WHERE capture_id = ?", arrayOf<Any>(id))
             db.execSQL("DELETE FROM capture WHERE id = ?", arrayOf<Any>(id))
             db.setTransactionSuccessful()
         } finally {

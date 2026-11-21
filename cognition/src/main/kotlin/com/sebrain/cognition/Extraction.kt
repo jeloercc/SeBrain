@@ -88,6 +88,24 @@ object Extraction {
         }
     }
 
+    /** What the model wrote for one attempt; [cut] is true when the whitespace guard stopped it. */
+    class Reply(val text: String, val cut: Boolean)
+
+    /** The result of [extract]: the last attempt's outcome and how many attempts it took (1 or 2). */
+    data class Result(val outcome: Outcome, val attempts: Int)
+
+    /**
+     * One capture, by §4: a first attempt and, if it is not valid, a single retry with the
+     * corrective note. [send] runs the model on a user message. An engine error is thrown by
+     * [send] and is not an extraction failure: the caller keeps the capture pending.
+     */
+    fun extract(text: String, capturedAt: Instant, timeZone: ZoneId, send: (String) -> Reply): Result {
+        val first = send(message(text, capturedAt, timeZone)).let { parse(it.text, it.cut) }
+        if (first is Outcome.Valid) return Result(first, 1)
+        val second = send(message(text, capturedAt, timeZone, retry = true)).let { parse(it.text, it.cut) }
+        return Result(second, 2)
+    }
+
     /** Judges a raw reply by the rules of §4. [cut] is true when the reply was stopped early. */
     fun parse(reply: String, cut: Boolean = false): Outcome {
         if (cut) return Outcome.Invalid(Failure.TRUNCATED)

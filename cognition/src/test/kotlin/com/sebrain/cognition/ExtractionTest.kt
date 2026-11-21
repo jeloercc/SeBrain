@@ -85,6 +85,38 @@ class ExtractionTest {
     }
 
     @Test
+    fun `a valid first reply needs no retry`() {
+        val sent = mutableListOf<String>()
+
+        val result = Extraction.extract("texto", Instant.EPOCH, ZoneId.of("UTC")) { sent += it; Extraction.Reply(valid, cut = false) }
+
+        assertEquals(1, result.attempts)
+        assertEquals(1, sent.size)
+        assertTrue(result.outcome is Outcome.Valid)
+    }
+
+    @Test
+    fun `an invalid first reply is retried once with the corrective note`() {
+        val sent = mutableListOf<String>()
+        val replies = ArrayDeque(listOf(Extraction.Reply("{ \"title\":\": \"", cut = true), Extraction.Reply(valid, cut = false)))
+
+        val result = Extraction.extract("texto", Instant.EPOCH, ZoneId.of("UTC")) { sent += it; replies.removeFirst() }
+
+        assertEquals(2, result.attempts)
+        assertTrue(sent[1].endsWith(Extraction.RETRY_NOTE))
+        assertTrue(result.outcome is Outcome.Valid)
+    }
+
+    @Test
+    fun `two invalid replies give the second failure`() {
+        val result = Extraction.extract("texto", Instant.EPOCH, ZoneId.of("UTC")) {
+            Extraction.Reply("""{"people":[],"dates":[],"topics":[],"tasks":[],"title":": "}""", cut = false)
+        }
+
+        assertEquals(Extraction.Result(Outcome.Invalid(Failure.TITLE_EMPTY), 2), result)
+    }
+
+    @Test
     fun `the retry message adds the corrective note`() {
         val message = Extraction.message("texto", Instant.parse("2026-11-08T03:24:00Z"), ZoneId.of("UTC"), retry = true)
 

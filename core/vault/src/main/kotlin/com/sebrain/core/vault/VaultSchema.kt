@@ -4,7 +4,7 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** Creates and upgrades the vault schema. The version is stored in `PRAGMA user_version`. */
 internal object VaultSchema {
-    const val VERSION = 6
+    const val VERSION = 7
 
     /** Dimensions of the stored embeddings (EmbeddingGemma, Matryoshka at 256). */
     const val EMBEDDING_DIMENSIONS = 256
@@ -24,6 +24,7 @@ internal object VaultSchema {
             if (current < 4) upgradeToV4(db)
             if (current < 5) upgradeToV5(db)
             if (current < 6) upgradeToV6(db)
+            if (current < 7) upgradeToV7(db)
             db.execSQL("PRAGMA user_version = $VERSION")
             db.setTransactionSuccessful()
         } finally {
@@ -176,5 +177,21 @@ internal object VaultSchema {
         // Notes that already start with front matter are indexed again: their properties and
         // aliases are read, and the block leaves their search chunks.
         db.execSQL("UPDATE capture SET index_status = 'pending' WHERE text LIKE '---%'")
+    }
+
+    /**
+     * What the CognitionWorker extracts from a capture, approved 2026-11-20
+     * (docs/proposal-cognition-worker-gaps.md, gap 1, option A). Derived data: it never changes
+     * the note, can be deleted and rebuilt, and is not in the backup snapshot (a restored
+     * capture is `pending` again and is extracted anew). Lists are JSON arrays of strings.
+     * A failure keeps only its code in `capture.extraction_error`, never the model's output.
+     */
+    private fun upgradeToV7(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE extraction(capture_id INTEGER PRIMARY KEY REFERENCES capture(id) ON DELETE CASCADE, " +
+                "people TEXT NOT NULL, dates TEXT NOT NULL, topics TEXT NOT NULL, tasks TEXT NOT NULL, " +
+                "title TEXT NOT NULL, model TEXT NOT NULL, extracted_at TEXT NOT NULL)",
+        )
+        db.execSQL("ALTER TABLE capture ADD COLUMN extraction_error TEXT")
     }
 }
