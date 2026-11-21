@@ -92,8 +92,8 @@ class ContextWindowEvalTest {
         const val REPLY_TOKENS = 32
         /** The system line and the question, with room to spare. */
         const val OVERHEAD_TOKENS = 200
-        /** Lower than the 3.6 measured for prose, so the synthetic text does not overflow the window. */
-        const val CHARS_PER_TOKEN = 3.0
+        /** This text measured 2.8 characters per token on E4B (11748 chars, 4157 tokens); 2.5 leaves room. */
+        const val CHARS_PER_TOKEN = 2.5
         const val NEEDLE_DEPTH = 0.3
         const val ROOMS = 37
         const val DAYS = 28
