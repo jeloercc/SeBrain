@@ -60,9 +60,18 @@ class ChatEngine(
         )
     }
 
-    /** Loads [model], releasing any other. A file is hashed the first time it is loaded. */
-    fun load(model: KnownModel) {
-        if (loaded == model && engine != null) return
+    /** The context window [loaded] was given, in tokens; null for the model's own default (4096 measured). */
+    var window: Int? = null
+        private set
+
+    /**
+     * Loads [model], releasing any other. A file is hashed the first time it is loaded.
+     * [maxNumTokens] asks for a larger context window (input and reply together); a build compiled
+     * for the Tensor NPU has its window fixed at compile time, so it is not passed there.
+     */
+    fun load(model: KnownModel, maxNumTokens: Int? = null) {
+        val tokens = maxNumTokens.takeUnless { ModelFiles.compiledForTensorNpu(model) }
+        if (loaded == model && window == tokens && engine != null) return
         close()
         val path = models.file(model).path
         if (!models.verifyOnce(model)) reject(model)
@@ -70,11 +79,12 @@ class ChatEngine(
         var lastError: Throwable? = null
         for ((name, factory) in backends(model)) {
             try {
-                engine = Engine(EngineConfig(modelPath = path, backend = factory(), cacheDir = appContext.cacheDir.path))
+                engine = Engine(EngineConfig(modelPath = path, backend = factory(), maxNumTokens = tokens, cacheDir = appContext.cacheDir.path))
                     .also { it.initialize() }
                 loaded = model
                 backend = name
-                Log.i(TAG, "language model loaded on $name")
+                window = tokens
+                Log.i(TAG, "language model loaded on $name window=${tokens ?: "default"}")
                 return
             } catch (e: Throwable) {
                 lastError = e
@@ -229,6 +239,7 @@ class ChatEngine(
         engine = null
         loaded = null
         backend = null
+        window = null
     }
 
     private companion object {
