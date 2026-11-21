@@ -16,6 +16,8 @@ import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.ThinkingConfig
+import com.google.ai.edge.litertlm.ToolSet
+import com.google.ai.edge.litertlm.tool
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -223,6 +225,76 @@ class ChatEngine(
      */
     class Structured(val text: String, val cut: Boolean, val cancelled: Boolean, val createMs: Double)
 
+    /** One tool the model called, with its arguments and what the app answered. */
+    class ToolStep(val name: String, val arguments: Map<String, Any?>, val result: String)
+
+    /** A reply written with tools: the final text and every tool call that led to it. */
+    class ToolReply(val text: String, val steps: List<ToolStep>)
+
+    /**
+     * Answers [text] with [tools] available, in manual mode: the model asks for a tool, [execute]
+     * runs it and its result goes back, until the model answers in words or [maxSteps] calls have
+     * been made. Manual, not automatic, so the app checks every call (privacy, review before a
+     * write) and to stay clear of the automatic mode's stall (LiteRT-LM issue 3266).
+     * Blocks; [cancel] stops it.
+     */
+    fun replyWithTools(
+        systemInstruction: String,
+        history: List<Turn>,
+        text: String,
+        tools: ToolSet,
+        maxTokens: Int,
+        maxSteps: Int = MAX_TOOL_STEPS,
+        execute: (name: String, arguments: Map<String, Any?>) -> String,
+    ): ToolReply {
+        val engine = checkNotNull(engine) { "No model is loaded" }
+        val conversation = engine.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(systemInstruction),
+                initialMessages = history.map { if (it.fromUser) Message.user(it.text) else Message.model(it.text) },
+                tools = listOf(tool(tools)),
+                automaticToolCalling = false,
+                maxOutputToken = maxTokens,
+            ),
+        )
+        cancelled = false
+        active = conversation
+        val steps = mutableListOf<ToolStep>()
+        try {
+            var message = conversation.sendMessage(text)
+            while (!cancelled && message.toolCalls.isNotEmpty() && steps.size < maxSteps) {
+                val calls = message.toolCalls.map { call ->
+                    val result = runCatching { execute(call.name, call.arguments) }.getOrElse { "error: ${it.javaClass.simpleName}" }
+                    ToolStep(call.name, call.arguments, result).also { steps += it }
+                }
+                message = conversation.sendMessage(
+                    Message.tool(Contents.of(calls.joinToString("\n") { "{\"name\":\"${it.name}\",\"response\":${quoted(it.result)}}" })),
+                )
+            }
+            val answer = message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+            return ToolReply(if (cancelled) "" else answer, steps)
+        } finally {
+            active = null
+            lastStats = if (cancelled) null else readStats(conversation)
+            runCatching { conversation.close() }
+        }
+    }
+
+    /** [text] as a JSON string literal. */
+    private fun quoted(text: String): String = buildString {
+        append('"')
+        for (c in text) {
+            when {
+                c == '"' -> append("\\\"")
+                c == '\\' -> append("\\\\")
+                c == '\n' -> append("\\n")
+                c < ' ' -> append("\\u%04x".format(c.code))
+                else -> append(c)
+            }
+        }
+        append('"')
+    }
+
     @Volatile private var structuredActive: Conversation? = null
     private val structuredCancelled = AtomicBoolean(false)
 
@@ -329,5 +401,7 @@ class ChatEngine(
         const val POLL_MS = 200L
         const val CANCEL_GRACE_MS = 2000L
         const val NANOS_PER_MS = 1e6
+        /** Tool calls in one reply: enough to search, read and answer, not enough to loop. */
+        const val MAX_TOOL_STEPS = 4
     }
 }
