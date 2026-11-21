@@ -26,6 +26,7 @@ import com.sebrain.app.chat.NoteLinks
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.Templates
 import com.sebrain.app.chat.Routing
+import com.sebrain.app.chat.Suggestions
 import com.sebrain.app.chat.RelevanceGate
 import com.sebrain.app.chat.Route
 import com.sebrain.app.chat.VaultContext
@@ -78,7 +79,16 @@ class NoteDetail(
 /** [id] is null for a new note. */
 class NoteDraft(val id: Long?, val text: String)
 
-data class ChatMessage(val fromUser: Boolean, val text: String, val isAction: Boolean = false, val saved: Boolean = false)
+data class ChatMessage(
+    val fromUser: Boolean,
+    val text: String,
+    val isAction: Boolean = false,
+    val saved: Boolean = false,
+    /** The notes the reply cited, as (id, title), for the sources chip. */
+    val sources: List<Pair<Long, String>> = emptyList(),
+    /** Next questions to tap (see [Suggestions]). Not stored: a reopened chat shows none. */
+    val suggestions: List<String> = emptyList(),
+)
 
 /**
  * Everything the screens show and do. State is only changed on the main thread; vault, model
@@ -1312,7 +1322,11 @@ class AppState(private val app: SeBrainApp) {
                         else -> Assistant.dropPreamble(reply)
                     }
                     val final = Assistant.dropUnknownCitations(body, notes.size).ifBlank { if (stopRequested) "[stopped]" else "" }
-                    if (visible) messages[index] = messages[index].copy(text = final, saved = saved)
+                    if (visible) {
+                        val sources = Suggestions.sources(final, notes)
+                        val next = if (stopRequested || echoed) emptyList() else Suggestions.next(route, question, final, sources.isNotEmpty())
+                        messages[index] = messages[index].copy(text = final, saved = saved, sources = sources, suggestions = next)
+                    }
                     if (final.isNotBlank()) persist(fromUser = false, text = final)
                     markGenerating(false)
                     if (started) {
@@ -1327,6 +1341,20 @@ class AppState(private val app: SeBrainApp) {
                 }
             }
         }
+    }
+
+    /**
+     * Writes the last answer again: it is removed from the screen and from the stored
+     * conversation, so the history keeps one answer per question, and the question is answered anew.
+     */
+    fun regenerate() {
+        if (generating) return
+        val last = messages.lastOrNull() ?: return
+        if (last.fromUser || last.isAction) return
+        val question = messages.dropLast(1).lastOrNull { it.fromUser }?.text ?: return
+        messages.removeAt(messages.lastIndex)
+        storedConversation?.let { id -> app.vault({ db -> chats(db).removeLastReply(id) }) }
+        answer(question)
     }
 
     fun stopGenerating() {

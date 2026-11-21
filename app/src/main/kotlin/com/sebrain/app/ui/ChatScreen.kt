@@ -138,9 +138,8 @@ fun ChatScreen(state: AppState, modifier: Modifier = Modifier) {
                 if (!message.fromUser && !message.isAction && message.text.isNotBlank()) {
                     if (message.saved) {
                         Text("✓ Note drafted: review it to save", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                    } else if (!state.generating) {
-                        TextButton(onClick = { state.saveAsNote(i) }) { Text("Save as note") }
                     }
+                    if (!state.generating) ReplyActions(state, i, message, isLast = i == state.messages.lastIndex)
                 }
             }
         }
@@ -273,6 +272,46 @@ private fun Bubble(message: ChatMessage) {
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             MarkdownBody(message.text.ifEmpty { "…" }, "script", if (message.fromUser) colors.onPrimaryContainer else colors.onSurface)
+        }
+    }
+}
+
+/**
+ * Under an answer: the notes it used (only when it cited any), regenerate for the last one, a
+ * menu with save and copy, and the next questions to tap.
+ */
+@Composable
+private fun ReplyActions(state: AppState, index: Int, message: ChatMessage, isLast: Boolean) {
+    val context = LocalContext.current
+    var sourcesOpen by remember { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (message.sources.isNotEmpty()) {
+            Box {
+                TextButton(onClick = { sourcesOpen = true }) {
+                    Text("📒 ${message.sources.size} ${if (message.sources.size == 1) "note" else "notes"}")
+                }
+                DropdownMenu(expanded = sourcesOpen, onDismissRequest = { sourcesOpen = false }) {
+                    message.sources.forEach { (id, title) ->
+                        DropdownMenuItem(text = { Text(title, maxLines = 1) }, onClick = { sourcesOpen = false; state.openFromGraph(id) })
+                    }
+                }
+            }
+        }
+        if (isLast) TextButton(onClick = { state.regenerate() }) { Text("Regenerate") }
+        Box {
+            TextButton(onClick = { moreOpen = true }) { Text("⋯") }
+            DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                if (!message.saved) DropdownMenuItem(text = { Text("Save as note") }, onClick = { moreOpen = false; state.saveAsNote(index) })
+                DropdownMenuItem(text = { Text("Copy") }, onClick = { moreOpen = false; copySensitive(context, message.text) })
+            }
+        }
+    }
+    if (isLast && message.suggestions.isNotEmpty()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            message.suggestions.forEach { suggestion ->
+                AssistChip(onClick = { state.ask(suggestion) }, label = { Text(suggestion, maxLines = 1) })
+            }
         }
     }
 }

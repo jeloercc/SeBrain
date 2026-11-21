@@ -129,6 +129,26 @@ class ConversationStore(
     }
 
     /** Deletes the conversation and its messages. Messages are deleted explicitly, so this does not depend on foreign keys being on. */
+    /**
+     * Removes the conversation's last message if it is a reply, with its search entry: for
+     * "regenerate", so the history keeps one answer per question. Returns false if the last
+     * message is the user's or there is none.
+     */
+    fun removeLastReply(conversationId: Long): Boolean {
+        val last = db.rawQuery(
+            "SELECT id, from_user FROM message WHERE conversation_id = ? ORDER BY id DESC LIMIT 1", conversationId as Any,
+        ).use { c -> if (c.moveToFirst() && c.getInt(1) == 0) c.getLong(0) else null } ?: return false
+        db.beginTransaction()
+        try {
+            db.execSQL("INSERT INTO message_fts(message_fts, rowid, text) SELECT 'delete', id, text FROM message WHERE id = ?", arrayOf<Any>(last))
+            db.execSQL("DELETE FROM message WHERE id = ?", arrayOf<Any>(last))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return true
+    }
+
     fun delete(conversationId: Long) {
         db.beginTransaction()
         try {

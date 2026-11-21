@@ -84,7 +84,8 @@ internal fun sendToTermux(context: Context, name: String, text: String) {
     }
 }
 
-private fun copy(context: Context, text: String) {
+/** Copies [text] marked sensitive, so the clipboard preview does not show it. */
+internal fun copySensitive(context: Context, text: String) {
     val clip = ClipData.newPlainText("code", text)
     // Keeps the content out of the clipboard preview.
     clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
@@ -197,7 +198,7 @@ private fun CodeBlock(segment: Segment, title: String) {
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Olive,
             )
-            TextButton(onClick = { copy(context, segment.text) }) { Text("COPY") }
+            TextButton(onClick = { copySensitive(context, segment.text) }) { Text("COPY") }
             TextButton(onClick = { confirm = true }) { Text("TERMUX", color = Palette.Rust) }
         }
         SelectionContainer {
