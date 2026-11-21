@@ -46,19 +46,33 @@ object ModelAdvisor {
         } else {
             ModelAdvice(ModelFiles.EMBEDDING_CPU, Role.SEARCH, Hardware.CPU, true, "Runs on the CPU of any phone.")
         }
+        // On a Tensor G5 the NPU build is the default: FollowUpEvalTest (2026-11-19) gave it 27/27
+        // like E4B, at 2.5 to 3 times the speed. The uncensored models stay one tap away.
+        val npu = hasTensorNpu(spec)
         val large = spec.totalRamBytes >= LARGE_CHAT_MIN_RAM_BYTES
+        val npuChat = ModelAdvice(
+            ModelFiles.LLM_E2B_TENSOR_G5, Role.CHAT, Hardware.NPU, true,
+            "Fast chat on the TPU: about three times faster, and it followed instructions as well as E4B in our tests. " +
+                "Google's official model, so it may refuse some requests.",
+        )
         val e4b = ModelAdvice(
-            ModelFiles.LLM_E4B_ABLITERATED, Role.CHAT, Hardware.GPU, large,
-            if (large) "Best answers. This phone has the memory for it." else "Needs a phone with 12 GB of memory.",
+            ModelFiles.LLM_E4B_ABLITERATED, Role.CHAT, Hardware.GPU, !npu && large,
+            when {
+                npu -> "Uncensored and larger, on the GPU: about three times slower. For requests the fast model refuses."
+                large -> "Best answers. This phone has the memory for it."
+                else -> "Needs a phone with 12 GB of memory."
+            },
         )
         val e2b = ModelAdvice(
-            ModelFiles.LLM_E2B_UNCENSORED, Role.CHAT, Hardware.GPU, !large,
-            if (large) "Faster and smaller, with simpler answers." else "Fits this phone's memory.",
+            ModelFiles.LLM_E2B_UNCENSORED, Role.CHAT, Hardware.GPU, !npu && !large,
+            if (large) "Uncensored, smaller and faster than E4B, with simpler answers." else "Fits this phone's memory.",
         )
-        val npuChat = ModelAdvice(
-            ModelFiles.LLM_E2B_TENSOR_G5, Role.CHAT, Hardware.NPU, false,
-            "Fast chat on the TPU, about twice as fast. Google's official model: smaller, and it may refuse some requests.",
-        )
-        return listOfNotNull(search, e4b, e2b, npuChat.takeIf { hasTensorNpu(spec) })
+        return listOfNotNull(search, npuChat.takeIf { npu }, e4b, e2b)
+    }
+
+    /** [installed] chat models with the ones recommended for [spec] first, in advice order otherwise. */
+    fun <T : KnownModel> preferred(spec: DeviceSpec, installed: List<T>): List<T> {
+        val order = advise(spec).filter { it.role == Role.CHAT }.sortedByDescending { it.recommended }.map { it.model.fileName }
+        return installed.sortedBy { model -> order.indexOf(model.fileName).let { if (it < 0) order.size else it } }
     }
 }

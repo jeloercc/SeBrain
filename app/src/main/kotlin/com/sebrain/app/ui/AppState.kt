@@ -14,6 +14,8 @@ import com.sebrain.app.GenerationService
 import com.sebrain.app.NoteTools
 import com.sebrain.app.SeBrainApp
 import com.sebrain.app.chat.Assistant
+import com.sebrain.app.profile.DeviceSpec
+import com.sebrain.app.profile.ModelAdvisor
 import com.sebrain.app.chat.ContextNote
 import com.sebrain.app.chat.DailyNotes
 import com.sebrain.app.chat.FollowUp
