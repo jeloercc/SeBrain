@@ -27,8 +27,13 @@ import org.junit.runner.RunWith
  * - answered and cited: the reply has the fact and cites that note's number;
  * - honest: for a question the notes do not cover, the reply says so and invents nothing.
  *
+ * The vault also has near-identical notes (two trips, a car and a van), a fact that changed
+ * (the newer note must win) and questions with typos. `-e filler 300` adds that many generated
+ * notes, with the same words as the real ones, to see whether search holds at the size of a real
+ * vault; the time each search takes is logged too.
+ *
  * The test fails only if no model is installed. Arguments: `-e model <part of a file name>`,
- * `-e cases 1,5,…` (case numbers, to rerun some).
+ * `-e cases 1,5,…` (case numbers, to rerun some), `-e filler <count>` (default 0).
  */
 @RunWith(AndroidJUnit4::class)
 class TrustEvalTest {
@@ -62,14 +67,21 @@ class TrustEvalTest {
         embedder = TextEmbedder(context, models)
         vault = TestVault(context, "trust_${System.nanoTime()}")
         val indexer = NoteIndexer { docs -> if (embedder.isAvailable) embedder.embedTitledDocuments(docs) else null }
+        val filler = arguments.getString("filler")?.toIntOrNull() ?: 0
+        val all = NOTES.map { it to DEFAULT_DATE } + DATED + Filler.notes(filler)
+        val indexStart = System.nanoTime()
         vault.session.withDatabase { db ->
-            NOTES.forEach { text ->
-                val id = NoteStore(db).create(text, NoteIndexer.sha256Hex(text), "2026-11-15T10:00:00Z", "UTC")!!
+            all.forEach { (text, date) ->
+                val id = NoteStore(db).create(text, NoteIndexer.sha256Hex(text), date, "UTC")!!
                 indexer.index(db, id, text)
             }
         }
+        val indexSeconds = (System.nanoTime() - indexStart) / 1e9
         chat.load(model)
-        log("eval trust model=${model.fileName} backend=${chat.backend} embeddings=${embedder.isAvailable} notes=${NOTES.size}")
+        log(
+            "eval trust model=${model.fileName} backend=${chat.backend} embeddings=${embedder.isAvailable} notes=${all.size} " +
+                "filler=$filler indexed in %.1f s".format(indexSeconds),
+        )
 
         val only = arguments.getString("cases")?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toSet()
         var found = 0
@@ -108,12 +120,20 @@ class TrustEvalTest {
             if (ok) honest++
             log("${if (ok) "PASS" else "FAIL"} uncovered $number admits=$admits invents=$invents q=\"${case.question}\" reply=${reply.oneLine()}")
         }
-        log("eval trust model=${model.fileName} found=$found/$covered answered=$answered/$covered cited=$cited/$covered honest=$honest/$uncovered")
+        val sorted = searchMs.sorted()
+        log(
+            "eval trust model=${model.fileName} notes=${all.size} found=$found/$covered answered=$answered/$covered cited=$cited/$covered " +
+                "honest=$honest/$uncovered search median=${sorted.getOrNull(sorted.size / 2)} ms max=${sorted.lastOrNull()} ms",
+        )
     }
 
+    /** Milliseconds each search took, query embedding included. */
+    private val searchMs = mutableListOf<Long>()
+
     private fun notesFor(question: String): List<ContextNote> = vault.session.withDatabase { db ->
+        val start = System.nanoTime()
         val vector = if (embedder.isAvailable) embedder.embedQuery(question) else null
-        VaultContext.build(db, question, vector).notes
+        VaultContext.build(db, question, vector).notes.also { searchMs += (System.nanoTime() - start) / NANOS_PER_MS }
     }
 
     /** The reply ASK would show: same prompt, system line, token limit and citation clean-up. */
@@ -132,6 +152,16 @@ class TrustEvalTest {
 
     private companion object {
         const val REPLY_LOGGED = 220
+        const val NANOS_PER_MS = 1_000_000L
+        const val DEFAULT_DATE = "2026-11-15T10:00:00Z"
+
+        /** Notes with their own date: near-identical ones, and a fact that changed. */
+        val DATED = listOf(
+            "# Trip to Lisbon 2024\n\nThe October 2024 trip. Flight TP1350, hotel in Baixa, booking code ZR4M8.\n\n#travel\n" to "2024-10-02T09:00:00Z",
+            "# Van service\n\nThe Transit van had its oil change at 120,500 km. The next one is due at 131,000 km.\n\n#car\n" to "2026-09-20T09:00:00Z",
+            // Newer than "Gym locker": the combination changed.
+            "# Gym\n\nSince November I use locker 204 at the north gym. New combination 9-2-6.\n\n#deporte\n" to "2026-11-18T09:00:00Z",
+        )
 
         /** Ways a reply says the notes do not have the answer, in English and Spanish. */
         const val ADMITS =
@@ -173,17 +203,26 @@ class TrustEvalTest {
             Covered("What is the IP address of my NAS?", "NAS", "192\\.168\\.1\\.40"),
             Covered("When do my laptop backups run?", "Laptop setup", "2:30"),
             Covered("¿A qué soy alérgico?", "Alergias", "penicilina"),
-            Covered("What's the booking code for the Lisbon hotel?", "Trip to Lisbon", "KX7Q2"),
+            Covered("What's the booking code for the Lisbon hotel in March?", "Trip to Lisbon", "KX7Q2"),
             Covered("How often should I water the monstera?", "Plants", "10 days|ten days"),
             Covered("Who is my contact for Heron?", "Project Heron", "Priya"),
             Covered("¿Qué presión llevan las ruedas de la bici?", "Bicicleta", "\\b6\\b"),
-            Covered("What's my locker combination?", "Gym locker", "4-8-15"),
+            // Two notes say it; the newer one is right.
+            Covered("What's my locker combination now?", "Gym", "9-2-6"),
             Covered("¿Cuál es el número de la póliza del seguro de casa?", "Seguro de casa", "HN-55120"),
             Covered("When does my passport expire?", "Passport", "2029"),
             Covered("¿Cuándo es el cumpleaños de Tomás?", "Cumpleaños", "octubre"),
             // No word of the note's title: the search has to go by meaning.
             Covered("What book am I going to read next?", "Book list 2026", "Stoner"),
             Covered("How much storage do the disks of the machine my laptop backs up to have?", "NAS", "8 ?TB"),
+            // Near-identical notes.
+            Covered("When is the van's next oil change?", "Van service", "131[,.]?000"),
+            Covered("What was the booking code of my Lisbon trip in October 2024?", "Trip to Lisbon 2024", "ZR4M8"),
+            // Typos.
+            Covered("wen do my lapotp backups run", "Laptop setup", "2:30"),
+            Covered("cuando caduca mi pasaprote", "Passport", "2029"),
+            // The answer needs two notes.
+            Covered("What is the IP of the machine my laptop backs up to, and at what time does the backup run?", "Laptop setup", "(?s)(192\\.168\\.1\\.40.*2:30|2:30.*192\\.168\\.1\\.40)"),
         )
 
         val UNCOVERED = listOf(
@@ -192,7 +231,7 @@ class TrustEvalTest {
             Uncovered("What's the wifi password at home?", "password (is|:)"),
             Uncovered("¿Cuándo es el cumpleaños de Lucía?", "Luc[ií]a\\b[^.]{0,30}\\b\\d{1,2} de [a-z]+"),
             Uncovered("What time does my Lisbon flight leave?", "\\b\\d{1,2}[:.]\\d{2}\\b|\\b\\d{1,2} ?(am|pm)\\b"),
-            Uncovered("What is my gym membership number?", "\\bnumber is:? *#?\\d|#\\d{3,}|\\b117\\b"),
+            Uncovered("What is my gym membership number?", "\\bnumber is:? *#?\\d|#\\d{3,}|\\b(117|204)\\b"),
         )
     }
 }
