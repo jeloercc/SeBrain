@@ -5,6 +5,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.sebrain.app.chat.Assistant
 import com.sebrain.app.chat.ContextNote
+import com.sebrain.app.chat.RelevanceGate
+import com.sebrain.app.chat.Route
+import com.sebrain.app.chat.Routing
+import com.sebrain.app.chat.SemanticRouter
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.ml.ChatEngine
@@ -109,7 +113,8 @@ class TrustEvalTest {
             if (hasFact && citesSource) cited++
             val ok = source != null && hasFact && citesSource
             log(
-                "${if (ok) "PASS" else "FAIL"} covered $number found=${source?.number ?: "no"}/${notes.size} fact=$hasFact cited=$citesSource " +
+                "${if (ok) "PASS" else "FAIL"} covered $number route=$route found=${source?.number ?: "no"}/${notes.size} fact=$hasFact cited=$citesSource " +
+                    "dist=${distance(case.question, case.source)?.let { "%.3f".format(it) }} " +
                     "q=\"${case.question}\" reply=${reply.oneLine()}",
             )
         }
@@ -123,7 +128,7 @@ class TrustEvalTest {
             val invents = case.invented != null && Regex(case.invented, RegexOption.IGNORE_CASE).containsMatchIn(reply)
             val ok = admits && !invents
             if (ok) honest++
-            log("${if (ok) "PASS" else "FAIL"} uncovered $number admits=$admits invents=$invents q=\"${case.question}\" reply=${reply.oneLine()}")
+            log("${if (ok) "PASS" else "FAIL"} uncovered $number route=$route nearest=${distance(case.question, null)?.let { "%.3f".format(it) }} admits=$admits invents=$invents q=\"${case.question}\" reply=${reply.oneLine()}")
         }
         // 2026-11-20: a rule for personal facts made E2B answer "nothing about NASA in your notes".
         GENERAL.forEachIndexed { i, case ->
@@ -135,7 +140,7 @@ class TrustEvalTest {
             val talksOfNotes = Regex(NOTES_WORD, RegexOption.IGNORE_CASE).containsMatchIn(reply)
             val ok = hasFact && !talksOfNotes
             if (ok) generalOk++
-            log("${if (ok) "PASS" else "FAIL"} general $number fact=$hasFact talksOfNotes=$talksOfNotes q=\"${case.question}\" reply=${reply.oneLine()}")
+            log("${if (ok) "PASS" else "FAIL"} general $number route=$route nearest=${distance(case.question, null)?.let { "%.3f".format(it) }} fact=$hasFact talksOfNotes=$talksOfNotes q=\"${case.question}\" reply=${reply.oneLine()}")
         }
         val sorted = searchMs.sorted()
         log(
@@ -147,15 +152,35 @@ class TrustEvalTest {
     /** Milliseconds each search took, query embedding included. */
     private val searchMs = mutableListOf<Long>()
 
+    /**
+     * For calibrating the relevance gate: the vector distance of [title]'s closest chunk, or of
+     * the closest chunk of any note when [title] is null. Null without embeddings.
+     */
+    private fun distance(question: String, title: String?): Double? = vault.session.withDatabase { db ->
+        if (!embedder.isAvailable) return@withDatabase null
+        val hits = com.sebrain.core.vault.HybridSearch(db).search(question, embedder.embedQuery(question), DISTANCE_HITS)
+        val store = NoteStore(db)
+        hits.filter { title == null || store.get(it.captureId)?.title == title }.mapNotNull { it.vectorDistance }.minOrNull()
+    }
+
+    /** The router the app builds, from the same embedding model; null without one. */
+    private val router by lazy { if (embedder.isAvailable) SemanticRouter.build(embedder::embedQuery) else null }
+
+    /** The route of the last [notesFor], for the prompt; the app passes it the same way. */
+    private var route = Route.GENERAL
+
+    /** What ASK does: route the message, then search with that route's relevance gate. */
     private fun notesFor(question: String): List<ContextNote> = vault.session.withDatabase { db ->
         val start = System.nanoTime()
         val vector = if (embedder.isAvailable) embedder.embedQuery(question) else null
-        VaultContext.build(db, question, vector).notes.also { searchMs += (System.nanoTime() - start) / NANOS_PER_MS }
+        route = Routing.route(question, vector, router)
+        VaultContext.build(db, question, vector, maxDistance = RelevanceGate.maxDistance(route)).notes
+            .also { searchMs += (System.nanoTime() - start) / NANOS_PER_MS }
     }
 
     /** The reply ASK would show: same prompt, system line, token limit and citation clean-up. */
     private fun ask(question: String, notes: List<ContextNote>): String {
-        val prompt = Assistant.prompt(question, notes, asNote = false, tags = emptyList())
+        val prompt = Assistant.prompt(question, notes, asNote = false, tags = emptyList(), route = route)
         val reply = runCatching { chat.reply(Assistant.SYSTEM, emptyList(), prompt, Assistant.ANSWER_TOKENS) {} }
             .getOrElse { "ERROR ${it.message?.take(120)}" }
         return Assistant.dropUnknownCitations(reply, notes.size)
@@ -169,6 +194,7 @@ class TrustEvalTest {
 
     private companion object {
         const val REPLY_LOGGED = 220
+        const val DISTANCE_HITS = 50
 
         /** A general answer has no reason to bring up the notes. */
         const val NOTES_WORD = "\\b(notes?|notas?|vault)\\b"

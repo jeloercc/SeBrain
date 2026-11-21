@@ -319,11 +319,13 @@ object Assistant {
         template: String? = null,
         /** What a first attempt at this note only repeated (see [NoteCheck.repeats]), for a second try. */
         repeated: String? = null,
+        /** What the message is for (see [Routing]); it decides how the model is told to use the notes. */
+        route: Route = Route.GENERAL,
     ): String {
         // The model takes 4096 tokens, reply included (measured). The context is cut in order of
         // least value until the input fits: connected notes first, then note length, then the outline.
         val fixed = SYSTEM.length + memory.recent.sumOf { it.text.length }
-        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated)
+        val parts = Parts(asNote, tags, memory, pinned, previousAnswer, today, template, repeated, route)
         var built = ""
         for ((noteChars, withConnected, withOutline) in LEVELS) {
             built = compose(message, notes, parts, if (withConnected) past else emptyList(), noteChars, withConnected, withOutline)
@@ -342,6 +344,7 @@ object Assistant {
         val today: LocalDate?,
         val template: String?,
         val repeated: String?,
+        val route: Route,
     )
 
     private fun compose(
@@ -392,7 +395,8 @@ object Assistant {
             connected.forEach { append(render(it, CONNECTED_CHARS)).append("\n\n") }
         }
         // Seen on the phone: with no note given, the model still cited "[1]".
-        if (notes.isEmpty()) append("No note from the vault relates to this message: answer from your own knowledge and do not cite any note.\n\n")
+        if (notes.isEmpty()) append(NO_NOTES.getValue(parts.route)).append("\n\n")
+        if (parts.route == Route.CHAT) append(SMALL_TALK).append("\n\n")
         if (past.isNotEmpty()) {
             append("From earlier conversations with the user:\n")
             past.forEach {
@@ -454,6 +458,19 @@ object Assistant {
         )
         append(", even if the notes or the earlier messages are in another language.")
     }
+
+    /** What the model is told when no note came through the relevance gate, by route. */
+    private val NO_NOTES = mapOf(
+        Route.GENERAL to "No note from the vault relates to this message: answer from your own knowledge and do not cite any note.",
+        Route.CHAT to "No note is needed for this message; do not cite any note.",
+        Route.ACTION to "No note from the vault relates to this message; do not cite any note.",
+        Route.PERSONAL to "No note from the vault relates to this message, so do not cite any. If it asks for a fact about the user's " +
+            "own life, say briefly that their notes do not have it and offer to save it once they know; never guess it. " +
+            "If it asks for something general, answer from your own knowledge.",
+    )
+
+    private const val SMALL_TALK =
+        "This is casual conversation. Reply like a friendly person would: naturally and briefly, and ask something back if it fits."
 
     fun render(note: ContextNote, chars: Int): String = buildString {
         append('[').append(note.number).append("] ").append(note.title.ifBlank { "Untitled" })

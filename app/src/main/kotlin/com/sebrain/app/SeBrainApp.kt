@@ -2,6 +2,7 @@ package com.sebrain.app
 
 import android.app.Application
 import android.util.Log
+import com.sebrain.app.chat.SemanticRouter
 import com.sebrain.cognition.InboxImporter
 import com.sebrain.cognition.NoteIndexer
 import com.sebrain.core.crypto.WrappedDekStore
@@ -120,6 +121,21 @@ class SeBrainApp : Application() {
     /** Runs model or file work on the background thread. */
     fun <T> background(block: () -> T, onResult: (Result<T>) -> Unit) {
         executor.execute { onResult(runCatching(block)) }
+    }
+
+    private var router: SemanticRouter? = null
+
+    /**
+     * The chat's semantic router, built the first time from the embedding model and kept: its
+     * example vectors outlive [releaseModels]. Null without an embedding model. Call it only on
+     * the vault thread, as [search] does.
+     */
+    fun router(): SemanticRouter? {
+        if (router == null && embedder.isAvailable) {
+            router = runCatching { SemanticRouter.build(embedder::embedQuery) }
+                .onFailure { Log.w(TAG, "router not built: ${it.javaClass.simpleName}") }.getOrNull()
+        }
+        return router
     }
 
     /** Frees the embedding model's memory once queued work is done. */

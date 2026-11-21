@@ -60,6 +60,12 @@ object VaultContext {
         brainId: Long? = null,
         /** Today in the user's time zone, to recall notes by "yesterday" or "last week"; null for no recall by time. */
         today: LocalDate? = null,
+        /**
+         * The relevance gate: a search hit farther than this from the query, in vector distance,
+         * is left out (see [RelevanceGate]). Null lets every hit in, as when there is no vector.
+         * A note the message names, and notes recalled by time or property, always come in.
+         */
+        maxDistance: Double? = null,
     ): Result {
         val store = NoteStore(db, brain)
         val excluded = exclude.map { it.lowercase() }.toSet()
@@ -70,6 +76,7 @@ object VaultContext {
         // Several chunks of one note can match; keep the note once, with its best chunks in order.
         val chunksByNote = LinkedHashMap<Long, MutableList<String>>()
         for (hit in HybridSearch(db, brain).search(query, vector, SEARCH_HITS)) {
+            if (maxDistance != null && vector != null && (hit.vectorDistance ?: Double.MAX_VALUE) > maxDistance) continue
             chunksByNote.getOrPut(hit.captureId) { mutableListOf() }.add(hit.text)
         }
         val notes = mutableListOf<ContextNote>()

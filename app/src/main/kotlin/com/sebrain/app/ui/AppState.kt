@@ -25,6 +25,9 @@ import com.sebrain.app.chat.NoteFormat
 import com.sebrain.app.chat.NoteLinks
 import com.sebrain.app.chat.Pins
 import com.sebrain.app.chat.Templates
+import com.sebrain.app.chat.Routing
+import com.sebrain.app.chat.RelevanceGate
+import com.sebrain.app.chat.Route
 import com.sebrain.app.chat.VaultContext
 import com.sebrain.core.ml.ChatEngine
 import com.sebrain.core.vault.Brain
@@ -1231,8 +1234,15 @@ class AppState(private val app: SeBrainApp) {
         val open = storedConversation
         // Today, in the user's time zone: the model cannot know it, and "last week" needs it.
         val now = LocalDateTime.now()
-        app.search(query, { db, vector -> VaultContext.build(db, query, vector, exclude, open, question, scopeBrain, brainId, now.toLocalDate()) }) { found ->
-            val context = found.getOrNull()
+        app.search(query, { db, vector ->
+            // The route decides how strictly notes are let in, and how the model is told to use them.
+            val route = if (asNote) Route.ACTION else Routing.route(question, vector, app.router())
+            route to VaultContext.build(
+                db, query, vector, exclude, open, question, scopeBrain, brainId, now.toLocalDate(), RelevanceGate.maxDistance(route),
+            )
+        }) { found ->
+            val route = found.getOrNull()?.first ?: Route.GENERAL
+            val context = found.getOrNull()?.second
             val notes = context?.notes.orEmpty()
             val template = context?.template
             val prompt = Assistant.prompt(
@@ -1241,6 +1251,7 @@ class AppState(private val app: SeBrainApp) {
                 today = now.toLocalDate(),
                 template = template?.let { Templates.structure(it, now) },
                 repeated = if (asNote) retryAvoiding.also { retryAvoiding = null } else null,
+                route = route,
             )
             val model = currentModel?.fileName.orEmpty()
             chatWorker.execute {
